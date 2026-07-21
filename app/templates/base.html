@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block page_title %}{{ app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
+{% if user %}
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">POLITIS<small>Civic Intelligence Platform · v{{ version }}</small></div>
+    <nav class="nav" aria-label="Primary navigation">
+      <a class="{% if request.url.path == '/' %}active{% endif %}" href="/">Dashboard</a>
+      <a class="{% if request.url.path.startswith('/projects') %}active{% endif %}" href="/projects">Projects</a>
+      <a class="{% if request.url.path.startswith('/studies') %}active{% endif %}" href="/studies">Studies</a>
+      <a class="{% if request.url.path.startswith('/participants') %}active{% endif %}" href="/participants">Participants</a>
+      {% if user.role in ['owner','admin'] %}
+      <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers">Researchers</a>
+      <a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit">Audit log</a>
+      <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox">Email outbox</a>
+      {% endif %}
+    </nav>
+    <form method="post" action="/logout"><button class="ghost" type="submit">Sign out</button></form>
+  </aside>
+  <main class="main" id="main-content" tabindex="-1">
+    <div class="top">
+      <div><div class="eyebrow">{{ user.organisation.name }}</div><h1>{% block title %}{% endblock %}</h1></div>
+      <div class="userbox"><strong>{{ user.name }}</strong><br>{{ user.role|title }}</div>
+    </div>
+    {% if user.role == 'observer' %}<div class="notice neutral">You have observer access. Editing controls are hidden.</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% else %}
+{% block public %}{% endblock %}
+{% endif %}
+<script>
+document.querySelectorAll('[data-confirm]').forEach(function(el){el.addEventListener('click',function(e){if(!confirm(el.dataset.confirm)){e.preventDefault();}})});
+</script>
+</body>
+</html>

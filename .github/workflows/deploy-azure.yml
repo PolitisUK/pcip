@@ -1,0 +1,64 @@
+name: Deploy PCIP to Azure
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Azure environment name
+        required: true
+        default: dev
+      image_tag:
+        description: Container image tag
+        required: true
+        default: 0.6.0
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy Azure resources
+        uses: azure/arm-deploy@v2
+        with:
+          scope: resourcegroup
+          resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
+          template: infra/main.bicep
+          parameters: >-
+            prefix=${{ vars.PCIP_PREFIX }}
+            environmentName=${{ inputs.environment }}
+            containerImageTag=${{ inputs.image_tag }}
+            postgresAdminUser=${{ vars.POSTGRES_ADMIN_USER }}
+            postgresAdminPassword=${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+            secretKey=${{ secrets.PCIP_SECRET_KEY }}
+            defenderWebhookSecret=${{ secrets.DEFENDER_WEBHOOK_SECRET }}
+            entraTenantId=${{ vars.ENTRA_TENANT_ID }}
+            entraClientId=${{ vars.ENTRA_CLIENT_ID }}
+            entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET }}
+            entraAllowedDomains=${{ vars.ENTRA_ALLOWED_DOMAINS }}
+            entraDefaultOrganisationSlug=${{ vars.ENTRA_DEFAULT_ORGANISATION_SLUG }}
+          deploymentName: pcip-${{ inputs.environment }}-${{ github.run_number }}
+      - name: Resolve deployment resources
+        id: resources
+        shell: bash
+        run: |
+          ACR=$(az acr list -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
+          APP=$(az webapp list -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
+          echo "acr=$ACR" >> "$GITHUB_OUTPUT"
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+      - name: Build image in Azure Container Registry
+        run: az acr build --registry "${{ steps.resources.outputs.acr }}" --image "pcip:${{ inputs.image_tag }}" .
+      - name: Restart application
+        run: az webapp restart -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ steps.resources.outputs.app }}"
