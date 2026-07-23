@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import csv, io, json, secrets, shutil
+from .csrf import get_csrf_token, csrf_protect
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -22,7 +23,14 @@ from .entra import oauth, configured as entra_configured
 VERSION = "0.6.0"
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title=settings.app_name, version=VERSION)
-app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, https_only=settings.cookie_secure, same_site="lax")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.secret_key,
+    session_cookie="csrf_session",
+    https_only=settings.cookie_secure,
+    same_site="lax",
+)
+
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=[x.strip() for x in settings.trusted_hosts.split(",") if x.strip()])
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -77,7 +85,22 @@ def roles(*allowed):
     return dep
 
 def render(request, name, user=None, **ctx):
-    return templates.TemplateResponse(request=request, name=name, context={"user":user,"app_name":settings.app_name,"version":VERSION,"can_edit":bool(user and user.role in {"owner","admin","researcher"}),"entra_enabled":entra_configured(),"local_login_enabled":settings.local_login_enabled,**ctx})
+    return templates.TemplateResponse(
+        request=request,
+        name=name,
+        context={
+            "user": user,
+            "app_name": settings.app_name,
+            "version": VERSION,
+            "can_edit": bool(
+                user and user.role in {"owner", "admin", "researcher"}
+            ),
+            "entra_enabled": entra_configured(),
+            "local_login_enabled": settings.local_login_enabled,
+            "csrf_token": get_csrf_token(request),
+            **ctx,
+        },
+    )
 
 def project(db,i,o):
     r=db.scalar(select(Project).where(Project.id==i,Project.organisation_id==o))
@@ -154,7 +177,6 @@ def startup():
 def health(): return {"status":"ok","version":VERSION}
 @app.get("/login",response_class=HTMLResponse)
 def login_page(request:Request): return render(request,"login.html")
-@app.post("/login")
 @app.post("/login")
 def login(
     request: Request,

@@ -1,1 +1,17 @@
-{% extends "base.html" %}{% block public %}<div class="login-wrap"><div class="login-card"><div class="eyebrow">Politis</div><h1>Civic Intelligence</h1><p class="muted">Secure researcher workspace</p>{% if error %}<div class="error">{{ error }}</div>{% endif %}{% if entra_enabled %}<a class="button microsoft" href="/auth/entra/login">Sign in with Microsoft</a>{% endif %}{% if entra_enabled and local_login_enabled %}<div class="divider"><span>or</span></div>{% endif %}{% if local_login_enabled %}<form method="post" action="/login" class="stack"><div class="field"><label>Email</label><input name="email" type="email" required autocomplete="username" placeholder="name@organisation.org.uk"></div><div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password" placeholder="Enter your password"></div><button>Sign in</button></form><p><a href="/forgot-password">Forgot your password?</a></p>{% endif %}{% if not entra_enabled and not local_login_enabled %}<div class="error">No sign-in method is currently configured.</div>{% endif %}</div></div>{% endblock %}
+{% extends "base.html" %}{% block public %}
+Politis
+Civic Intelligence
+Secure researcher workspace
+{% if error %}
+{{ error }}
+{% endif %}{% if entra_enabled %}Sign in with Microsoft{% endif %}{% if entra_enabled and local_login_enabled %}
+or
+{% endif %}{% if local_login_enabled %}
+Email
+Password
+Sign in
+Forgot your password?
+{% endif %}{% if not entra_enabled and not local_login_enabled %}
+No sign-in method is currently configured.
+{% endif %}
+{% endblock %}

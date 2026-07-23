@@ -23,7 +23,7 @@
       <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox">Email outbox</a>
       {% endif %}
     </nav>
-    <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="ghost" type="submit">Sign out</button></form>
+    <form method="post" action="/logout"><button class="ghost" type="submit">Sign out</button></form>
   </aside>
   <main class="main" id="main-content" tabindex="-1">
     <div class="top">
