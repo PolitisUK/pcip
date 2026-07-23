@@ -37,8 +37,7 @@
 {% else %}
 {% block public %}{% endblock %}
 {% endif %}
-<script>
-document.querySelectorAll('[data-confirm]').forEach(function(el){el.addEventListener('click',function(e){if(!confirm(el.dataset.confirm)){e.preventDefault();}})});
-</script>
+<script nonce="{{ csp_nonce }}" src="/static/app.js" defer></script>
+{% block page_scripts %}{% endblock %}
 </body>
 </html>

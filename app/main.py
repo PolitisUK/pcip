@@ -38,6 +38,8 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=[x.strip() for x in sett
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        csp_nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = csp_nonce
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             origin = request.headers.get("origin")
             allowed = {x.strip().rstrip("/") for x in settings.allowed_origins.split(",") if x.strip()}
@@ -48,7 +50,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(self)"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "img-src 'self' data:; "
+            "style-src 'self'; "
+            f"script-src 'self' 'nonce-{csp_nonce}'; "
+            "form-action 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'"
+        )
         if settings.cookie_secure:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
@@ -219,6 +229,7 @@ def render(request, name, user=None, **ctx):
             "entra_enabled": entra_configured(),
             "local_login_enabled": settings.local_login_enabled,
             "csrf_token": get_csrf_token(request),
+            "csp_nonce": getattr(request.state, "csp_nonce", ""),
             **ctx,
         },
     )

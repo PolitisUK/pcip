@@ -2,6 +2,7 @@ import os
 os.environ['DATABASE_URL'] = 'sqlite:///./data/test.db'
 from pathlib import Path
 import re
+from glob import glob
 from uuid import uuid4
 import pytest
 from types import SimpleNamespace
@@ -216,10 +217,36 @@ def test_enterprise_security_headers_and_access_interface():
         assert page.headers['x-content-type-options'] == 'nosniff'
         assert page.headers['x-frame-options'] == 'DENY'
         assert "frame-ancestors 'none'" in page.headers['content-security-policy']
+        csp = page.headers['content-security-policy']
+        assert "script-src 'self' 'nonce-" in csp
+        assert "'unsafe-inline'" not in csp
         study_id = int(page.text.split('/studies/')[1].split('"')[0])
         detail = client.get(f'/studies/{study_id}')
         assert 'Study access' in detail.text
         assert 'Skip to main content' in detail.text
+
+
+def test_csp_nonce_is_present_on_public_and_authenticated_pages():
+    with client:
+        public_page = client.get('/login')
+        public_csp = public_page.headers['content-security-policy']
+        assert "script-src 'self' 'nonce-" in public_csp
+        assert 'nonce="' in public_page.text
+
+        auth()
+        private_page = client.get('/projects')
+        private_csp = private_page.headers['content-security-policy']
+        assert "script-src 'self' 'nonce-" in private_csp
+        assert 'nonce="' in private_page.text
+
+
+def test_templates_do_not_use_inline_scripts_or_inline_event_handlers():
+    for file_path in glob('app/templates/**/*.html', recursive=True):
+        html = Path(file_path).read_text(encoding='utf-8')
+        assert 'onclick=' not in html
+        assert 'onchange=' not in html
+        assert 'oninput=' not in html
+        assert re.search(r'<script(?![^>]*\bsrc=)[^>]*>', html, flags=re.IGNORECASE) is None
 
 
 def test_study_access_assignment():
