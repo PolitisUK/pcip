@@ -30,3 +30,9 @@ https://<app-host>/webhooks/defender-storage?secret=<the configured secret>
 ```
 
 Blob tags are also checked directly before each download. A participant upload remains unavailable until the result is `No threats found` when `DEFENDER_REQUIRE_CLEAN_DOWNLOAD=true`.
+
+Additional deployment and configuration references:
+
+- `DEPLOYMENT_GUIDE_AZURE.md`
+- `AZURE_CONFIGURATION_GUIDE.md`
+- `ENVIRONMENT_VARIABLES.md`

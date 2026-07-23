@@ -1,3 +1,5 @@
+import logging
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from urllib.parse import urlsplit
 
@@ -72,6 +74,13 @@ class Settings(BaseSettings):
     entra_auto_provision: bool = False
     entra_default_role: str = "researcher"
     applicationinsights_connection_string: str | None = None
+    log_level: str = "INFO"
+    key_vault_url: str | None = None
+    key_vault_secret_database_url: str = "database-url"
+    key_vault_secret_secret_key: str = "session-secret"
+    key_vault_secret_defender_webhook: str = "defender-webhook-secret"
+    key_vault_secret_entra_client_secret: str = "entra-client-secret"
+    startup_validate_migrations: bool = True
     privacy_retention_days: int = 365
     privacy_retention_statuses: str = "withdrawn,completed"
     privacy_retention_action: str = "anonymise"
@@ -96,6 +105,39 @@ def _is_secret_strong(secret: str) -> bool:
 
 def _is_non_development(environment: str) -> bool:
     return environment.strip().lower() not in {"development", "dev", "test", "testing"}
+
+
+def apply_key_vault_overrides(runtime: Settings) -> None:
+    vault_url = (runtime.key_vault_url or "").strip()
+    if not vault_url:
+        return
+
+    try:
+        from azure.identity import DefaultAzureCredential
+        from azure.keyvault.secrets import SecretClient
+    except ImportError as exc:
+        raise RuntimeError("Azure Key Vault support requires azure-identity and azure-keyvault-secrets.") from exc
+
+    credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
+    client = SecretClient(vault_url=vault_url, credential=credential)
+
+    logger = logging.getLogger("pcip.config")
+
+    def _load_secret(runtime_attr: str, env_name: str, secret_name: str | None):
+        if not secret_name or os.getenv(env_name):
+            return
+        try:
+            secret_value = client.get_secret(secret_name).value
+        except Exception as exc:
+            logger.warning("key_vault_secret_unavailable env=%s name=%s error=%s", env_name, secret_name, exc.__class__.__name__)
+            return
+        if secret_value:
+            setattr(runtime, runtime_attr, secret_value)
+
+    _load_secret("database_url", "DATABASE_URL", runtime.key_vault_secret_database_url)
+    _load_secret("secret_key", "SECRET_KEY", runtime.key_vault_secret_secret_key)
+    _load_secret("azure_defender_webhook_secret", "AZURE_DEFENDER_WEBHOOK_SECRET", runtime.key_vault_secret_defender_webhook)
+    _load_secret("entra_client_secret", "ENTRA_CLIENT_SECRET", runtime.key_vault_secret_entra_client_secret)
 
 
 def validate_runtime_settings(runtime: Settings) -> None:
@@ -150,8 +192,47 @@ def validate_runtime_settings(runtime: Settings) -> None:
     if not (runtime.azure_defender_webhook_secret or "").strip():
         errors.append("AZURE_DEFENDER_WEBHOOK_SECRET must be configured outside development.")
 
+    database_url = getattr(runtime, "database_url", "")
+    if not database_url.strip():
+        errors.append("DATABASE_URL must be configured outside development.")
+    if database_url.strip().lower().startswith("sqlite"):
+        errors.append("DATABASE_URL cannot use sqlite outside development; configure Azure SQL/PostgreSQL.")
+
+    backend = getattr(runtime, "storage_backend", "local").strip().lower()
+    if backend == "azure_blob":
+        storage_account_url = getattr(runtime, "azure_storage_account_url", None)
+        storage_connection = getattr(runtime, "azure_storage_connection_string", None)
+        storage_container = getattr(runtime, "azure_storage_container", "")
+        if not ((storage_account_url or "").strip() or (storage_connection or "").strip()):
+            errors.append("AZURE_STORAGE_ACCOUNT_URL or AZURE_STORAGE_CONNECTION_STRING is required for STORAGE_BACKEND=azure_blob.")
+        if not (storage_container or "").strip():
+            errors.append("AZURE_STORAGE_CONTAINER is required for STORAGE_BACKEND=azure_blob.")
+
+    if getattr(runtime, "entra_enabled", False):
+        missing_entra = [
+            name
+            for name, value in [
+                ("ENTRA_TENANT_ID", getattr(runtime, "entra_tenant_id", None)),
+                ("ENTRA_CLIENT_ID", getattr(runtime, "entra_client_id", None)),
+                ("ENTRA_CLIENT_SECRET", getattr(runtime, "entra_client_secret", None)),
+            ]
+            if not (value or "").strip()
+        ]
+        if missing_entra:
+            errors.append("Missing Microsoft Entra configuration: " + ", ".join(missing_entra) + ".")
+
+    key_vault_url = (getattr(runtime, "key_vault_url", None) or "").strip()
+    if key_vault_url:
+        parsed = urlsplit(key_vault_url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme.lower() != "https" or not host:
+            errors.append("KEY_VAULT_URL must be a valid HTTPS URL when configured.")
+        elif "vault.azure.net" not in host:
+            errors.append("KEY_VAULT_URL should target an Azure Key Vault host (*.vault.azure.net).")
+
     if errors:
         raise RuntimeError("Unsafe hosted configuration: " + " ".join(errors))
 
 
 settings = Settings()
+apply_key_vault_overrides(settings)

@@ -196,7 +196,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
       healthCheckPath: '/health'
       minimumElasticInstanceCount: 1
       appSettings: [
-        { name: 'APP_NAME', value: 'Politis Civic Intelligence' }
+        { name: 'APP_NAME', value: 'Citizen Centric' }
         { name: 'ENVIRONMENT', value: environmentName }
         { name: 'SEED_DEMO_DATA', value: 'false' }
         { name: 'DATABASE_URL', value: '@Microsoft.KeyVault(SecretUri=${dbSecret.properties.secretUriWithVersion})' }

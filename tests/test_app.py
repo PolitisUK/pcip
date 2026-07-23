@@ -1171,6 +1171,7 @@ def hosted_settings(**overrides):
     data = {
         'environment': 'production',
         'secret_key': 'VeryStrongSecretKey!WithLength12345',
+        'database_url': 'postgresql+psycopg://pcip:strongpassword@db.example.org:5432/pcip?sslmode=require',
         'cookie_secure': True,
         'session_cookie_secure': True,
         'base_url': 'https://pilot.example.org',
@@ -1195,6 +1196,7 @@ def hosted_settings(**overrides):
         ({'allowed_origins': ''}, 'ALLOWED_ORIGINS'),
         ({'allowed_origins': 'http://pilot.example.org'}, 'ALLOWED_ORIGINS'),
         ({'azure_defender_webhook_secret': ''}, 'AZURE_DEFENDER_WEBHOOK_SECRET'),
+        ({'database_url': 'sqlite:///./data/app.db'}, 'DATABASE_URL'),
     ],
 )
 def test_hosted_startup_validation_rejects_insecure_settings(override, expected_fragment):

@@ -144,6 +144,46 @@ def _enforce_rate_limit(
 def hosted_environment(): return settings.environment.strip().lower() not in {"development","dev","test","testing"}
 
 
+def configure_logging():
+    level_name = (settings.log_level or "INFO").strip().upper()
+    level = getattr(logging, level_name, logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        )
+    else:
+        root.setLevel(level)
+
+
+def validate_startup_environment():
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+
+    if hosted_environment() and settings.startup_validate_migrations:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        script = ScriptDirectory.from_config(Config("alembic.ini"))
+        expected_heads = {x.lower() for x in script.get_heads()}
+        if not expected_heads:
+            return
+
+        with engine.connect() as connection:
+            try:
+                rows = connection.execute(text("SELECT version_num FROM alembic_version")).all()
+            except Exception as exc:
+                raise RuntimeError("Database migrations have not been applied; alembic_version is unavailable.") from exc
+        current = {str(row[0]).lower() for row in rows if row and row[0]}
+        if not expected_heads.issubset(current):
+            raise RuntimeError(
+                "Database migrations are not at head. "
+                f"Expected: {', '.join(sorted(expected_heads))}. "
+                f"Current: {', '.join(sorted(current)) or 'none'}."
+            )
+
+
 def normalise_scan_status(value: str | None) -> str:
     token = (value or "").strip().lower().replace(" ", "_")
     mapping = {
@@ -522,7 +562,9 @@ def paginate(stmt, db, page, per=25):
 
 @app.on_event("startup")
 def startup():
+    configure_logging()
     validate_runtime_settings(settings)
+    validate_startup_environment()
     Base.metadata.create_all(engine)
     # Safe additive migration for databases created by v0.2.x.
     if settings.database_url.startswith("sqlite"):
@@ -550,7 +592,13 @@ def startup():
             audit(db,org.id,u.id,"platform.seeded","organisation",org.id,"Initial demonstration tenant created"); db.commit()
 
 @app.get("/health")
-def health(): return {"status":"ok","version":VERSION}
+def health():
+    return {
+        "status": "ok",
+        "version": VERSION,
+        "environment": settings.environment,
+        "storage_backend": settings.storage_backend,
+    }
 @app.get("/login",response_class=HTMLResponse)
 def login_page(request:Request): return render(request,"login.html")
 @app.post("/login")

@@ -14,6 +14,7 @@ httpx==0.28.1
 alembic==1.14.1
 azure-identity==1.19.0
 azure-storage-blob==12.24.0
+azure-keyvault-secrets==4.9.0
 
 authlib==1.4.1
 opentelemetry-distro==0.50b0

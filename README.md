@@ -97,3 +97,9 @@ Key files:
 The container runs `alembic upgrade head` before starting the web application. Set `RUN_MIGRATIONS=false` only when migrations are managed separately.
 
 Microsoft Entra account creation is deliberately controlled. Existing invited users are linked by email. Automatic provisioning requires all of `ENTRA_AUTO_PROVISION=true`, a valid `ENTRA_DEFAULT_ORGANISATION_SLUG`, and any desired domain allow-list.
+
+## Production deployment documentation
+
+- `DEPLOYMENT_GUIDE_AZURE.md`
+- `AZURE_CONFIGURATION_GUIDE.md`
+- `ENVIRONMENT_VARIABLES.md`
