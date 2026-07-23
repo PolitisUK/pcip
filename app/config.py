@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     smtp_from_email: str = "no-reply@example.org"
     smtp_use_tls: bool = True
     cookie_secure: bool = False
+    session_cookie_secure: bool = False
     session_max_age_seconds: int = 60 * 60 * 12
     login_max_failed_attempts: int = 5
     login_lockout_seconds: int = 15 * 60
@@ -78,7 +79,7 @@ def _is_secret_strong(secret: str) -> bool:
 
 
 def _is_non_development(environment: str) -> bool:
-    return environment.strip().lower() not in {"development", "dev"}
+    return environment.strip().lower() not in {"development", "dev", "test", "testing"}
 
 
 def validate_runtime_settings(runtime: Settings) -> None:
@@ -93,6 +94,9 @@ def validate_runtime_settings(runtime: Settings) -> None:
 
     if not runtime.cookie_secure:
         errors.append("COOKIE_SECURE must be enabled outside development.")
+
+    if not runtime.session_cookie_secure:
+        errors.append("SESSION_COOKIE_SECURE must be enabled outside development.")
 
     base = urlsplit(runtime.base_url.strip())
     base_host = (base.hostname or "").lower()
