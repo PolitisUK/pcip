@@ -294,6 +294,240 @@ def test_bulk_import_editing_and_password_reset_request():
         assert reset.status_code==200 and 'reset link has been issued' in reset.text
 
 
+def test_admin_can_export_participant_data_and_audit_event():
+    from app.models import AuditEvent, Participant
+    with client:
+        client.cookies.clear()
+        auth()
+        created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': 'PRIV-EXP-1',
+                'name': 'Privacy Export',
+                'email': 'privacy.export@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': 'gdpr',
+                'notes': 'export me',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
+
+        export = client.get(f'/participants/{participant_id}/export')
+        assert export.status_code == 200
+        assert export.headers.get('content-disposition', '').startswith('attachment;')
+        payload = export.json()
+        assert payload['participant']['id'] == participant_id
+        assert payload['participant']['email'] == 'privacy.export@example.org'
+
+        with SessionLocal() as db:
+            event = db.scalar(
+                select(AuditEvent)
+                .where(AuditEvent.action == 'privacy.participant_exported', AuditEvent.entity_id == str(participant_id))
+                .order_by(AuditEvent.id.desc())
+            )
+            assert event is not None
+
+
+def test_researcher_is_blocked_from_admin_privacy_functions():
+    from app.models import User
+    from app.security import hash_password
+    with client:
+        client.cookies.clear()
+        auth()
+        participant = post_with_csrf(
+            '/participants',
+            data={
+                'reference': 'PRIV-BLOCK-1',
+                'name': 'Privacy Block',
+                'email': 'privacy.block@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant.headers['location'].rsplit('/', 1)[-1])
+
+        researcher_email = f"{unique_value('privacy-researcher')}@example.org"
+        researcher_password = 'SecurePass123!'
+        with SessionLocal() as db:
+            owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            db.add(User(organisation_id=owner.organisation_id, name='Privacy Researcher', email=researcher_email, password_hash=hash_password(researcher_password), role='researcher'))
+            db.commit()
+
+        client.cookies.clear()
+        login_response = login_as(researcher_email, researcher_password)
+        assert login_response.status_code == 303
+
+        assert client.get(f'/participants/{participant_id}/export').status_code == 403
+        assert post_with_csrf(f'/participants/{participant_id}/privacy/delete-request', follow_redirects=False).status_code == 403
+        assert post_with_csrf('/privacy/retention/apply', follow_redirects=False).status_code == 403
+
+
+def test_privacy_deletion_workflow_hard_deletes_without_related_records():
+    from app.models import AuditEvent, Participant
+    with client:
+        client.cookies.clear()
+        auth()
+        created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': 'PRIV-DEL-1',
+                'name': 'Delete Candidate',
+                'email': 'delete.candidate@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
+
+        start = post_with_csrf(f'/participants/{participant_id}/privacy/delete-request', follow_redirects=False)
+        assert start.status_code == 303
+
+        detail = client.get(f'/participants/{participant_id}')
+        token_match = re.search(r'name="workflow_token" value="([^"]+)"', detail.text)
+        assert token_match is not None
+        workflow_token = token_match.group(1)
+
+        execute = post_with_csrf(
+            f'/participants/{participant_id}/privacy/delete-execute',
+            data={'workflow_token': workflow_token, 'mode': 'delete'},
+            follow_redirects=False,
+        )
+        assert execute.status_code == 303
+        assert execute.headers['location'] == '/participants'
+
+        with SessionLocal() as db:
+            row = db.get(Participant, participant_id)
+            assert row is None
+            event = db.scalar(
+                select(AuditEvent)
+                .where(AuditEvent.action == 'privacy.participant_deleted', AuditEvent.entity_id == str(participant_id))
+                .order_by(AuditEvent.id.desc())
+            )
+            assert event is not None
+
+
+def test_privacy_deletion_workflow_anonymises_when_related_records_exist():
+    from app.models import AuditEvent, Participant
+    with client:
+        client.cookies.clear()
+        auth()
+        created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': 'PRIV-ANON-1',
+                'name': 'Anon Candidate',
+                'email': 'anon.candidate@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': 'sensitive',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
+        studies = client.get('/studies')
+        study_id = int(studies.text.split('/studies/')[1].split('"')[0])
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+
+        post_with_csrf(f'/participants/{participant_id}/privacy/delete-request', follow_redirects=False)
+        detail = client.get(f'/participants/{participant_id}')
+        token_match = re.search(r'name="workflow_token" value="([^"]+)"', detail.text)
+        assert token_match is not None
+        workflow_token = token_match.group(1)
+
+        execute = post_with_csrf(
+            f'/participants/{participant_id}/privacy/delete-execute',
+            data={'workflow_token': workflow_token, 'mode': 'auto'},
+            follow_redirects=False,
+        )
+        assert execute.status_code == 303
+
+        with SessionLocal() as db:
+            row = db.get(Participant, participant_id)
+            assert row is not None
+            assert row.email is None
+            assert row.phone is None
+            assert row.name.startswith('Anonymised Participant')
+            assert row.reference.startswith('ANON-')
+            event = db.scalar(
+                select(AuditEvent)
+                .where(AuditEvent.action == 'privacy.participant_anonymised', AuditEvent.entity_id == str(participant_id))
+                .order_by(AuditEvent.id.desc())
+            )
+            assert event is not None
+
+
+def test_privacy_retention_apply_processes_configured_participants_and_audits():
+    from app.models import AuditEvent, Participant
+    original_days = settings.privacy_retention_days
+    original_statuses = settings.privacy_retention_statuses
+    original_action = settings.privacy_retention_action
+    try:
+        settings.privacy_retention_days = 1
+        settings.privacy_retention_statuses = 'withdrawn'
+        settings.privacy_retention_action = 'anonymise'
+
+        with client:
+            client.cookies.clear()
+            auth()
+            created = post_with_csrf(
+                '/participants',
+                data={
+                    'reference': 'PRIV-RET-1',
+                    'name': 'Retention Candidate',
+                    'email': 'retention.candidate@example.org',
+                    'phone': '',
+                    'status_value': 'withdrawn',
+                    'consent_status': 'withdrawn',
+                    'communication_preference': 'email',
+                    'tags': '',
+                    'notes': '',
+                },
+                follow_redirects=False,
+            )
+            participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
+
+            with SessionLocal() as db:
+                row = db.get(Participant, participant_id)
+                row.created_at = now() - timedelta(days=30)
+                db.commit()
+
+            apply_result = post_with_csrf('/privacy/retention/apply', follow_redirects=False)
+            assert apply_result.status_code == 303
+
+            with SessionLocal() as db:
+                refreshed = db.get(Participant, participant_id)
+                assert refreshed is not None
+                assert refreshed.name.startswith('Anonymised Participant')
+                summary = db.scalar(
+                    select(AuditEvent)
+                    .where(AuditEvent.action == 'privacy.retention_applied')
+                    .order_by(AuditEvent.id.desc())
+                )
+                assert summary is not None
+                assert '"processed":' in summary.detail
+    finally:
+        settings.privacy_retention_days = original_days
+        settings.privacy_retention_statuses = original_statuses
+        settings.privacy_retention_action = original_action
+
+
 def test_study_and_project_edit_forms_render():
     with client:
         auth()

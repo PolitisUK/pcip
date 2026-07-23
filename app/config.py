@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     entra_auto_provision: bool = False
     entra_default_role: str = "researcher"
     applicationinsights_connection_string: str | None = None
+    privacy_retention_days: int = 365
+    privacy_retention_statuses: str = "withdrawn,completed"
+    privacy_retention_action: str = "anonymise"
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
 

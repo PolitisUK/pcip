@@ -254,6 +254,129 @@ def participant(db,i,o):
     return r
 
 
+def privacy_workflow_key(participant_id: int) -> str:
+    return f"privacy_delete:{participant_id}"
+
+
+def _iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt else None
+
+
+def participant_related_counts(db: Session, participant_id: int, organisation_id: int) -> dict[str, int]:
+    return {
+        "enrolments": db.scalar(select(func.count(StudyEnrolment.id)).where(StudyEnrolment.organisation_id == organisation_id, StudyEnrolment.participant_id == participant_id)) or 0,
+        "responses": db.scalar(select(func.count(ActivityResponse.id)).where(ActivityResponse.organisation_id == organisation_id, ActivityResponse.participant_id == participant_id)) or 0,
+        "messages": db.scalar(select(func.count(ParticipantMessage.id)).where(ParticipantMessage.organisation_id == organisation_id, ParticipantMessage.participant_id == participant_id)) or 0,
+        "invitations": db.scalar(select(func.count(ParticipantInvitation.id)).where(ParticipantInvitation.organisation_id == organisation_id, ParticipantInvitation.participant_id == participant_id)) or 0,
+        "evidence": db.scalar(select(func.count(EvidenceFile.id)).where(EvidenceFile.organisation_id == organisation_id, EvidenceFile.participant_id == participant_id)) or 0,
+    }
+
+
+def participant_has_related_data(counts: dict[str, int]) -> bool:
+    return any(value > 0 for value in counts.values())
+
+
+def anonymise_participant_record(row: Participant):
+    row.reference = f"ANON-{row.id}"
+    row.name = f"Anonymised Participant {row.id}"
+    row.email = None
+    row.phone = None
+    row.tags = ""
+    row.demographics_json = "{}"
+    row.notes = ""
+    row.communication_preference = "none"
+    row.status = ParticipantStatus.withdrawn.value
+    row.consent_status = ConsentStatus.withdrawn.value
+
+
+def participant_export_payload(db: Session, row: Participant):
+    enrolments = db.scalars(select(StudyEnrolment).where(StudyEnrolment.organisation_id == row.organisation_id, StudyEnrolment.participant_id == row.id).order_by(StudyEnrolment.id.asc())).all()
+    responses = db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id == row.organisation_id, ActivityResponse.participant_id == row.id).order_by(ActivityResponse.id.asc())).all()
+    messages = db.scalars(select(ParticipantMessage).where(ParticipantMessage.organisation_id == row.organisation_id, ParticipantMessage.participant_id == row.id).order_by(ParticipantMessage.id.asc())).all()
+    invitations = db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.organisation_id == row.organisation_id, ParticipantInvitation.participant_id == row.id).order_by(ParticipantInvitation.id.asc())).all()
+    evidence = db.scalars(select(EvidenceFile).where(EvidenceFile.organisation_id == row.organisation_id, EvidenceFile.participant_id == row.id).order_by(EvidenceFile.id.asc())).all()
+    return {
+        "participant": {
+            "id": row.id,
+            "organisation_id": row.organisation_id,
+            "reference": row.reference,
+            "name": row.name,
+            "email": row.email,
+            "phone": row.phone,
+            "status": row.status,
+            "consent_status": row.consent_status,
+            "communication_preference": row.communication_preference,
+            "tags": row.tags,
+            "demographics_json": row.demographics_json,
+            "notes": row.notes,
+            "created_by_id": row.created_by_id,
+            "created_at": _iso(row.created_at),
+            "updated_at": _iso(row.updated_at),
+        },
+        "study_enrolments": [
+            {
+                "id": x.id,
+                "study_id": x.study_id,
+                "status": x.status,
+                "enrolled_at": _iso(x.enrolled_at),
+            }
+            for x in enrolments
+        ],
+        "activity_responses": [
+            {
+                "id": x.id,
+                "study_id": x.study_id,
+                "activity_id": x.activity_id,
+                "status": x.status,
+                "value_json": x.value_json,
+                "submitted_at": _iso(x.submitted_at),
+                "updated_at": _iso(x.updated_at),
+            }
+            for x in responses
+        ],
+        "participant_messages": [
+            {
+                "id": x.id,
+                "study_id": x.study_id,
+                "sender_type": x.sender_type,
+                "sender_user_id": x.sender_user_id,
+                "body": x.body,
+                "internal_note": x.internal_note,
+                "created_at": _iso(x.created_at),
+            }
+            for x in messages
+        ],
+        "participant_invitations": [
+            {
+                "id": x.id,
+                "study_id": x.study_id,
+                "expires_at": _iso(x.expires_at),
+                "opened_at": _iso(x.opened_at),
+                "accepted_at": _iso(x.accepted_at),
+                "revoked_at": _iso(x.revoked_at),
+                "created_at": _iso(x.created_at),
+            }
+            for x in invitations
+        ],
+        "evidence_files": [
+            {
+                "id": x.id,
+                "study_id": x.study_id,
+                "activity_id": x.activity_id,
+                "response_id": x.response_id,
+                "original_name": x.original_name,
+                "content_type": x.content_type,
+                "size_bytes": x.size_bytes,
+                "sha256_hex": x.sha256_hex,
+                "scan_status": x.scan_status,
+                "storage_provider": x.storage_provider,
+                "created_at": _iso(x.created_at),
+            }
+            for x in evidence
+        ],
+    }
+
+
 def study_permission(db: Session, user: User, study_row: Study) -> str | None:
     if user.role in {"owner", "admin"}:
         return "manage"
@@ -762,7 +885,115 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
         invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id,ParticipantInvitation.study_id.in_(allowed_ids)).order_by(ParticipantInvitation.created_at.desc())).all()
         responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(allowed_ids)).order_by(ActivityResponse.updated_at.desc())).all()
         messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id,ParticipantMessage.study_id.in_(allowed_ids)).order_by(ParticipantMessage.created_at)).all()
-    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus])
+    privacy_counts = participant_related_counts(db, p.id, u.organisation_id) if u.role in {"owner", "admin"} else None
+    privacy_workflow_token = request.session.get(privacy_workflow_key(p.id)) if u.role in {"owner", "admin"} else None
+    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
+
+
+@app.get("/participants/{participant_id}/export")
+def export_participant_data(participant_id:int,u=Depends(roles("owner","admin")),db:Session=Depends(get_db)):
+    p=participant(db,participant_id,u.organisation_id)
+    payload = participant_export_payload(db, p)
+    audit(db,u.organisation_id,u.id,"privacy.participant_exported","participant",p.id,p.reference)
+    db.commit()
+    filename = f"participant-{p.id}-export.json"
+    return JSONResponse(
+        payload,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/participants/{participant_id}/privacy/delete-request")
+def participant_delete_request(participant_id:int,request:Request,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    p=participant(db,participant_id,u.organisation_id)
+    request.session[privacy_workflow_key(p.id)] = new_token()
+    return RedirectResponse(f"/participants/{p.id}#privacy",303)
+
+
+@app.post("/participants/{participant_id}/privacy/delete-execute")
+def participant_delete_execute(participant_id:int,request:Request,workflow_token:str=Form(""),mode:str=Form("auto"),u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    p=participant(db,participant_id,u.organisation_id)
+    expected = request.session.get(privacy_workflow_key(p.id))
+    if not expected or not workflow_token or not secrets.compare_digest(expected, workflow_token):
+        raise HTTPException(400, "Privacy deletion confirmation is missing or expired.")
+    request.session.pop(privacy_workflow_key(p.id), None)
+    if mode not in {"auto", "delete", "anonymise"}:
+        raise HTTPException(400, "Invalid privacy action.")
+    counts = participant_related_counts(db, p.id, u.organisation_id)
+    has_related = participant_has_related_data(counts)
+
+    if mode == "delete" and has_related:
+        raise HTTPException(400, "Deletion is not available for participants with related records. Use anonymisation.")
+
+    applied = mode
+    if mode == "auto":
+        applied = "anonymise" if has_related else "delete"
+
+    if applied == "delete":
+        reference = p.reference
+        pid = p.id
+        db.delete(p)
+        audit(db,u.organisation_id,u.id,"privacy.participant_deleted","participant",pid,json.dumps({"reference": reference, "counts": counts}))
+        db.commit()
+        return RedirectResponse("/participants",303)
+
+    anonymise_participant_record(p)
+    audit(db,u.organisation_id,u.id,"privacy.participant_anonymised","participant",p.id,json.dumps({"counts": counts}))
+    db.commit()
+    return RedirectResponse(f"/participants/{p.id}#privacy",303)
+
+
+@app.post("/privacy/retention/apply")
+def apply_privacy_retention(request:Request,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    statuses = [x.strip() for x in settings.privacy_retention_statuses.split(",") if x.strip()]
+    if not statuses:
+        raise HTTPException(400, "No retention statuses configured.")
+    days = max(0, int(settings.privacy_retention_days))
+    cutoff = now() - timedelta(days=days)
+    mode = settings.privacy_retention_action.strip().lower()
+    if mode not in {"delete", "anonymise"}:
+        raise HTTPException(400, "PRIVACY_RETENTION_ACTION must be delete or anonymise.")
+
+    rows = db.scalars(
+        select(Participant).where(
+            Participant.organisation_id == u.organisation_id,
+            Participant.status.in_(statuses),
+            Participant.created_at <= cutoff,
+        )
+    ).all()
+
+    processed = 0
+    deleted = 0
+    anonymised = 0
+    for p in rows:
+        counts = participant_related_counts(db, p.id, u.organisation_id)
+        has_related = participant_has_related_data(counts)
+        action = mode
+        if action == "delete" and has_related:
+            action = "anonymise"
+        processed += 1
+        if action == "delete":
+            pid = p.id
+            reference = p.reference
+            db.delete(p)
+            deleted += 1
+            audit(db,u.organisation_id,u.id,"privacy.participant_deleted","participant",pid,json.dumps({"reason": "retention", "reference": reference, "counts": counts}))
+        else:
+            anonymise_participant_record(p)
+            anonymised += 1
+            audit(db,u.organisation_id,u.id,"privacy.participant_anonymised","participant",p.id,json.dumps({"reason": "retention", "counts": counts}))
+
+    audit(
+        db,
+        u.organisation_id,
+        u.id,
+        "privacy.retention_applied",
+        "organisation",
+        u.organisation_id,
+        json.dumps({"processed": processed, "deleted": deleted, "anonymised": anonymised, "days": days, "statuses": statuses, "configured_mode": mode}),
+    )
+    db.commit()
+    return RedirectResponse("/participants",303)
 @app.post("/participants/{participant_id}/update")
 def update_participant(participant_id:int,name:str=Form(None),email:str=Form(None),phone:str=Form(None),status_value:str=Form(...),consent_status:str=Form(...),communication_preference:str=Form(...),tags:str=Form(""),notes:str=Form(""),demographics_json:str=Form("{}"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); enum_value(status_value,ParticipantStatus,"participant status"); enum_value(consent_status,ConsentStatus,"consent status")
