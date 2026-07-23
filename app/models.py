@@ -66,6 +66,12 @@ class User(Base):
     external_provider: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     external_subject: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    session_version: Mapped[int] = mapped_column(Integer, default=1)
+    failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     role: Mapped[str] = mapped_column(String(30), default=Role.researcher.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

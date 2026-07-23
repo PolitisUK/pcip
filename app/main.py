@@ -55,8 +55,19 @@ def enum_value(v, e, field):
     return v
 
 def current_user(request: Request, db: Session = Depends(get_db)):
-    uid = decode_session(request.cookies.get("session", "")); u = db.get(User, uid) if uid else None
-    if not u or not u.is_active: raise HTTPException(303, headers={"Location":"/login"})
+    identity = decode_session(request.cookies.get("session", ""))
+
+    if not identity:
+        raise HTTPException(303, headers={"Location": "/login"})
+
+    u = db.get(User, identity.user_id)
+
+    if not u or not u.is_active:
+        raise HTTPException(303, headers={"Location": "/login"})
+
+    if u.session_version != identity.session_version:
+        raise HTTPException(303, headers={"Location": "/login"})
+
     return u
 
 def roles(*allowed):
@@ -148,7 +159,7 @@ def login(request:Request,email:str=Form(...),password:str=Form(...),db:Session=
     if not settings.local_login_enabled: return render(request,"login.html",error="Password sign-in is disabled. Use Microsoft sign-in.")
     u=db.scalar(select(User).where(User.email==email.lower().strip(),User.is_active==True))
     if not u or not u.password_hash or not verify_password(password,u.password_hash): return render(request,"login.html",error="Email or password is incorrect.")
-    u.last_login_at=now(); audit(db,u.organisation_id,u.id,"auth.login","user",u.id); db.commit(); r=RedirectResponse("/",303); r.set_cookie("session",encode_session(u.id),httponly=True,samesite="strict",secure=settings.cookie_secure,max_age=43200); return r
+    u.last_login_at=now(); audit(db,u.organisation_id,u.id,"auth.login","user",u.id); db.commit(); r=RedirectResponse("/",303); r.set_cookie("session",encode_session(u.id, u.session_version),httponly=True,samesite="strict",secure=settings.cookie_secure,max_age=43200); return r
 
 @app.get("/auth/entra/login")
 async def entra_login(request: Request):
@@ -196,7 +207,7 @@ async def entra_callback(request: Request, db: Session = Depends(get_db)):
     audit(db, user.organisation_id, user.id, "auth.entra_login", "user", user.id)
     db.commit()
     response = RedirectResponse("/", 303)
-    response.set_cookie("session", encode_session(user.id), httponly=True, samesite="lax", secure=settings.cookie_secure, max_age=43200)
+    response.set_cookie("session", encode_session(user.id, user.session_version), httponly=True, samesite="lax", secure=settings.cookie_secure, max_age=43200)
     return response
 
 @app.post("/logout")
@@ -511,7 +522,7 @@ def accept_invitation(token:str=Form(...),password:str=Form(...),db:Session=Depe
     inv=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token)))
     if not inv or inv.accepted_at or inv.revoked_at or not unexpired(inv.expires_at): raise HTTPException(400,"Invitation invalid or expired.")
     if len(password)<10: raise HTTPException(400,"Password must contain at least 10 characters.")
-    u=User(organisation_id=inv.organisation_id,name=inv.name,email=inv.email,password_hash=hash_password(password),role=inv.role); db.add(u); db.flush(); inv.accepted_at=now(); db.commit(); r=RedirectResponse("/",303); r.set_cookie("session",encode_session(u.id),httponly=True,samesite="strict",secure=settings.cookie_secure,max_age=43200); return r
+    u=User(organisation_id=inv.organisation_id,name=inv.name,email=inv.email,password_hash=hash_password(password),role=inv.role); db.add(u); db.flush(); inv.accepted_at=now(); db.commit(); r=RedirectResponse("/",303); r.set_cookie("session",encode_session(u.id, u.session_version),httponly=True,samesite="strict",secure=settings.cookie_secure,max_age=43200); return r
 @app.post("/invitations/{invitation_id}/revoke")
 def revoke_researcher_invite(invitation_id:int,u=Depends(roles("owner","admin")),db:Session=Depends(get_db)):
     inv=db.scalar(select(Invitation).where(Invitation.id==invitation_id,Invitation.organisation_id==u.organisation_id));
