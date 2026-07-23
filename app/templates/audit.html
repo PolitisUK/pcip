@@ -1,19 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Audit log{% endblock %}
 {% block page_description %}<p class="page-description">Review a chronological record of platform activity and significant user actions.</p>{% endblock %}
+{% block contextual_help %}
+<p class="muted">Use this log to confirm operational activity, investigate incidents, and verify governance actions.</p>
+{% endblock %}
 {% block content %}
-<div class="card">
-	<div class="section-head"><h2>{{ total }} events</h2><span>Page {{ page }} of {{ pages }}</span></div>
+<section class="card card--data">
+	<div class="section-head"><h2>{{ total }} events</h2><span class="muted">Page {{ page }} of {{ pages }}</span></div>
 	<table class="table">
 		<thead><tr><th>Time</th><th>Action</th><th>Entity</th><th>Detail</th></tr></thead>
 		<tbody>
 			{% for e in events %}
-			<tr><td>{{ e.created_at.strftime('%d %b %Y %H:%M') }}</td><td>{{ e.action }}</td><td>{{ e.entity_type }} #{{ e.entity_id }}</td><td>{{ e.detail }}</td></tr>
+			<tr><td>{{ e.created_at.strftime('%d %b %Y %H:%M') }}</td><td>{{ e.action|replace('_', ' ')|title }}</td><td>{{ e.entity_type|replace('_', ' ')|title }} #{{ e.entity_id }}</td><td>{{ e.detail }}</td></tr>
 			{% else %}
 			<tr><td colspan="4" class="empty">No audit events are available for this page.</td></tr>
 			{% endfor %}
 		</tbody>
 	</table>
 	<div class="pagination">{% if page>1 %}<a class="btn secondary" href="?page={{ page-1 }}">Previous</a>{% endif %}{% if page<pages %}<a class="btn secondary" href="?page={{ page+1 }}">Next</a>{% endif %}</div>
-</div>
+</section>
 {% endblock %}

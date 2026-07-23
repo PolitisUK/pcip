@@ -1,21 +1,21 @@
 {% extends "base.html" %}
-{% block title %}First project wizard{% endblock %}
-{% block page_description %}<p class="page-description">Create a project and first study together in one guided setup flow.</p>{% endblock %}
+{% block title %}Create your first engagement project{% endblock %}
+{% block page_description %}<p class="page-description">Set up a project and first study together in one guided setup flow.</p>{% endblock %}
 {% block contextual_help %}
-<p class="muted">This wizard sets up a project and first study in one flow. You can edit every field later from the project and study pages.</p>
+<p class="muted">This guided setup creates the project and first study together. You can edit every field later from the project and study pages.</p>
 {% endblock %}
 {% block content %}
-<div class="card pilot-callout wizard-hero">
+<div class="card wizard-card wizard-hero">
   <div class="wizard-progress" aria-hidden="true">
-    <span class="wizard-step is-active">1</span>
-    <span class="wizard-step">2</span>
+    <span class="wizard-step is-complete">1</span>
+    <span class="wizard-step is-active">2</span>
     <span class="wizard-step is-optional">3</span>
   </div>
   <h2>Launch your first pilot project</h2>
   <ol class="wizard-steps">
-    <li>Create a project shell for your service challenge.</li>
-    <li>Add the first study for participant evidence collection.</li>
-    <li>Optionally create a starter activity to speed up onboarding.</li>
+    <li><strong>Project:</strong> create the engagement project and describe the service challenge.</li>
+    <li><strong>Study:</strong> add the first study for participant evidence collection.</li>
+    <li><strong>Optional:</strong> create a starter activity so the team can test the workflow immediately.</li>
   </ol>
 </div>
 
@@ -82,14 +82,14 @@
       </div>
     </div>
     <div class="field">
-      <label>Study description</label>
+        <label>Study description</label>
       <textarea name="study_description" rows="3" placeholder="What participant insight is needed for this pilot?"></textarea>
     </div>
-    <label class="check"><input type="checkbox" name="add_starter_activity" value="true" checked> Add a starter activity so researchers can test participant workflows immediately.</label>
+    <label class="check"><input type="checkbox" name="add_starter_activity" value="true" checked> Add a starter activity so the team can test participant workflows immediately.</label>
   </div>
 
   <div class="inline">
-    <button>Create project and study</button>
+    <button>Create engagement project</button>
     <a class="btn secondary" href="/projects">Cancel</a>
   </div>
 </form>

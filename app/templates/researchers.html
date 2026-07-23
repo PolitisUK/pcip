@@ -1,8 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Researchers{% endblock %}
 {% block page_description %}<p class="page-description">Invite colleagues and manage access for the people who administer your workspace.</p>{% endblock %}
+{% block contextual_help %}
+<p class="muted">Owners and administrators can invite team members and revoke invitations that are no longer needed.</p>
+{% endblock %}
 {% block content %}
-<div class="card">
+<section class="card card--action">
 	<h2>Invite a researcher</h2>
 	<form method="post" action="/researchers/invite" class="row">
 		<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -11,10 +14,10 @@
 		<div class="field"><label>Role</label><select name="role">{% for r in roles %}<option>{{ r }}</option>{% endfor %}</select></div>
 		<button>Send invitation</button>
 	</form>
-</div>
+</section>
 
-<div class="section card">
-	<h2>Active users</h2>
+<section class="section card card--data">
+	<div class="section-head"><h2>Active users</h2><span class="muted">{{ users|length }} total</span></div>
 	<table class="table">
 		<thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead>
 		<tbody>
@@ -25,10 +28,10 @@
 			{% endfor %}
 		</tbody>
 	</table>
-</div>
+</section>
 
-<div class="section card">
-	<h2>Invitations</h2>
+<section class="section card card--data">
+	<div class="section-head"><h2>Invitations</h2><span class="muted">{{ invitations|length }} total</span></div>
 	<table class="table">
 		<thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead>
 		<tbody>
@@ -45,5 +48,5 @@
 			{% endfor %}
 		</tbody>
 	</table>
-</div>
+</section>
 {% endblock %}

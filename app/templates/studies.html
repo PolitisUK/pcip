@@ -5,11 +5,15 @@
 <p class="muted">Each study should include clear participant prompts and realistic timelines. Start with one short activity to test your pilot journey end-to-end.</p>
 {% endblock %}
 {% block content %}
-<div class="card">
+<section class="card card--hero section-compact">
 	<p>Studies organise diary research, interviews, walk-alongs and other evidence-collection programmes within a project.</p>
-</div>
+</section>
 
-<div class="card section">
+<section class="card card--data section">
+	<div class="section-head">
+		<h2>All studies</h2>
+		<span class="muted">{{ studies|length }} total</span>
+	</div>
 	<table class="table">
 		<thead><tr><th>Study</th><th>Project</th><th>Method</th><th>Participants</th><th>Status</th></tr></thead>
 		<tbody>
@@ -26,5 +30,5 @@
 			{% endfor %}
 		</tbody>
 	</table>
-</div>
+</section>
 {% endblock %}

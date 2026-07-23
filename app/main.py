@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import re
 import logging
 import time
 import csv, io, json, secrets
@@ -219,6 +220,27 @@ def log_webhook_rejection(request: Request, reason: str):
 def enum_value(v, e, field):
     if v not in {x.value for x in e}: raise HTTPException(400, f"Invalid {field}.")
     return v
+
+
+def nonblank(value: str, field: str, min_length: int = 1) -> str:
+    cleaned = value.strip()
+    if len(cleaned) < min_length:
+        if min_length == 1:
+            raise HTTPException(400, f"{field} is required.")
+        raise HTTPException(400, f"{field} must be at least {min_length} characters long.")
+    return cleaned
+
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def validated_email(value: str) -> str | None:
+    cleaned = value.strip().lower()
+    if not cleaned:
+        return None
+    if not EMAIL_RE.fullmatch(cleaned):
+        raise HTTPException(400, "Please enter a valid email address.")
+    return cleaned
 
 
 def bump_session_version(user: User):
@@ -1041,6 +1063,12 @@ def dashboard(request:Request,u=Depends(current_user),db:Session=Depends(get_db)
     studies=db.scalars(select(Study).where(Study.organisation_id==o).order_by(Study.updated_at.desc()).limit(6)).all()
     project_ids = {s.project_id for s in studies}
     pmap={p.id:p for p in db.scalars(select(Project).where(Project.organisation_id==o, Project.id.in_(project_ids))).all()} if project_ids else {}
+    recent_events = db.scalars(
+        select(AuditEvent)
+        .where(AuditEvent.organisation_id == o)
+        .order_by(AuditEvent.created_at.desc())
+        .limit(5)
+    ).all()
     onboarding={
         "has_project": metrics["projects"] > 0,
         "has_study": metrics["studies"] > 0,
@@ -1048,7 +1076,7 @@ def dashboard(request:Request,u=Depends(current_user),db:Session=Depends(get_db)
         "has_submission": metrics["submissions"] > 0,
         "can_seed": u.role in {"owner", "admin"},
     }
-    return render(request,"dashboard.html",user=u,metrics=metrics,studies=studies,project_map=pmap,onboarding=onboarding)
+    return render(request,"dashboard.html",user=u,metrics=metrics,studies=studies,project_map=pmap,onboarding=onboarding,recent_events=recent_events)
 
 
 @app.post("/pilot/sample-data")
@@ -1165,7 +1193,7 @@ def projects(request:Request,u=Depends(current_user),db:Session=Depends(get_db))
     rows=db.scalars(select(Project).where(Project.organisation_id==u.organisation_id).order_by(Project.updated_at.desc())).all(); counts=dict(db.execute(select(Study.project_id,func.count(Study.id)).where(Study.organisation_id==u.organisation_id).group_by(Study.project_id)).all()); return render(request,"projects.html",user=u,projects=rows,counts=counts,statuses=[x.value for x in ProjectStatus])
 @app.post("/projects")
 def create_project(title:str=Form(...),code:str=Form(...),description:str=Form(""),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    enum_value(status_value,ProjectStatus,"project status"); row=Project(organisation_id=u.organisation_id,title=title.strip(),code=code.strip().upper(),description=description.strip(),status=status_value,created_by_id=u.id); db.add(row)
+    enum_value(status_value,ProjectStatus,"project status"); cleaned_title=nonblank(title,"Project title",3); cleaned_code=nonblank(code,"Project code").upper(); row=Project(organisation_id=u.organisation_id,title=cleaned_title,code=cleaned_code,description=description.strip(),status=status_value,created_by_id=u.id); db.add(row)
     try: db.flush(); audit(db,u.organisation_id,u.id,"project.created","project",row.id,row.title); db.commit()
     except Exception: db.rollback(); raise HTTPException(400,"Project code must be unique.")
     return RedirectResponse(f"/projects/{row.id}",303)
@@ -1196,7 +1224,7 @@ def studies_page(request:Request,u=Depends(current_user),db:Session=Depends(get_
 def create_study(project_id:int,title:str=Form(...),code:str=Form(...),description:str=Form(""),methodology:str=Form("diary"),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); enum_value(status_value,StudyStatus,"study status"); allowed={"diary","walk_along","interview","focus_group","co_design","mixed_method"}
     if methodology not in allowed: raise HTTPException(400,"Invalid methodology.")
-    s=Study(organisation_id=u.organisation_id,project_id=p.id,title=title.strip(),code=code.strip().upper(),description=description.strip(),methodology=methodology,status=status_value,created_by_id=u.id); db.add(s)
+    cleaned_title=nonblank(title,"Study title",3); cleaned_code=nonblank(code,"Study code").upper(); s=Study(organisation_id=u.organisation_id,project_id=p.id,title=cleaned_title,code=cleaned_code,description=description.strip(),methodology=methodology,status=status_value,created_by_id=u.id); db.add(s)
     try: db.flush(); audit(db,u.organisation_id,u.id,"study.created","study",s.id,s.title); db.commit()
     except Exception: db.rollback(); raise HTTPException(400,"Study code must be unique.")
     return RedirectResponse(f"/studies/{s.id}",303)
@@ -1266,7 +1294,8 @@ def participants_page(request:Request,q:str="",status_filter:str="",page:int=1,u
 @app.post("/participants")
 def create_participant(reference:str=Form(...),name:str=Form(...),email:str=Form(""),phone:str=Form(""),status_value:str=Form("prospective"),consent_status:str=Form("pending"),communication_preference:str=Form("email"),tags:str=Form(""),notes:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     enum_value(status_value,ParticipantStatus,"participant status"); enum_value(consent_status,ConsentStatus,"consent status")
-    row=Participant(organisation_id=u.organisation_id,reference=reference.strip().upper(),name=name.strip(),email=email.lower().strip() or None,phone=phone.strip() or None,status=status_value,consent_status=consent_status,communication_preference=communication_preference,tags=tags.strip(),notes=notes.strip(),created_by_id=u.id); db.add(row)
+    cleaned_reference=nonblank(reference,"Participant reference").upper(); cleaned_name=nonblank(name,"Participant name",3); cleaned_email=validated_email(email)
+    row=Participant(organisation_id=u.organisation_id,reference=cleaned_reference,name=cleaned_name,email=cleaned_email,phone=phone.strip() or None,status=status_value,consent_status=consent_status,communication_preference=communication_preference,tags=tags.strip(),notes=notes.strip(),created_by_id=u.id); db.add(row)
     try: db.flush(); audit(db,u.organisation_id,u.id,"participant.created","participant",row.id,row.reference); db.commit()
     except Exception: db.rollback(); raise HTTPException(400,"Participant reference must be unique.")
     return RedirectResponse(f"/participants/{row.id}",303)
