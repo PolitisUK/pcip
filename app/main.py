@@ -394,12 +394,21 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def participant_related_counts(db: Session, participant_id: int, organisation_id: int) -> dict[str, int]:
+    row = db.execute(
+        select(
+            select(func.count(StudyEnrolment.id)).where(StudyEnrolment.organisation_id == organisation_id, StudyEnrolment.participant_id == participant_id).scalar_subquery().label("enrolments"),
+            select(func.count(ActivityResponse.id)).where(ActivityResponse.organisation_id == organisation_id, ActivityResponse.participant_id == participant_id).scalar_subquery().label("responses"),
+            select(func.count(ParticipantMessage.id)).where(ParticipantMessage.organisation_id == organisation_id, ParticipantMessage.participant_id == participant_id).scalar_subquery().label("messages"),
+            select(func.count(ParticipantInvitation.id)).where(ParticipantInvitation.organisation_id == organisation_id, ParticipantInvitation.participant_id == participant_id).scalar_subquery().label("invitations"),
+            select(func.count(EvidenceFile.id)).where(EvidenceFile.organisation_id == organisation_id, EvidenceFile.participant_id == participant_id).scalar_subquery().label("evidence"),
+        )
+    ).one()
     return {
-        "enrolments": db.scalar(select(func.count(StudyEnrolment.id)).where(StudyEnrolment.organisation_id == organisation_id, StudyEnrolment.participant_id == participant_id)) or 0,
-        "responses": db.scalar(select(func.count(ActivityResponse.id)).where(ActivityResponse.organisation_id == organisation_id, ActivityResponse.participant_id == participant_id)) or 0,
-        "messages": db.scalar(select(func.count(ParticipantMessage.id)).where(ParticipantMessage.organisation_id == organisation_id, ParticipantMessage.participant_id == participant_id)) or 0,
-        "invitations": db.scalar(select(func.count(ParticipantInvitation.id)).where(ParticipantInvitation.organisation_id == organisation_id, ParticipantInvitation.participant_id == participant_id)) or 0,
-        "evidence": db.scalar(select(func.count(EvidenceFile.id)).where(EvidenceFile.organisation_id == organisation_id, EvidenceFile.participant_id == participant_id)) or 0,
+        "enrolments": int(row.enrolments or 0),
+        "responses": int(row.responses or 0),
+        "messages": int(row.messages or 0),
+        "invitations": int(row.invitations or 0),
+        "evidence": int(row.evidence or 0),
     }
 
 
@@ -758,6 +767,14 @@ def startup():
             db.add(Activity(organisation_id=org.id,study_id=s.id,title="First impressions",prompt="Tell us about your latest visit to the town centre.",activity_type="long_text",position=1))
             audit(db,org.id,u.id,"platform.seeded","organisation",org.id,"Initial demonstration tenant created"); db.commit()
 
+
+@app.middleware("http")
+async def static_cache_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static/") and response.status_code == 200:
+        response.headers.setdefault("Cache-Control", "public, max-age=86400")
+    return response
+
 @app.get("/health")
 def health():
     return {
@@ -1003,8 +1020,27 @@ def reset_password(request: Request, token:str=Form(""),password:str=Form(...),c
 @app.get("/",response_class=HTMLResponse)
 def dashboard(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
     o=u.organisation_id
-    metrics={"projects":db.scalar(select(func.count(Project.id)).where(Project.organisation_id==o)) or 0,"studies":db.scalar(select(func.count(Study.id)).where(Study.organisation_id==o)) or 0,"participants":db.scalar(select(func.count(Participant.id)).where(Participant.organisation_id==o)) or 0,"active":db.scalar(select(func.count(Participant.id)).where(Participant.organisation_id==o,Participant.status=="active")) or 0,"invitations":db.scalar(select(func.count(ParticipantInvitation.id)).where(ParticipantInvitation.organisation_id==o,ParticipantInvitation.accepted_at.is_(None),ParticipantInvitation.revoked_at.is_(None))) or 0,"submissions":db.scalar(select(func.count(ActivityResponse.id)).where(ActivityResponse.organisation_id==o,ActivityResponse.status=="submitted")) or 0}
-    studies=db.scalars(select(Study).where(Study.organisation_id==o).order_by(Study.updated_at.desc()).limit(6)).all(); pmap={p.id:p for p in db.scalars(select(Project).where(Project.organisation_id==o)).all()}
+    metrics_row = db.execute(
+        select(
+            select(func.count(Project.id)).where(Project.organisation_id == o).scalar_subquery().label("projects"),
+            select(func.count(Study.id)).where(Study.organisation_id == o).scalar_subquery().label("studies"),
+            select(func.count(Participant.id)).where(Participant.organisation_id == o).scalar_subquery().label("participants"),
+            select(func.count(Participant.id)).where(Participant.organisation_id == o, Participant.status == "active").scalar_subquery().label("active"),
+            select(func.count(ParticipantInvitation.id)).where(ParticipantInvitation.organisation_id == o, ParticipantInvitation.accepted_at.is_(None), ParticipantInvitation.revoked_at.is_(None)).scalar_subquery().label("invitations"),
+            select(func.count(ActivityResponse.id)).where(ActivityResponse.organisation_id == o, ActivityResponse.status == "submitted").scalar_subquery().label("submissions"),
+        )
+    ).one()
+    metrics={
+        "projects": int(metrics_row.projects or 0),
+        "studies": int(metrics_row.studies or 0),
+        "participants": int(metrics_row.participants or 0),
+        "active": int(metrics_row.active or 0),
+        "invitations": int(metrics_row.invitations or 0),
+        "submissions": int(metrics_row.submissions or 0),
+    }
+    studies=db.scalars(select(Study).where(Study.organisation_id==o).order_by(Study.updated_at.desc()).limit(6)).all()
+    project_ids = {s.project_id for s in studies}
+    pmap={p.id:p for p in db.scalars(select(Project).where(Project.organisation_id==o, Project.id.in_(project_ids))).all()} if project_ids else {}
     onboarding={
         "has_project": metrics["projects"] > 0,
         "has_study": metrics["studies"] > 0,
@@ -1140,7 +1176,9 @@ def project_detail(project_id:int,request:Request,u=Depends(current_user),db:Ses
 def edit_project(project_id:int,title:str=Form(...),description:str=Form(""),status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); enum_value(status_value,ProjectStatus,"project status"); p.title=title.strip(); p.description=description.strip(); p.status=status_value; audit(db,u.organisation_id,u.id,"project.updated","project",p.id,p.title); db.commit(); return RedirectResponse(f"/projects/{p.id}",303)
 @app.post("/projects/{project_id}/status")
-def update_project_status(project_id:int,status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)): return edit_project(project_id,project(db,project_id,u.organisation_id).title,project(db,project_id,u.organisation_id).description,status_value,u,csrf_ok,db)
+def update_project_status(project_id:int,status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    p=project(db,project_id,u.organisation_id)
+    return edit_project(project_id,p.title,p.description,status_value,u,csrf_ok,db)
 
 @app.get("/studies",response_class=HTMLResponse)
 def studies_page(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
@@ -1148,7 +1186,12 @@ def studies_page(request:Request,u=Depends(current_user),db:Session=Depends(get_
     if u.role not in {"owner","admin","observer"}:
         permitted_ids=select(StudyAccess.study_id).where(StudyAccess.organisation_id==u.organisation_id,StudyAccess.user_id==u.id)
         stmt=stmt.where(or_(Study.created_by_id==u.id,Study.id.in_(permitted_ids)))
-    rows=db.scalars(stmt.order_by(Study.updated_at.desc())).all(); projects={p.id:p for p in db.scalars(select(Project).where(Project.organisation_id==u.organisation_id)).all()}; counts=dict(db.execute(select(StudyEnrolment.study_id,func.count()).where(StudyEnrolment.organisation_id==u.organisation_id).group_by(StudyEnrolment.study_id)).all()); return render(request,"studies.html",user=u,studies=rows,projects=projects,enrolment_counts=counts)
+    rows=db.scalars(stmt.order_by(Study.updated_at.desc())).all()
+    study_ids = [s.id for s in rows]
+    project_ids = {s.project_id for s in rows}
+    projects={p.id:p for p in db.scalars(select(Project).where(Project.organisation_id==u.organisation_id, Project.id.in_(project_ids))).all()} if project_ids else {}
+    counts=dict(db.execute(select(StudyEnrolment.study_id,func.count()).where(StudyEnrolment.organisation_id==u.organisation_id, StudyEnrolment.study_id.in_(study_ids)).group_by(StudyEnrolment.study_id)).all()) if study_ids else {}
+    return render(request,"studies.html",user=u,studies=rows,projects=projects,enrolment_counts=counts)
 @app.post("/projects/{project_id}/studies")
 def create_study(project_id:int,title:str=Form(...),code:str=Form(...),description:str=Form(""),methodology:str=Form("diary"),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); enum_value(status_value,StudyStatus,"study status"); allowed={"diary","walk_along","interview","focus_group","co_design","mixed_method"}
@@ -1159,11 +1202,21 @@ def create_study(project_id:int,title:str=Form(...),code:str=Form(...),descripti
     return RedirectResponse(f"/studies/{s.id}",303)
 @app.get("/studies/{study_id}",response_class=HTMLResponse)
 def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
-    s=study(db,study_id,u.organisation_id); permission=require_study_permission(db,u,s); p=project(db,s.project_id,u.organisation_id); acts=db.scalars(select(Activity).where(Activity.study_id==s.id,Activity.organisation_id==u.organisation_id).order_by(Activity.position)).all(); ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.study_id==s.id,StudyEnrolment.organisation_id==u.organisation_id)).all(); ps={x.id:x for x in db.scalars(select(Participant).where(Participant.organisation_id==u.organisation_id)).all()}; invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.study_id==s.id,ParticipantInvitation.organisation_id==u.organisation_id).order_by(ParticipantInvitation.created_at.desc())).all(); latest={}
+    s=study(db,study_id,u.organisation_id); permission=require_study_permission(db,u,s); p=project(db,s.project_id,u.organisation_id); acts=db.scalars(select(Activity).where(Activity.study_id==s.id,Activity.organisation_id==u.organisation_id).order_by(Activity.position)).all(); ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.study_id==s.id,StudyEnrolment.organisation_id==u.organisation_id)).all(); invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.study_id==s.id,ParticipantInvitation.organisation_id==u.organisation_id).order_by(ParticipantInvitation.created_at.desc())).all(); latest={}
     for i in invs: latest.setdefault(i.participant_id,i)
-    available=[x for x in ps.values() if x.id not in {e.participant_id for e in ens}]
+    enrolled_ids = {e.participant_id for e in ens}
+    if permission in {"edit", "manage"}:
+        ps={x.id:x for x in db.scalars(select(Participant).where(Participant.organisation_id==u.organisation_id)).all()}
+        available=[x for x in ps.values() if x.id not in enrolled_ids]
+    else:
+        ps={x.id:x for x in db.scalars(select(Participant).where(Participant.organisation_id==u.organisation_id, Participant.id.in_(enrolled_ids))).all()} if enrolled_ids else {}
+        available=[]
     response_counts=dict(db.execute(select(ActivityResponse.activity_id,func.count()).where(ActivityResponse.study_id==s.id,ActivityResponse.status=="submitted").group_by(ActivityResponse.activity_id)).all())
-    access_rows=db.scalars(select(StudyAccess).where(StudyAccess.study_id==s.id,StudyAccess.organisation_id==u.organisation_id)).all(); access_map={a.user_id:a for a in access_rows}; team=db.scalars(select(User).where(User.organisation_id==u.organisation_id,User.is_active==True).order_by(User.name)).all()
+    if u.role in {"owner", "admin"}:
+        access_rows=db.scalars(select(StudyAccess).where(StudyAccess.study_id==s.id,StudyAccess.organisation_id==u.organisation_id)).all(); access_map={a.user_id:a for a in access_rows}; team=db.scalars(select(User).where(User.organisation_id==u.organisation_id,User.is_active==True).order_by(User.name)).all()
+    else:
+        access_map = {}
+        team = []
     return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=["short_text","long_text","single_choice","multiple_choice","rating","slider","photo","audio","video","gps","ranking","file"])
 @app.post("/studies/{study_id}/edit")
 def edit_study(study_id:int,title:str=Form(...),description:str=Form(""),methodology:str=Form(...),status_value:str=Form(...),demographics_schema:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
@@ -1230,10 +1283,11 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
     p=participant(db,participant_id,u.organisation_id)
     if u.role in {"owner","admin","observer"}:
         ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.participant_id==p.id,StudyEnrolment.organisation_id==u.organisation_id)).all()
-        studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id)).all()}
         invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id).order_by(ParticipantInvitation.created_at.desc())).all()
         responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id).order_by(ActivityResponse.updated_at.desc())).all()
         messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id).order_by(ParticipantMessage.created_at)).all()
+        study_ids = {e.study_id for e in ens} | {i.study_id for i in invs} | {r.study_id for r in responses} | {m.study_id for m in messages}
+        studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id, Study.id.in_(study_ids))).all()} if study_ids else {}
     else:
         allowed_ids = set(db.scalars(study_scope_for_user(u)).all())
         ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.participant_id==p.id,StudyEnrolment.organisation_id==u.organisation_id,StudyEnrolment.study_id.in_(allowed_ids))).all()
