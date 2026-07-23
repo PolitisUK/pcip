@@ -6,4 +6,4 @@
 
 .button{display:block;text-align:center;text-decoration:none;padding:.8rem 1rem;border-radius:8px;background:#183a4a;color:#fff;font-weight:700}.microsoft{background:#2f2f2f}.divider{display:flex;align-items:center;gap:1rem;margin:1rem 0;color:#667}.divider:before,.divider:after{content:"";height:1px;background:#d8dde0;flex:1}
 
-.brand{display:grid;gap:4px}.brand-logo{width:34px;height:34px;object-fit:contain}.public-brand .brand-logo{width:40px;height:40px}.brand span{font-weight:800;font-size:21px;line-height:1.05}.brand small{display:block}.app-footer{padding:14px 18px;color:#4f665e;font-size:12px;text-align:center;border-top:1px solid #dce5e1;background:#f5f7f6}.app-footer span{font-weight:700}
+.brand{display:grid;gap:4px}.brand-logo{width:min(220px,100%);height:auto;object-fit:contain}.public-brand .brand-logo{width:min(260px,100%)}.brand span{font-weight:800;font-size:21px;line-height:1.05}.brand small{display:block}.app-footer{padding:14px 18px;color:#4f665e;font-size:12px;text-align:center;border-top:1px solid #dce5e1;background:#f5f7f6}.app-footer span{font-weight:700}

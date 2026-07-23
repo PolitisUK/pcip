@@ -13,7 +13,7 @@
 {% if user %}
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand"><img class="brand-logo" src="/static/politis_symbol_colour.png" alt="Politis logo"><span>Citizen Centric</span><small>by Politis · v{{ version }}</small></div>
+    <div class="brand"><img class="brand-logo" src="/static/politis_horizontal_master.png" alt="Politis logo"><span>Citizen Centric</span><small>by Politis · v{{ version }}</small></div>
     <nav class="nav" aria-label="Primary navigation">
       <a class="{% if request.url.path == '/' %}active{% endif %}" href="/">Dashboard</a>
       <a class="{% if request.url.path.startswith('/projects') %}active{% endif %}" href="/projects">Projects</a>
