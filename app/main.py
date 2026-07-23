@@ -238,6 +238,36 @@ def render(request, name, user=None, **ctx):
         },
     )
 
+
+def render_error(request: Request, status_code: int, title: str, detail: str):
+    return templates.TemplateResponse(
+        request=request,
+        name="error.html",
+        context={
+            "app_name": settings.app_name,
+            "version": VERSION,
+            "entra_enabled": entra_configured(),
+            "local_login_enabled": settings.local_login_enabled,
+            "csrf_token": get_csrf_token(request),
+            "csp_nonce": getattr(request.state, "csp_nonce", ""),
+            "status_code": status_code,
+            "error_title": title,
+            "error_detail": detail,
+        },
+        status_code=status_code,
+    )
+
+
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc):
+    return render_error(request, 404, "Page not found", "The page you requested is not available.")
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("unhandled_exception path=%s", request.url.path)
+    return render_error(request, 500, "Something went wrong", "An unexpected error occurred. Please try again.")
+
 def project(db,i,o):
     r=db.scalar(select(Project).where(Project.id==i,Project.organisation_id==o))
     if not r: raise HTTPException(404)
@@ -296,6 +326,8 @@ def participant_export_payload(db: Session, row: Participant):
     invitations = db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.organisation_id == row.organisation_id, ParticipantInvitation.participant_id == row.id).order_by(ParticipantInvitation.id.asc())).all()
     evidence = db.scalars(select(EvidenceFile).where(EvidenceFile.organisation_id == row.organisation_id, EvidenceFile.participant_id == row.id).order_by(EvidenceFile.id.asc())).all()
     return {
+        "application_name": "Citizen Centric",
+        "branding": "Citizen Centric by Politis",
         "participant": {
             "id": row.id,
             "organisation_id": row.organisation_id,
@@ -702,7 +734,7 @@ def forgot(request:Request,email:str=Form(...),csrf_ok: None = Depends(csrf_prot
     )
     if u:
         raw=new_token(); db.add(PasswordReset(user_id=u.id,token_hash=token_hash(raw),expires_at=now()+timedelta(hours=1)))
-        queue_email(db,u.organisation_id,u.email,"Reset your PCIP password",f"Reset your password: {settings.base_url}/reset-password?token={raw}"); audit(db,u.organisation_id,u.id,"auth.password_reset_requested","user",u.id); db.commit()
+        queue_email(db,u.organisation_id,u.email,"Citizen Centric by Politis: Reset your password",f"Reset your Citizen Centric password: {settings.base_url}/reset-password?token={raw}"); audit(db,u.organisation_id,u.id,"auth.password_reset_requested","user",u.id); db.commit()
     return render(request,"forgot_password.html",sent=True)
 @app.get("/reset-password",response_class=HTMLResponse)
 def reset_page(request:Request,token:str="",db:Session=Depends(get_db)):
@@ -1253,7 +1285,7 @@ def invite_researcher(name:str=Form(...),email:str=Form(...),role:str=Form("rese
     if db.scalar(select(User.id).where(User.organisation_id==u.organisation_id,User.email==email)): raise HTTPException(400,"A user already exists.")
     live=db.scalar(select(Invitation.id).where(Invitation.organisation_id==u.organisation_id,Invitation.email==email,Invitation.accepted_at.is_(None),Invitation.revoked_at.is_(None),Invitation.expires_at>now()))
     if live: raise HTTPException(400,"A live invitation already exists.")
-    raw=new_token(); inv=Invitation(organisation_id=u.organisation_id,email=email,name=name.strip(),role=role,token_hash=token_hash(raw),expires_at=now()+timedelta(hours=48),invited_by_id=u.id); db.add(inv); db.flush(); queue_email(db,u.organisation_id,email,"Join PCIP",f"Activate your account: {settings.base_url}/accept-invitation?token={raw}"); db.commit(); return RedirectResponse("/researchers",303)
+    raw=new_token(); inv=Invitation(organisation_id=u.organisation_id,email=email,name=name.strip(),role=role,token_hash=token_hash(raw),expires_at=now()+timedelta(hours=48),invited_by_id=u.id); db.add(inv); db.flush(); queue_email(db,u.organisation_id,email,"Citizen Centric by Politis: Activate your account",f"Activate your Citizen Centric account: {settings.base_url}/accept-invitation?token={raw}"); db.commit(); return RedirectResponse("/researchers",303)
 
 
 @app.post("/researchers/{user_id}/disable")
@@ -1287,8 +1319,8 @@ def admin_reset_researcher_password(user_id:int,u=Depends(roles("owner","admin")
         db,
         target.organisation_id,
         target.email,
-        "Reset your PCIP password",
-        f"Reset your password: {settings.base_url}/reset-password?token={raw}",
+        "Citizen Centric by Politis: Reset your password",
+        f"Reset your Citizen Centric password: {settings.base_url}/reset-password?token={raw}",
     )
     audit(db,u.organisation_id,u.id,"auth.admin_password_reset","user",target.id,target.email)
     db.commit()

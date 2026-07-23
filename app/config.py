@@ -18,7 +18,7 @@ LOCAL_HOSTS = {
 }
 
 class Settings(BaseSettings):
-    app_name: str = "Politis Civic Intelligence"
+    app_name: str = "Citizen Centric"
     secret_key: str = "dev-only-change-me"
     database_url: str = "sqlite:///./data/app.db"
     base_url: str = "http://127.0.0.1:8000"

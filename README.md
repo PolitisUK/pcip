@@ -1,8 +1,10 @@
-# Politis Civic Intelligence Platform
+# Citizen Centric
+
+by Politis
 
 Current version: **0.6.0**
 
-PCIP is a multi-tenant civic research platform for councils and public-sector research teams. This cumulative release includes researcher authentication, organisations, projects, studies, participants, recruitment, consent, activity design, a participant portal, evidence uploads, messaging, audit logging and administration.
+Citizen Centric is a multi-tenant civic research platform for councils and public-sector research teams. The internal engineering codename `PCIP` remains in repository and infrastructure identifiers.
 
 ## Local installation on macOS
 
