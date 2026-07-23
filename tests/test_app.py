@@ -3,6 +3,8 @@ os.environ['DATABASE_URL'] = 'sqlite:///./data/test.db'
 from pathlib import Path
 import re
 from uuid import uuid4
+import pytest
+from types import SimpleNamespace
 Path('data/test.db').unlink(missing_ok=True)
 from fastapi.testclient import TestClient
 from app.main import app
@@ -13,6 +15,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.models import User
 from app.main import now
+from app.config import validate_runtime_settings
 
 client = TestClient(app)
 
@@ -689,3 +692,59 @@ def test_researcher_message_requires_participant_enrolment_in_study():
             follow_redirects=False,
         )
         assert allowed.status_code == 303
+
+
+def hosted_settings(**overrides):
+    data = {
+        'environment': 'production',
+        'secret_key': 'VeryStrongSecretKey!WithLength12345',
+        'cookie_secure': True,
+        'base_url': 'https://pilot.example.org',
+        'trusted_hosts': 'pilot.example.org',
+        'allowed_origins': 'https://pilot.example.org',
+    }
+    data.update(overrides)
+    return SimpleNamespace(**data)
+
+
+@pytest.mark.parametrize(
+    ('override', 'expected_fragment'),
+    [
+        ({'secret_key': 'dev-only-change-me'}, 'SECRET_KEY'),
+        ({'secret_key': 'short'}, 'SECRET_KEY'),
+        ({'cookie_secure': False}, 'COOKIE_SECURE'),
+        ({'base_url': 'http://pilot.example.org'}, 'BASE_URL'),
+        ({'trusted_hosts': ''}, 'TRUSTED_HOSTS'),
+        ({'trusted_hosts': 'localhost,pilot.example.org'}, 'TRUSTED_HOSTS'),
+        ({'allowed_origins': ''}, 'ALLOWED_ORIGINS'),
+        ({'allowed_origins': 'http://pilot.example.org'}, 'ALLOWED_ORIGINS'),
+    ],
+)
+def test_hosted_startup_validation_rejects_insecure_settings(override, expected_fragment):
+    candidate = hosted_settings(**override)
+    with pytest.raises(RuntimeError) as exc:
+        validate_runtime_settings(candidate)
+    assert expected_fragment in str(exc.value)
+
+
+def test_hosted_startup_validation_accepts_secure_settings():
+    candidate = hosted_settings(
+        secret_key='AnotherStrongKey!1234567890_WithEntropy',
+        cookie_secure=True,
+        base_url='https://secure.pilot.example.org',
+        trusted_hosts='secure.pilot.example.org',
+        allowed_origins='https://secure.pilot.example.org',
+    )
+    validate_runtime_settings(candidate)
+
+
+def test_development_environment_allows_local_defaults():
+    candidate = hosted_settings(
+        environment='development',
+        secret_key='dev-only-change-me',
+        cookie_secure=False,
+        base_url='http://127.0.0.1:8000',
+        trusted_hosts='127.0.0.1,localhost,testserver',
+        allowed_origins='http://127.0.0.1:8000,http://localhost:8000,http://testserver',
+    )
+    validate_runtime_settings(candidate)

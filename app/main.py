@@ -11,7 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import select, func, or_, text
 from sqlalchemy.orm import Session
-from .config import settings
+from .config import settings, validate_runtime_settings
 from .db import Base, engine, get_db, SessionLocal
 from .models import *
 from .security import hash_password, verify_password, new_token, token_hash, encode_session, decode_session
@@ -158,6 +158,7 @@ def paginate(stmt, db, page, per=25):
 
 @app.on_event("startup")
 def startup():
+    validate_runtime_settings(settings)
     Base.metadata.create_all(engine)
     # Safe additive migration for databases created by v0.2.x.
     if settings.database_url.startswith("sqlite"):
