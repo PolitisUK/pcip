@@ -1,4 +1,26 @@
-{% extends "base.html" %}{% block title %}Studies{% endblock %}{% block content %}
-<div class="card"><p>Studies organise diary research, interviews, walk-alongs and other evidence-collection programmes within a project.</p></div>
-<div class="card section"><table class="table"><thead><tr><th>Study</th><th>Project</th><th>Method</th><th>Participants</th><th>Status</th></tr></thead><tbody>{% for s in studies %}<tr><td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td><td><a href="/projects/{{ s.project_id }}">{{ projects[s.project_id].title }}</a></td><td>{{ s.methodology|replace('_',' ')|title }}</td><td>{{ enrolment_counts.get(s.id,0) }}</td><td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td></tr>{% else %}<tr><td colspan="5" class="muted">No studies yet. Open a project to create one.</td></tr>{% endfor %}</tbody></table></div>
+{% extends "base.html" %}
+{% block title %}Studies{% endblock %}
+{% block content %}
+<div class="card">
+	<p>Studies organise diary research, interviews, walk-alongs and other evidence-collection programmes within a project.</p>
+</div>
+
+<div class="card section">
+	<table class="table">
+		<thead><tr><th>Study</th><th>Project</th><th>Method</th><th>Participants</th><th>Status</th></tr></thead>
+		<tbody>
+			{% for s in studies %}
+			<tr>
+				<td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td>
+				<td><a href="/projects/{{ s.project_id }}">{{ projects[s.project_id].title }}</a></td>
+				<td>{{ s.methodology|replace('_',' ')|title }}</td>
+				<td>{{ enrolment_counts.get(s.id,0) }}</td>
+				<td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td>
+			</tr>
+			{% else %}
+			<tr><td colspan="5" class="empty">No studies yet. Open a project to create one.</td></tr>
+			{% endfor %}
+		</tbody>
+	</table>
+</div>
 {% endblock %}

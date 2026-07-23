@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
   <title>{% block page_title %}{{ app_name }}{% endblock %}</title>
   <meta name="application-name" content="Citizen Centric">
   <link rel="icon" type="image/png" href="/static/politis_symbol_colour.png">
@@ -15,14 +16,14 @@
   <aside class="sidebar">
     <div class="brand"><img class="brand-logo" src="/static/politis_horizontal_master.png" alt="Politis logo"><span>Citizen Centric</span><small>by Politis · v{{ version }}</small></div>
     <nav class="nav" aria-label="Primary navigation">
-      <a class="{% if request.url.path == '/' %}active{% endif %}" href="/">Dashboard</a>
-      <a class="{% if request.url.path.startswith('/projects') %}active{% endif %}" href="/projects">Projects</a>
-      <a class="{% if request.url.path.startswith('/studies') %}active{% endif %}" href="/studies">Studies</a>
-      <a class="{% if request.url.path.startswith('/participants') %}active{% endif %}" href="/participants">Participants</a>
+      <a class="{% if request.url.path == '/' %}active{% endif %}" href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Dashboard</a>
+      <a class="{% if request.url.path.startswith('/projects') %}active{% endif %}" href="/projects" {% if request.url.path.startswith('/projects') %}aria-current="page"{% endif %}>Projects</a>
+      <a class="{% if request.url.path.startswith('/studies') %}active{% endif %}" href="/studies" {% if request.url.path.startswith('/studies') %}aria-current="page"{% endif %}>Studies</a>
+      <a class="{% if request.url.path.startswith('/participants') %}active{% endif %}" href="/participants" {% if request.url.path.startswith('/participants') %}aria-current="page"{% endif %}>Participants</a>
       {% if user.role in ['owner','admin'] %}
-      <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers">Researchers</a>
-      <a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit">Audit log</a>
-      <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox">Email outbox</a>
+      <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers" {% if request.url.path.startswith('/researchers') %}aria-current="page"{% endif %}>Researchers</a>
+      <a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit" {% if request.url.path.startswith('/audit') %}aria-current="page"{% endif %}>Audit log</a>
+      <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox" {% if request.url.path.startswith('/outbox') %}aria-current="page"{% endif %}>Email outbox</a>
       {% endif %}
     </nav>
     <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="ghost" type="submit">Sign out</button></form>
@@ -39,6 +40,7 @@
 {% else %}
 {% block public %}{% endblock %}
 {% endif %}
+<div class="sr-only" aria-live="polite" aria-atomic="true" id="live-region"></div>
 <footer class="app-footer">Citizen Centric <span>by Politis</span></footer>
 <script nonce="{{ csp_nonce }}" src="/static/app.js" defer></script>
 {% block page_scripts %}{% endblock %}

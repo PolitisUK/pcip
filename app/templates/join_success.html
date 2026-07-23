@@ -1,1 +1,12 @@
-{% extends "base.html" %}{% block public %}<div class="login-wrap"><div class="login-card"><div class="brand public-brand"><img class="brand-logo" src="/static/politis_horizontal_master.png" alt="Politis logo"><span>Citizen Centric</span><small>by Politis</small></div><h1>You're enrolled</h1><p>Thank you, {{ participant.name }}. Your consent has been recorded and you are now enrolled in <strong>{{ study.title }}</strong>.</p><p class="muted">The participant activity portal will be introduced in the next product increment.</p></div></div>{% endblock %}
+{% extends "base.html" %}
+{% block public %}
+<div class="login-wrap">
+	<div class="login-card">
+		<div class="brand public-brand"><img class="brand-logo" src="/static/politis_horizontal_master.png" alt="Politis logo"><span>Citizen Centric</span><small>by Politis</small></div>
+		<div class="success" role="status">Enrollment complete.</div>
+		<h1>You're enrolled</h1>
+		<p>Thank you, {{ participant.name }}. Your consent has been recorded and you are now enrolled in <strong>{{ study.title }}</strong>.</p>
+		<p class="muted">The participant activity portal will be introduced in the next product increment.</p>
+	</div>
+</div>
+{% endblock %}
