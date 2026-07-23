@@ -412,6 +412,13 @@ def test_user_model_supports_external_identity():
     assert 'last_login_at' in columns
 
 def test_failed_logins_lock_account():
+    with SessionLocal() as db:
+        before_user = db.scalar(
+            select(User).where(User.email == "admin@politis.local")
+        )
+        assert before_user is not None
+        before_session_version = before_user.session_version
+
     with client:
         for _ in range(settings.login_max_failed_attempts):
             response = post_with_csrf(
@@ -436,6 +443,7 @@ def test_failed_logins_lock_account():
             assert user is not None
             assert user.failed_login_count == settings.login_max_failed_attempts
             assert user.locked_until is not None
+            assert user.session_version == before_session_version + 1
 
 
 def test_expired_lockout_allows_login_and_resets_counter():
@@ -965,3 +973,150 @@ def test_participant_portal_write_rate_limit_blocks_repeated_attempts():
             blocked = post_with_csrf('/participant-portal/message', data={'token': 'invalid', 'body': 'hello'}, follow_redirects=False)
             assert blocked.status_code == 429
             assert 'Retry-After' in blocked.headers
+
+
+def test_stolen_cookie_stops_working_after_admin_password_reset():
+    from app.models import OutboxEmail
+    from app.security import hash_password
+
+    researcher_email = f"{unique_value('stolen-cookie')}@example.org"
+    researcher_password = 'SecurePass123!'
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        researcher = User(
+            organisation_id=owner.organisation_id,
+            name='Cookie Target',
+            email=researcher_email,
+            password_hash=hash_password(researcher_password),
+            role='researcher',
+            is_active=True,
+        )
+        db.add(researcher)
+        db.commit()
+        db.refresh(researcher)
+        researcher_id = researcher.id
+        before_version = researcher.session_version
+
+    with client:
+        client.cookies.clear()
+        researcher_login = login_as(researcher_email, researcher_password)
+        assert researcher_login.status_code == 303
+        stolen_cookie = client.cookies.get('session')
+        assert stolen_cookie
+
+        client.cookies.clear()
+        owner_login = login()
+        client.cookies.update(owner_login.cookies)
+        assert owner_login.status_code == 303
+
+        reset = post_with_csrf(f'/researchers/{researcher_id}/reset-password', follow_redirects=False)
+        assert reset.status_code == 303
+
+        with SessionLocal() as db:
+            refreshed = db.get(User, researcher_id)
+            assert refreshed is not None
+            assert refreshed.session_version == before_version + 1
+            reset_mail = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient == researcher_email)
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert reset_mail is not None
+            assert '/reset-password?token=' in reset_mail.body
+
+        client.cookies.clear()
+        client.cookies.set('session', stolen_cookie)
+        denied = client.get('/', follow_redirects=False)
+        assert denied.status_code == 303
+        assert denied.headers['location'] == '/login'
+
+
+def test_logout_invalidates_existing_session_cookie():
+    with SessionLocal() as db:
+        before_user = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert before_user is not None
+        before_version = before_user.session_version
+
+    with client:
+        client.cookies.clear()
+        login_response = login()
+        client.cookies.update(login_response.cookies)
+        assert login_response.status_code == 303
+        stolen_cookie = client.cookies.get('session')
+        assert stolen_cookie
+
+        logout_response = post_with_csrf('/logout', follow_redirects=False)
+        assert logout_response.status_code == 303
+
+        with SessionLocal() as db:
+            after_user = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            assert after_user is not None
+            assert after_user.session_version == before_version + 1
+
+        client.cookies.clear()
+        client.cookies.set('session', stolen_cookie)
+        denied = client.get('/', follow_redirects=False)
+        assert denied.status_code == 303
+        assert denied.headers['location'] == '/login'
+
+
+def test_password_reset_invalidates_existing_session_cookie():
+    from app.models import OutboxEmail
+    from app.security import hash_password, verify_password
+
+    email = f"{unique_value('pwd-reset')}@example.org"
+    old_password = 'SecurePass123!'
+    new_password = 'SecurePass456!'
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        user = User(
+            organisation_id=owner.organisation_id,
+            name='Reset Target',
+            email=email,
+            password_hash=hash_password(old_password),
+            role='researcher',
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        user_id = user.id
+        before_version = user.session_version
+
+    with client:
+        client.cookies.clear()
+        login_response = login_as(email, old_password)
+        assert login_response.status_code == 303
+        stolen_cookie = client.cookies.get('session')
+        assert stolen_cookie
+
+        forgot = post_with_csrf('/forgot-password', data={'email': email}, follow_redirects=False)
+        assert forgot.status_code == 200
+
+        with SessionLocal() as db:
+            email_row = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient == email)
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email_row is not None
+            token = email_row.body.split('token=')[1].strip()
+
+        reset = post_with_csrf('/reset-password', data={'token': token, 'password': new_password}, follow_redirects=False)
+        assert reset.status_code == 303
+
+        with SessionLocal() as db:
+            refreshed = db.get(User, user_id)
+            assert refreshed is not None
+            assert refreshed.session_version == before_version + 1
+            assert verify_password(new_password, refreshed.password_hash)
+
+        client.cookies.clear()
+        client.cookies.set('session', stolen_cookie)
+        denied = client.get('/', follow_redirects=False)
+        assert denied.status_code == 303
+        assert denied.headers['location'] == '/login'

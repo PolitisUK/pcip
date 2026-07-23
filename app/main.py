@@ -165,6 +165,24 @@ def enum_value(v, e, field):
     if v not in {x.value for x in e}: raise HTTPException(400, f"Invalid {field}.")
     return v
 
+
+def bump_session_version(user: User):
+    user.session_version = int(user.session_version or 0) + 1
+
+
+def invalidate_session_cookie_user(request: Request, db: Session):
+    identity = decode_session(request.cookies.get("session", ""))
+    if not identity:
+        return None
+    user = db.get(User, identity.user_id)
+    if not user:
+        return None
+    if user.session_version == identity.session_version:
+        bump_session_version(user)
+        db.commit()
+        return user
+    return None
+
 def current_user(request: Request, db: Session = Depends(get_db)):
     identity = decode_session(request.cookies.get("session", ""))
 
@@ -351,6 +369,7 @@ def login(
             user.locked_until = current_time + timedelta(
                 seconds=settings.login_lockout_seconds
             )
+            bump_session_version(user)
             audit(
                 db,
                 user.organisation_id,
@@ -450,7 +469,9 @@ async def entra_callback(request: Request, db: Session = Depends(get_db)):
     return response
 
 @app.post("/logout")
-def logout(csrf_ok: None = Depends(csrf_protect)): r=RedirectResponse("/login",303); r.delete_cookie("session"); return r
+def logout(request: Request, csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    invalidate_session_cookie_user(request, db)
+    r=RedirectResponse("/login",303); r.delete_cookie("session"); return r
 
 @app.get("/forgot-password",response_class=HTMLResponse)
 def forgot_page(request:Request): return render(request,"forgot_password.html")
@@ -492,7 +513,7 @@ def reset_password(request: Request, token:str=Form(...),password:str=Form(...),
     )
     if not row or row.used_at or not unexpired(row.expires_at): raise HTTPException(400,"Reset link is invalid or expired.")
     if len(password)<10: raise HTTPException(400,"Password must contain at least 10 characters.")
-    user.password_hash=hash_password(password); row.used_at=now(); audit(db,user.organisation_id,user.id,"auth.password_reset","user",user.id); db.commit(); return RedirectResponse("/login",303)
+    user.password_hash=hash_password(password); row.used_at=now(); user.failed_login_count = 0; user.locked_until = None; bump_session_version(user); audit(db,user.organisation_id,user.id,"auth.password_reset","user",user.id); db.commit(); return RedirectResponse("/login",303)
 
 @app.get("/",response_class=HTMLResponse)
 def dashboard(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
@@ -840,6 +861,45 @@ def invite_researcher(name:str=Form(...),email:str=Form(...),role:str=Form("rese
     live=db.scalar(select(Invitation.id).where(Invitation.organisation_id==u.organisation_id,Invitation.email==email,Invitation.accepted_at.is_(None),Invitation.revoked_at.is_(None),Invitation.expires_at>now()))
     if live: raise HTTPException(400,"A live invitation already exists.")
     raw=new_token(); inv=Invitation(organisation_id=u.organisation_id,email=email,name=name.strip(),role=role,token_hash=token_hash(raw),expires_at=now()+timedelta(hours=48),invited_by_id=u.id); db.add(inv); db.flush(); queue_email(db,u.organisation_id,email,"Join PCIP",f"Activate your account: {settings.base_url}/accept-invitation?token={raw}"); db.commit(); return RedirectResponse("/researchers",303)
+
+
+@app.post("/researchers/{user_id}/disable")
+def disable_researcher_account(user_id:int,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    target = db.scalar(select(User).where(User.id==user_id,User.organisation_id==u.organisation_id))
+    if not target:
+        raise HTTPException(404, "User not found.")
+    if target.id == u.id:
+        raise HTTPException(400, "You cannot disable your own account.")
+    if target.is_active:
+        target.is_active = False
+        bump_session_version(target)
+        audit(db,u.organisation_id,u.id,"auth.account_disabled","user",target.id,target.email)
+    db.commit()
+    return RedirectResponse("/researchers",303)
+
+
+@app.post("/researchers/{user_id}/reset-password")
+def admin_reset_researcher_password(user_id:int,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    target = db.scalar(select(User).where(User.id==user_id,User.organisation_id==u.organisation_id))
+    if not target:
+        raise HTTPException(404, "User not found.")
+    if not target.is_active:
+        raise HTTPException(400, "Disabled accounts cannot receive reset links.")
+    raw = new_token()
+    db.add(PasswordReset(user_id=target.id, token_hash=token_hash(raw), expires_at=now()+timedelta(hours=1)))
+    target.failed_login_count = 0
+    target.locked_until = None
+    bump_session_version(target)
+    queue_email(
+        db,
+        target.organisation_id,
+        target.email,
+        "Reset your PCIP password",
+        f"Reset your password: {settings.base_url}/reset-password?token={raw}",
+    )
+    audit(db,u.organisation_id,u.id,"auth.admin_password_reset","user",target.id,target.email)
+    db.commit()
+    return RedirectResponse("/researchers",303)
 @app.get("/accept-invitation",response_class=HTMLResponse)
 def accept_page(request:Request,token:str="",db:Session=Depends(get_db)):
     inv=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token))); return render(request,"accept.html",token=token,invitation=inv,valid=bool(inv and not inv.accepted_at and not inv.revoked_at and unexpired(inv.expires_at)))
