@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import BinaryIO, Protocol
-from urllib.parse import quote
 import secrets
 import tempfile
 
@@ -157,7 +156,7 @@ class AzureBlobStorage:
         return "pending", detail or raw
 
     def download_url(self, key: str, filename: str, content_type: str, minutes: int = 5) -> str:
-        from azure.storage.blob import BlobSasPermissions, ContentSettings, generate_blob_sas
+        from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 
         start = datetime.now(timezone.utc) - timedelta(minutes=1)
         expiry = datetime.now(timezone.utc) + timedelta(minutes=minutes)

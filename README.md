@@ -1,6 +1,6 @@
 # Politis Civic Intelligence Platform
 
-Current version: **0.3.0**
+Current version: **0.6.0**
 
 PCIP is a multi-tenant civic research platform for councils and public-sector research teams. This cumulative release includes researcher authentication, organisations, projects, studies, participants, recruitment, consent, activity design, a participant portal, evidence uploads, messaging, audit logging and administration.
 
@@ -44,9 +44,10 @@ Local evidence files are placed in `data/uploads`. Production deployment should 
 PYTHONPATH=. python -m pytest -q
 ```
 
-Expected result for this release: `11 passed`.
+Expected result for this release candidate: `65 passed`.
 
-See `RELEASE_NOTES_0.3.0.md` and `INCREMENT_3_REPORT.md` for scope and known production gaps.
+See `RELEASE_NOTES_0.6.0.md` for the latest cumulative release context.
+Release-candidate operational material is documented in `RELEASE_CANDIDATE_1_NOTES.md`, `DEPLOYMENT_CHECKLIST_RC1.md`, and `PILOT_OPERATOR_GUIDE.md`.
 
 ## Dependency security
 

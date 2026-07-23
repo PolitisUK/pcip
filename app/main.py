@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import logging
 import time
-import csv, io, json, secrets, shutil
+import csv, io, json, secrets
 from collections import defaultdict, deque
 from .csrf import get_csrf_token, csrf_protect
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File
@@ -404,12 +404,6 @@ def study_scope_for_user(user: User):
         Study.organisation_id == user.organisation_id,
         or_(Study.created_by_id == user.id, Study.id.in_(access_ids)),
     )
-
-def portal_invitation(db, token):
-    inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==token_hash(token)))
-    if not inv or inv.revoked_at or not unexpired(inv.expires_at): raise HTTPException(400,"This participant link is invalid or expired.")
-    return inv
-
 
 def set_public_auth_cookie(response: RedirectResponse, value: str, max_age_seconds: int):
     response.set_cookie(
