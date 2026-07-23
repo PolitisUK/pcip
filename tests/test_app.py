@@ -124,8 +124,104 @@ def test_participant_accepts_invitation():
             token = email.body.split('token=')[1].strip()
         page = client.get(f'/join-study?token={token}')
         assert page.status_code == 200 and 'Research invitation' in page.text
-        accepted = post_with_csrf('/join-study', data={'token': token, 'consent': 'true'}, follow_redirects=True)
+        accepted = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=True)
         assert accepted.status_code == 200 and "You're enrolled" in accepted.text
+
+
+def test_password_reset_token_is_exchanged_and_replay_is_blocked():
+    from app.models import OutboxEmail
+    with client:
+        client.cookies.clear()
+        issued = post_with_csrf('/forgot-password', data={'email': 'admin@politis.local'}, follow_redirects=False)
+        assert issued.status_code == 200
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient == 'admin@politis.local')
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        exchanged = client.get(f'/reset-password?token={token}', follow_redirects=False)
+        assert exchanged.status_code == 303
+        assert exchanged.headers['location'] == '/reset-password'
+
+        clean_page = client.get('/reset-password')
+        assert clean_page.status_code == 200
+        assert 'Create a new password' in clean_page.text
+        assert 'name="token"' not in clean_page.text
+
+        client.cookies.clear()
+        replay = client.get(f'/reset-password?token={token}', follow_redirects=True)
+        assert replay.status_code == 200
+        assert 'invalid or expired' in replay.text
+
+
+def test_participant_invitation_token_is_exchanged_and_replay_is_blocked():
+    from app.models import OutboxEmail
+    with client:
+        client.cookies.clear()
+        auth()
+        p = post_with_csrf('/participants', data={'reference': 'P-EX1', 'name': 'Replay Protected', 'email': 'portal.replay@example.org', 'phone': '', 'status_value': 'prospective', 'consent_status': 'pending', 'communication_preference': 'email', 'tags': '', 'notes': ''}, follow_redirects=False)
+        participant_id = int(p.headers['location'].rsplit('/', 1)[-1])
+        studies = client.get('/studies')
+        study_id = int(studies.text.split('/studies/')[1].split('"')[0])
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient == 'portal.replay@example.org')
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        exchanged = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert exchanged.status_code == 303
+        assert exchanged.headers['location'] == '/join-study'
+
+        clean_page = client.get('/join-study')
+        assert clean_page.status_code == 200
+        assert 'Research invitation' in clean_page.text
+        assert 'name="token"' not in clean_page.text
+
+        client.cookies.clear()
+        replay = client.get(f'/join-study?token={token}', follow_redirects=True)
+        assert replay.status_code == 200
+        assert 'Invitation unavailable' in replay.text
+
+
+def test_researcher_invitation_token_is_exchanged_and_replay_is_blocked():
+    from app.models import OutboxEmail
+    with client:
+        client.cookies.clear()
+        auth()
+        invite = post_with_csrf('/researchers/invite', data={'name': 'Replay Researcher', 'email': 'invite.replay@example.org', 'role': 'researcher'}, follow_redirects=False)
+        assert invite.status_code == 303
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient == 'invite.replay@example.org')
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        exchanged = client.get(f'/accept-invitation?token={token}', follow_redirects=False)
+        assert exchanged.status_code == 303
+        assert exchanged.headers['location'] == '/accept-invitation'
+
+        clean_page = client.get('/accept-invitation')
+        assert clean_page.status_code == 200
+        assert 'Activate your researcher account' in clean_page.text
+        assert 'name="token"' not in clean_page.text
+
+        client.cookies.clear()
+        replay = client.get(f'/accept-invitation?token={token}', follow_redirects=True)
+        assert replay.status_code == 200
+        assert 'Invitation unavailable' in replay.text
 
 def test_invalid_status_and_activity_validation():
     with client:
@@ -169,14 +265,15 @@ def test_participant_portal_draft_submit_and_message():
         with SessionLocal() as db:
             email=db.scalar(select(OutboxEmail).where(OutboxEmail.recipient=='portal@example.org').order_by(OutboxEmail.id.desc()))
             token=email.body.split('token=')[1].strip()
-        post_with_csrf('/join-study', data={'token':token,'consent':'true'})
-        portal=client.get(f'/participant-portal?token={token}')
+        client.get(f'/join-study?token={token}')
+        post_with_csrf('/join-study', data={'consent':'true'})
+        portal=client.get('/participant-portal')
         assert portal.status_code==200 and 'Your activities' in portal.text
-        draft=post_with_csrf(f'/participant-portal/activity/{activity_id}', data={'token':token,'action':'draft','answer':'draft answer'}, follow_redirects=False)
+        draft=post_with_csrf(f'/participant-portal/activity/{activity_id}', data={'action':'draft','answer':'draft answer'}, follow_redirects=False)
         assert draft.status_code==303
-        submit=post_with_csrf(f'/participant-portal/activity/{activity_id}', data={'token':token,'action':'submit','answer':'final answer'}, follow_redirects=False)
+        submit=post_with_csrf(f'/participant-portal/activity/{activity_id}', data={'action':'submit','answer':'final answer'}, follow_redirects=False)
         assert submit.status_code==303
-        msg=post_with_csrf('/participant-portal/message', data={'token':token,'body':'Hello research team'}, follow_redirects=False)
+        msg=post_with_csrf('/participant-portal/message', data={'body':'Hello research team'}, follow_redirects=False)
         assert msg.status_code==303
         with SessionLocal() as db:
             response=db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id==participant_id,ActivityResponse.activity_id==activity_id))
@@ -1133,7 +1230,8 @@ def test_password_reset_invalidates_existing_session_cookie():
             assert email_row is not None
             token = email_row.body.split('token=')[1].strip()
 
-        reset = post_with_csrf('/reset-password', data={'token': token, 'password': new_password}, follow_redirects=False)
+        client.get(f'/reset-password?token={token}', follow_redirects=False)
+        reset = post_with_csrf('/reset-password', data={'password': new_password}, follow_redirects=False)
         assert reset.status_code == 303
 
         with SessionLocal() as db:

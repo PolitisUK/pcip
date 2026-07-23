@@ -67,6 +67,10 @@ app.add_middleware(SecurityHeadersMiddleware)
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 logger = logging.getLogger("pcip.security")
+PUBLIC_AUTH_COOKIE = "public_auth_session"
+PUBLIC_SCOPE_PASSWORD_RESET = "password_reset"
+PUBLIC_SCOPE_RESEARCHER_INVITE = "researcher_invitation"
+PUBLIC_SCOPE_PARTICIPANT_PORTAL = "participant_portal"
 
 
 def now(): return datetime.now(timezone.utc)
@@ -282,6 +286,85 @@ def portal_invitation(db, token):
     inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==token_hash(token)))
     if not inv or inv.revoked_at or not unexpired(inv.expires_at): raise HTTPException(400,"This participant link is invalid or expired.")
     return inv
+
+
+def set_public_auth_cookie(response: RedirectResponse, value: str, max_age_seconds: int):
+    response.set_cookie(
+        PUBLIC_AUTH_COOKIE,
+        value,
+        httponly=True,
+        samesite="strict",
+        secure=settings.cookie_secure,
+        max_age=max_age_seconds,
+    )
+
+
+def clear_public_auth_cookie(response: RedirectResponse):
+    response.delete_cookie(PUBLIC_AUTH_COOKIE)
+
+
+def create_public_auth_session(
+    db: Session,
+    scope: str,
+    ttl_seconds: int,
+    password_reset_id: int | None = None,
+    invitation_id: int | None = None,
+    participant_invitation_id: int | None = None,
+) -> str:
+    raw = new_token()
+    db.add(
+        PublicAuthSession(
+            scope=scope,
+            session_hash=token_hash(raw),
+            password_reset_id=password_reset_id,
+            invitation_id=invitation_id,
+            participant_invitation_id=participant_invitation_id,
+            expires_at=now() + timedelta(seconds=ttl_seconds),
+        )
+    )
+    return raw
+
+
+def get_public_auth_session(request: Request, db: Session, scope: str):
+    raw = request.cookies.get(PUBLIC_AUTH_COOKIE, "")
+    if not raw:
+        return None
+    row = db.scalar(
+        select(PublicAuthSession).where(
+            PublicAuthSession.scope == scope,
+            PublicAuthSession.session_hash == token_hash(raw),
+            PublicAuthSession.revoked_at.is_(None),
+        )
+    )
+    if not row or not unexpired(row.expires_at):
+        return None
+    return row
+
+
+def revoke_public_auth_session(request: Request, db: Session, scope: str):
+    row = get_public_auth_session(request, db, scope)
+    if not row:
+        return
+    row.revoked_at = now()
+    db.commit()
+
+
+def token_already_redeemed(db: Session, scope: str, raw_token: str) -> bool:
+    return db.scalar(
+        select(PublicTokenExchange.id).where(
+            PublicTokenExchange.scope == scope,
+            PublicTokenExchange.token_hash == token_hash(raw_token),
+        )
+    ) is not None
+
+
+def record_token_redemption(db: Session, scope: str, raw_token: str):
+    db.add(
+        PublicTokenExchange(
+            scope=scope,
+            token_hash=token_hash(raw_token),
+        )
+    )
 
 def paginate(stmt, db, page, per=25):
     page=max(1,page); total=db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
@@ -506,12 +589,37 @@ def forgot(request:Request,email:str=Form(...),csrf_ok: None = Depends(csrf_prot
     return render(request,"forgot_password.html",sent=True)
 @app.get("/reset-password",response_class=HTMLResponse)
 def reset_page(request:Request,token:str="",db:Session=Depends(get_db)):
-    row=db.scalar(select(PasswordReset).where(PasswordReset.token_hash==token_hash(token))); valid=bool(row and not row.used_at and unexpired(row.expires_at)); return render(request,"reset_password.html",token=token,valid=valid)
+    if token:
+        if token_already_redeemed(db, PUBLIC_SCOPE_PASSWORD_RESET, token):
+            return render(request,"reset_password.html",valid=False)
+        row=db.scalar(select(PasswordReset).where(PasswordReset.token_hash==token_hash(token)))
+        valid=bool(row and not row.used_at and unexpired(row.expires_at))
+        if not valid:
+            return render(request,"reset_password.html",valid=False)
+        raw_session = create_public_auth_session(
+            db,
+            scope=PUBLIC_SCOPE_PASSWORD_RESET,
+            ttl_seconds=15 * 60,
+            password_reset_id=row.id,
+        )
+        record_token_redemption(db, PUBLIC_SCOPE_PASSWORD_RESET, token)
+        db.commit()
+        response = RedirectResponse("/reset-password", 303)
+        set_public_auth_cookie(response, raw_session, 15 * 60)
+        return response
+
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PASSWORD_RESET)
+    if not session_row:
+        return render(request,"reset_password.html",valid=False)
+    row = db.get(PasswordReset, session_row.password_reset_id)
+    valid=bool(row and not row.used_at and unexpired(row.expires_at))
+    return render(request,"reset_password.html",valid=valid)
 @app.post("/reset-password")
-def reset_password(request: Request, token:str=Form(...),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    token_key = token_hash(token) if token else "empty"
-    row=db.scalar(select(PasswordReset).where(PasswordReset.token_hash==token_hash(token)))
+def reset_password(request: Request, token:str=Form(""),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PASSWORD_RESET)
+    row = db.get(PasswordReset, session_row.password_reset_id) if session_row else None
     user = db.get(User, row.user_id) if row else None
+    token_key = token_hash(token) if token else f"session:{session_row.id}" if session_row else "missing"
     _enforce_rate_limit(
         request,
         db,
@@ -522,9 +630,11 @@ def reset_password(request: Request, token:str=Form(...),password:str=Form(...),
         organisation_id=user.organisation_id if user else None,
         actor_user_id=user.id if user else None,
     )
+    if not session_row:
+        raise HTTPException(400,"Reset link is invalid or expired.")
     if not row or row.used_at or not unexpired(row.expires_at): raise HTTPException(400,"Reset link is invalid or expired.")
     if len(password)<10: raise HTTPException(400,"Password must contain at least 10 characters.")
-    user.password_hash=hash_password(password); row.used_at=now(); user.failed_login_count = 0; user.locked_until = None; bump_session_version(user); audit(db,user.organisation_id,user.id,"auth.password_reset","user",user.id); db.commit(); return RedirectResponse("/login",303)
+    user.password_hash=hash_password(password); row.used_at=now(); user.failed_login_count = 0; user.locked_until = None; bump_session_version(user); session_row.revoked_at = now(); audit(db,user.organisation_id,user.id,"auth.password_reset","user",user.id); db.commit(); response = RedirectResponse("/login",303); clear_public_auth_cookie(response); return response
 
 @app.get("/",response_class=HTMLResponse)
 def dashboard(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
@@ -700,44 +810,87 @@ def resend_participant_invite(invitation_id:int,u=Depends(roles("owner","admin",
 
 @app.get("/join-study",response_class=HTMLResponse)
 def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
-    inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==token_hash(token))); valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at));
-    if valid and not inv.opened_at: inv.opened_at=now(); db.commit()
-    s=db.get(Study,inv.study_id) if valid else None; p=db.get(Participant,inv.participant_id) if valid else None
-    if valid and inv.accepted_at: return RedirectResponse(f"/participant-portal?token={token}",303)
-    return render(request,"join_study.html",token=token,invitation=inv,study=s,participant=p,valid=valid)
+    if token:
+        if token_already_redeemed(db, PUBLIC_SCOPE_PARTICIPANT_PORTAL, token):
+            return render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
+        inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==token_hash(token)))
+        valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at))
+        if not valid:
+            return render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
+        if not inv.opened_at:
+            inv.opened_at=now()
+        raw_session = create_public_auth_session(
+            db,
+            scope=PUBLIC_SCOPE_PARTICIPANT_PORTAL,
+            ttl_seconds=12 * 60 * 60,
+            participant_invitation_id=inv.id,
+        )
+        record_token_redemption(db, PUBLIC_SCOPE_PARTICIPANT_PORTAL, token)
+        db.commit()
+        destination = "/participant-portal" if inv.accepted_at else "/join-study"
+        response = RedirectResponse(destination, 303)
+        set_public_auth_cookie(response, raw_session, 12 * 60 * 60)
+        return response
+
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
+    if not session_row:
+        return render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
+    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id)
+    valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at))
+    s=db.get(Study,inv.study_id) if valid else None
+    p=db.get(Participant,inv.participant_id) if valid else None
+    if valid and inv.accepted_at:
+        return RedirectResponse("/participant-portal",303)
+    return render(request,"join_study.html",invitation=inv,study=s,participant=p,valid=valid)
 @app.post("/join-study")
-def accept_study(request:Request,token:str=Form(...),consent:bool=Form(False),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
+    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
+    account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
         db,
         scope="participant_invitation_accept",
         ip_limit=settings.rate_limit_invitation_accept_ip,
-        account_key=token_hash(token) if token else "empty",
+        account_key=account_key,
         account_limit=settings.rate_limit_invitation_accept_token,
     )
-    inv=portal_invitation(db,token)
+    if not inv or inv.revoked_at or not unexpired(inv.expires_at):
+        raise HTTPException(400,"This participant link is invalid or expired.")
     if not consent: raise HTTPException(400,"Consent is required.")
-    p=db.get(Participant,inv.participant_id); inv.accepted_at=inv.accepted_at or now(); p.status="active"; p.consent_status="granted"; audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse(f"/participant-portal?token={token}",303)
+    p=db.get(Participant,inv.participant_id); inv.accepted_at=inv.accepted_at or now(); p.status="active"; p.consent_status="granted"; audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse("/participant-portal",303)
 @app.get("/participant-portal",response_class=HTMLResponse)
-def participant_portal(request:Request,token:str,db:Session=Depends(get_db)):
-    inv=portal_invitation(db,token)
-    if not inv.accepted_at: return RedirectResponse(f"/join-study?token={token}",303)
+def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
+    if token:
+        return RedirectResponse(f"/join-study?token={token}",303)
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
+    if not session_row:
+        return RedirectResponse("/join-study",303)
+    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id)
+    if not inv or inv.revoked_at or not unexpired(inv.expires_at):
+        return RedirectResponse("/join-study",303)
+    if not inv.accepted_at: return RedirectResponse("/join-study",303)
     s=db.get(Study,inv.study_id); p=db.get(Participant,inv.participant_id); acts=db.scalars(select(Activity).where(Activity.study_id==s.id).order_by(Activity.position)).all(); responses={r.activity_id:r for r in db.scalars(select(ActivityResponse).where(ActivityResponse.study_id==s.id,ActivityResponse.participant_id==p.id)).all()}; response_values={}
     for activity_id,response in responses.items():
         try: response_values[activity_id]=json.loads(response.value_json or "{}")
         except json.JSONDecodeError: response_values[activity_id]={}
-    msgs=db.scalars(select(ParticipantMessage).where(ParticipantMessage.study_id==s.id,ParticipantMessage.participant_id==p.id,ParticipantMessage.internal_note==False).order_by(ParticipantMessage.created_at)).all(); return render(request,"participant_portal.html",token=token,study=s,participant=p,activities=acts,responses=responses,response_values=response_values,messages=msgs)
+    msgs=db.scalars(select(ParticipantMessage).where(ParticipantMessage.study_id==s.id,ParticipantMessage.participant_id==p.id,ParticipantMessage.internal_note==False).order_by(ParticipantMessage.created_at)).all(); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,responses=responses,response_values=response_values,messages=msgs)
 @app.post("/participant-portal/activity/{activity_id}")
-async def submit_activity(request: Request, activity_id:int,token:str=Form(...),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
+    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
+    account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
         db,
         scope="participant_portal_write",
         ip_limit=settings.rate_limit_portal_write_ip,
-        account_key=token_hash(token) if token else "empty",
+        account_key=account_key,
         account_limit=settings.rate_limit_portal_write_token,
     )
-    inv=portal_invitation(db,token); a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.study_id==inv.study_id));
+    if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
+        raise HTTPException(400,"This participant link is invalid or expired.")
+    a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.study_id==inv.study_id));
     if not a: raise HTTPException(404)
     r=db.scalar(select(ActivityResponse).where(ActivityResponse.activity_id==a.id,ActivityResponse.participant_id==inv.participant_id))
     if not r: r=ActivityResponse(organisation_id=inv.organisation_id,study_id=inv.study_id,activity_id=a.id,participant_id=inv.participant_id); db.add(r); db.flush()
@@ -764,20 +917,24 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(...),
             scan_status,scan_detail="pending","Awaiting Microsoft Defender for Storage on-upload scan."
         ev=EvidenceFile(organisation_id=inv.organisation_id,study_id=inv.study_id,activity_id=a.id,participant_id=inv.participant_id,response_id=r.id,original_name=original,stored_name=stored.key,content_type=upload.content_type or "application/octet-stream",size_bytes=stored.size,sha256_hex=stored.sha256_hex,scan_status=scan_status,scan_detail=scan_detail,storage_provider=stored.provider,blob_uri=stored.uri); db.add(ev); db.flush(); value["evidence_id"]=ev.id
     if a.required and action=="submit" and not answer.strip() and not choice_list and not upload: raise HTTPException(400,"A response is required.")
-    r.value_json=json.dumps(value); r.status="submitted" if action=="submit" else "draft"; r.submitted_at=now() if action=="submit" else None; audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit(); return RedirectResponse(f"/participant-portal?token={token}",303)
+    r.value_json=json.dumps(value); r.status="submitted" if action=="submit" else "draft"; r.submitted_at=now() if action=="submit" else None; audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit(); return RedirectResponse("/participant-portal",303)
 @app.post("/participant-portal/message")
-def participant_message(request: Request, token:str=Form(...),body:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def participant_message(request: Request, token:str=Form(""),body:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
+    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
+    account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
         db,
         scope="participant_portal_write",
         ip_limit=settings.rate_limit_portal_write_ip,
-        account_key=token_hash(token) if token else "empty",
+        account_key=account_key,
         account_limit=settings.rate_limit_portal_write_token,
     )
-    inv=portal_invitation(db,token)
+    if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
+        raise HTTPException(400,"This participant link is invalid or expired.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
-    db.add(ParticipantMessage(organisation_id=inv.organisation_id,study_id=inv.study_id,participant_id=inv.participant_id,sender_type="participant",body=body.strip())); db.commit(); return RedirectResponse(f"/participant-portal?token={token}#messages",303)
+    db.add(ParticipantMessage(organisation_id=inv.organisation_id,study_id=inv.study_id,participant_id=inv.participant_id,sender_type="participant",body=body.strip())); db.commit(); return RedirectResponse("/participant-portal#messages",303)
 @app.post("/participants/{participant_id}/message")
 def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(...),internal_note:bool=Form(False),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
@@ -913,23 +1070,51 @@ def admin_reset_researcher_password(user_id:int,u=Depends(roles("owner","admin")
     return RedirectResponse("/researchers",303)
 @app.get("/accept-invitation",response_class=HTMLResponse)
 def accept_page(request:Request,token:str="",db:Session=Depends(get_db)):
-    inv=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token))); return render(request,"accept.html",token=token,invitation=inv,valid=bool(inv and not inv.accepted_at and not inv.revoked_at and unexpired(inv.expires_at)))
+    if token:
+        if token_already_redeemed(db, PUBLIC_SCOPE_RESEARCHER_INVITE, token):
+            return render(request,"accept.html",invitation=None,valid=False)
+        inv=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token)))
+        valid=bool(inv and not inv.accepted_at and not inv.revoked_at and unexpired(inv.expires_at))
+        if not valid:
+            return render(request,"accept.html",invitation=None,valid=False)
+        raw_session = create_public_auth_session(
+            db,
+            scope=PUBLIC_SCOPE_RESEARCHER_INVITE,
+            ttl_seconds=60 * 60,
+            invitation_id=inv.id,
+        )
+        record_token_redemption(db, PUBLIC_SCOPE_RESEARCHER_INVITE, token)
+        db.commit()
+        response = RedirectResponse("/accept-invitation", 303)
+        set_public_auth_cookie(response, raw_session, 60 * 60)
+        return response
+
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_RESEARCHER_INVITE)
+    if not session_row:
+        return render(request,"accept.html",invitation=None,valid=False)
+    inv = db.get(Invitation, session_row.invitation_id)
+    valid = bool(inv and not inv.accepted_at and not inv.revoked_at and unexpired(inv.expires_at))
+    return render(request,"accept.html",invitation=inv,valid=valid)
 @app.post("/accept-invitation")
-def accept_invitation(request: Request, token:str=Form(...),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    inv_for_limit=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token)))
+def accept_invitation(request: Request, token:str=Form(""),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_RESEARCHER_INVITE)
+    inv_for_limit = db.get(Invitation, session_row.invitation_id) if session_row else None
+    account_key = f"invitation:{inv_for_limit.id}" if inv_for_limit else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
         db,
         scope="researcher_invitation_accept",
         ip_limit=settings.rate_limit_invitation_accept_ip,
-        account_key=token_hash(token) if token else "empty",
+        account_key=account_key,
         account_limit=settings.rate_limit_invitation_accept_token,
         organisation_id=inv_for_limit.organisation_id if inv_for_limit else None,
     )
-    inv=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token)))
+    if not session_row:
+        raise HTTPException(400,"Invitation invalid or expired.")
+    inv = db.get(Invitation, session_row.invitation_id)
     if not inv or inv.accepted_at or inv.revoked_at or not unexpired(inv.expires_at): raise HTTPException(400,"Invitation invalid or expired.")
     if len(password)<10: raise HTTPException(400,"Password must contain at least 10 characters.")
-    u=User(organisation_id=inv.organisation_id,name=inv.name,email=inv.email,password_hash=hash_password(password),role=inv.role); db.add(u); db.flush(); inv.accepted_at=now(); db.commit(); r=RedirectResponse("/",303); r.set_cookie("session",encode_session(u.id, u.session_version),httponly=True,samesite="strict",secure=settings.cookie_secure,max_age=43200); return r
+    u=User(organisation_id=inv.organisation_id,name=inv.name,email=inv.email,password_hash=hash_password(password),role=inv.role); db.add(u); db.flush(); inv.accepted_at=now(); session_row.revoked_at = now(); db.commit(); r=RedirectResponse("/",303); r.set_cookie("session",encode_session(u.id, u.session_version),httponly=True,samesite="strict",secure=settings.cookie_secure,max_age=43200); clear_public_auth_cookie(r); return r
 @app.post("/invitations/{invitation_id}/revoke")
 def revoke_researcher_invite(invitation_id:int,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     inv=db.scalar(select(Invitation).where(Invitation.id==invitation_id,Invitation.organisation_id==u.organisation_id));

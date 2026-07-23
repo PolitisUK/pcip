@@ -247,6 +247,28 @@ class PasswordReset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PublicTokenExchange(Base):
+    __tablename__ = "public_token_exchanges"
+    __table_args__ = (UniqueConstraint("scope", "token_hash"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(60), index=True)
+    token_hash: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PublicAuthSession(Base):
+    __tablename__ = "public_auth_sessions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(60), index=True)
+    session_hash: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    password_reset_id: Mapped[int | None] = mapped_column(ForeignKey("password_resets.id"), nullable=True, index=True)
+    invitation_id: Mapped[int | None] = mapped_column(ForeignKey("invitations.id"), nullable=True, index=True)
+    participant_invitation_id: Mapped[int | None] = mapped_column(ForeignKey("participant_invitations.id"), nullable=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(primary_key=True)
