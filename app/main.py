@@ -182,6 +182,7 @@ def login(
     request: Request,
     email: str = Form(...),
     password: str = Form(...),
+    csrf_ok: None = Depends(csrf_protect),
     db: Session = Depends(get_db),
 ):
     if not settings.local_login_enabled:
@@ -324,12 +325,12 @@ async def entra_callback(request: Request, db: Session = Depends(get_db)):
     return response
 
 @app.post("/logout")
-def logout(): r=RedirectResponse("/login",303); r.delete_cookie("session"); return r
+def logout(csrf_ok: None = Depends(csrf_protect)): r=RedirectResponse("/login",303); r.delete_cookie("session"); return r
 
 @app.get("/forgot-password",response_class=HTMLResponse)
 def forgot_page(request:Request): return render(request,"forgot_password.html")
 @app.post("/forgot-password",response_class=HTMLResponse)
-def forgot(request:Request,email:str=Form(...),db:Session=Depends(get_db)):
+def forgot(request:Request,email:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     u=db.scalar(select(User).where(User.email==email.lower().strip(),User.is_active==True))
     if u:
         raw=new_token(); db.add(PasswordReset(user_id=u.id,token_hash=token_hash(raw),expires_at=now()+timedelta(hours=1)))
@@ -339,7 +340,7 @@ def forgot(request:Request,email:str=Form(...),db:Session=Depends(get_db)):
 def reset_page(request:Request,token:str="",db:Session=Depends(get_db)):
     row=db.scalar(select(PasswordReset).where(PasswordReset.token_hash==token_hash(token))); valid=bool(row and not row.used_at and unexpired(row.expires_at)); return render(request,"reset_password.html",token=token,valid=valid)
 @app.post("/reset-password")
-def reset_password(token:str=Form(...),password:str=Form(...),db:Session=Depends(get_db)):
+def reset_password(token:str=Form(...),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     row=db.scalar(select(PasswordReset).where(PasswordReset.token_hash==token_hash(token)))
     if not row or row.used_at or not unexpired(row.expires_at): raise HTTPException(400,"Reset link is invalid or expired.")
     if len(password)<10: raise HTTPException(400,"Password must contain at least 10 characters.")
@@ -356,7 +357,7 @@ def dashboard(request:Request,u=Depends(current_user),db:Session=Depends(get_db)
 def projects(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
     rows=db.scalars(select(Project).where(Project.organisation_id==u.organisation_id).order_by(Project.updated_at.desc())).all(); counts=dict(db.execute(select(Study.project_id,func.count(Study.id)).where(Study.organisation_id==u.organisation_id).group_by(Study.project_id)).all()); return render(request,"projects.html",user=u,projects=rows,counts=counts,statuses=[x.value for x in ProjectStatus])
 @app.post("/projects")
-def create_project(title:str=Form(...),code:str=Form(...),description:str=Form(""),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def create_project(title:str=Form(...),code:str=Form(...),description:str=Form(""),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     enum_value(status_value,ProjectStatus,"project status"); row=Project(organisation_id=u.organisation_id,title=title.strip(),code=code.strip().upper(),description=description.strip(),status=status_value,created_by_id=u.id); db.add(row)
     try: db.flush(); audit(db,u.organisation_id,u.id,"project.created","project",row.id,row.title); db.commit()
     except Exception: db.rollback(); raise HTTPException(400,"Project code must be unique.")
@@ -365,10 +366,10 @@ def create_project(title:str=Form(...),code:str=Form(...),description:str=Form("
 def project_detail(project_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); studies=db.scalars(select(Study).where(Study.project_id==p.id,Study.organisation_id==u.organisation_id).order_by(Study.updated_at.desc())).all(); return render(request,"project_detail.html",user=u,project=p,studies=studies,statuses=[x.value for x in StudyStatus])
 @app.post("/projects/{project_id}/edit")
-def edit_project(project_id:int,title:str=Form(...),description:str=Form(""),status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def edit_project(project_id:int,title:str=Form(...),description:str=Form(""),status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); enum_value(status_value,ProjectStatus,"project status"); p.title=title.strip(); p.description=description.strip(); p.status=status_value; audit(db,u.organisation_id,u.id,"project.updated","project",p.id,p.title); db.commit(); return RedirectResponse(f"/projects/{p.id}",303)
 @app.post("/projects/{project_id}/status")
-def update_project_status(project_id:int,status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)): return edit_project(project_id,project(db,project_id,u.organisation_id).title,project(db,project_id,u.organisation_id).description,status_value,u,db)
+def update_project_status(project_id:int,status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)): return edit_project(project_id,project(db,project_id,u.organisation_id).title,project(db,project_id,u.organisation_id).description,status_value,u,csrf_ok,db)
 
 @app.get("/studies",response_class=HTMLResponse)
 def studies_page(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
@@ -378,7 +379,7 @@ def studies_page(request:Request,u=Depends(current_user),db:Session=Depends(get_
         stmt=stmt.where(or_(Study.created_by_id==u.id,Study.id.in_(permitted_ids)))
     rows=db.scalars(stmt.order_by(Study.updated_at.desc())).all(); projects={p.id:p for p in db.scalars(select(Project).where(Project.organisation_id==u.organisation_id)).all()}; counts=dict(db.execute(select(StudyEnrolment.study_id,func.count()).where(StudyEnrolment.organisation_id==u.organisation_id).group_by(StudyEnrolment.study_id)).all()); return render(request,"studies.html",user=u,studies=rows,projects=projects,enrolment_counts=counts)
 @app.post("/projects/{project_id}/studies")
-def create_study(project_id:int,title:str=Form(...),code:str=Form(...),description:str=Form(""),methodology:str=Form("diary"),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def create_study(project_id:int,title:str=Form(...),code:str=Form(...),description:str=Form(""),methodology:str=Form("diary"),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); enum_value(status_value,StudyStatus,"study status"); allowed={"diary","walk_along","interview","focus_group","co_design","mixed_method"}
     if methodology not in allowed: raise HTTPException(400,"Invalid methodology.")
     s=Study(organisation_id=u.organisation_id,project_id=p.id,title=title.strip(),code=code.strip().upper(),description=description.strip(),methodology=methodology,status=status_value,created_by_id=u.id); db.add(s)
@@ -394,13 +395,13 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
     access_rows=db.scalars(select(StudyAccess).where(StudyAccess.study_id==s.id,StudyAccess.organisation_id==u.organisation_id)).all(); access_map={a.user_id:a for a in access_rows}; team=db.scalars(select(User).where(User.organisation_id==u.organisation_id,User.is_active==True).order_by(User.name)).all()
     return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=["short_text","long_text","single_choice","multiple_choice","rating","slider","photo","audio","video","gps","ranking","file"])
 @app.post("/studies/{study_id}/edit")
-def edit_study(study_id:int,title:str=Form(...),description:str=Form(""),methodology:str=Form(...),status_value:str=Form(...),demographics_schema:str=Form(""),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def edit_study(study_id:int,title:str=Form(...),description:str=Form(""),methodology:str=Form(...),status_value:str=Form(...),demographics_schema:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status"); s.title=title.strip(); s.description=description.strip(); s.methodology=methodology; s.status=status_value; s.demographics_schema_json=json.dumps([x.strip() for x in demographics_schema.splitlines() if x.strip()]); audit(db,u.organisation_id,u.id,"study.updated","study",s.id,s.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/studies/{study_id}/status")
-def study_status(study_id:int,status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def study_status(study_id:int,status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status"); s.status=status_value; db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/studies/{study_id}/activities")
-def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form("long_text"),options:str=Form(""),required:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form("long_text"),options:str=Form(""),required:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); allowed={"short_text","long_text","single_choice","multiple_choice","rating","slider","photo","audio","video","gps","ranking","file"}
     if activity_type not in allowed or release_offset_days<0: raise HTTPException(400,"Invalid activity configuration.")
     due=int(due_offset_days) if due_offset_days.strip() else None
@@ -409,7 +410,7 @@ def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activit
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts)<2: raise HTTPException(400,"Choice and ranking activities require at least two options.")
     pos=(db.scalar(select(func.max(Activity.position)).where(Activity.study_id==s.id)) or 0)+1; a=Activity(organisation_id=u.organisation_id,study_id=s.id,title=title.strip(),prompt=prompt.strip(),activity_type=activity_type,options_json=json.dumps(opts),position=pos,required=required,release_offset_days=release_offset_days,due_offset_days=due); db.add(a); db.flush(); audit(db,u.organisation_id,u.id,"activity.created","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/activities/{activity_id}/edit")
-def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form(...),options:str=Form(""),required:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form(...),options:str=Form(""),required:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.organisation_id==u.organisation_id));
     if not a: raise HTTPException(404)
     require_study_permission(db,u,study(db,a.study_id,u.organisation_id),edit=True)
@@ -418,7 +419,7 @@ def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activi
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts)<2: raise HTTPException(400,"At least two options required.")
     a.title=title.strip(); a.prompt=prompt.strip(); a.activity_type=activity_type; a.options_json=json.dumps(opts); a.required=required; a.release_offset_days=release_offset_days; a.due_offset_days=due; audit(db,u.organisation_id,u.id,"activity.updated","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{a.study_id}",303)
 @app.post("/activities/{activity_id}/delete")
-def delete_activity(activity_id:int,u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def delete_activity(activity_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.organisation_id==u.organisation_id));
     if not a: raise HTTPException(404)
     require_study_permission(db,u,study(db,a.study_id,u.organisation_id),edit=True)
@@ -433,14 +434,14 @@ def participants_page(request:Request,q:str="",status_filter:str="",page:int=1,u
     rows,total,pages=paginate(stmt.order_by(Participant.updated_at.desc()),db,page)
     return render(request,"participants.html",user=u,participants=rows,q=q,status_filter=status_filter,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],page=page,pages=pages,total=total)
 @app.post("/participants")
-def create_participant(reference:str=Form(...),name:str=Form(...),email:str=Form(""),phone:str=Form(""),status_value:str=Form("prospective"),consent_status:str=Form("pending"),communication_preference:str=Form("email"),tags:str=Form(""),notes:str=Form(""),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def create_participant(reference:str=Form(...),name:str=Form(...),email:str=Form(""),phone:str=Form(""),status_value:str=Form("prospective"),consent_status:str=Form("pending"),communication_preference:str=Form("email"),tags:str=Form(""),notes:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     enum_value(status_value,ParticipantStatus,"participant status"); enum_value(consent_status,ConsentStatus,"consent status")
     row=Participant(organisation_id=u.organisation_id,reference=reference.strip().upper(),name=name.strip(),email=email.lower().strip() or None,phone=phone.strip() or None,status=status_value,consent_status=consent_status,communication_preference=communication_preference,tags=tags.strip(),notes=notes.strip(),created_by_id=u.id); db.add(row)
     try: db.flush(); audit(db,u.organisation_id,u.id,"participant.created","participant",row.id,row.reference); db.commit()
     except Exception: db.rollback(); raise HTTPException(400,"Participant reference must be unique.")
     return RedirectResponse(f"/participants/{row.id}",303)
 @app.post("/participants/import")
-def import_participants(file:UploadFile=File(...),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def import_participants(file:UploadFile=File(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     data=file.file.read().decode("utf-8-sig"); reader=csv.DictReader(io.StringIO(data)); created=0
     for r in reader:
         ref=(r.get("reference") or "").strip().upper(); name=(r.get("name") or "").strip()
@@ -451,14 +452,14 @@ def import_participants(file:UploadFile=File(...),u=Depends(roles("owner","admin
 def participant_detail(participant_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.participant_id==p.id,StudyEnrolment.organisation_id==u.organisation_id)).all(); studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id)).all()}; invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id).order_by(ParticipantInvitation.created_at.desc())).all(); responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id).order_by(ActivityResponse.updated_at.desc())).all(); messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id).order_by(ParticipantMessage.created_at)).all(); return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus])
 @app.post("/participants/{participant_id}/update")
-def update_participant(participant_id:int,name:str=Form(None),email:str=Form(None),phone:str=Form(None),status_value:str=Form(...),consent_status:str=Form(...),communication_preference:str=Form(...),tags:str=Form(""),notes:str=Form(""),demographics_json:str=Form("{}"),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def update_participant(participant_id:int,name:str=Form(None),email:str=Form(None),phone:str=Form(None),status_value:str=Form(...),consent_status:str=Form(...),communication_preference:str=Form(...),tags:str=Form(""),notes:str=Form(""),demographics_json:str=Form("{}"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); enum_value(status_value,ParticipantStatus,"participant status"); enum_value(consent_status,ConsentStatus,"consent status")
     if name is not None: p.name=name.strip(); p.email=(email or "").strip().lower() or None; p.phone=(phone or "").strip() or None
     try: json.loads(demographics_json or "{}")
     except: raise HTTPException(400,"Demographics must be valid JSON.")
     p.status=status_value; p.consent_status=consent_status; p.communication_preference=communication_preference; p.tags=tags.strip(); p.notes=notes.strip(); p.demographics_json=demographics_json or "{}"; audit(db,u.organisation_id,u.id,"participant.updated","participant",p.id,p.reference); db.commit(); return RedirectResponse(f"/participants/{p.id}",303)
 @app.post("/studies/{study_id}/enrol")
-def enrol(study_id:int,participant_id:int=Form(...),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def enrol(study_id:int,participant_id:int=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); p=participant(db,participant_id,u.organisation_id)
     if not db.scalar(select(StudyEnrolment).where(StudyEnrolment.study_id==s.id,StudyEnrolment.participant_id==p.id)): db.add(StudyEnrolment(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id)); audit(db,u.organisation_id,u.id,"participant.enrolled","participant",p.id,s.title); db.commit()
     return RedirectResponse(f"/studies/{s.id}",303)
@@ -466,20 +467,20 @@ def enrol(study_id:int,participant_id:int=Form(...),u=Depends(roles("owner","adm
 def send_participant_invite(db,u,s,p):
     raw=new_token(); inv=ParticipantInvitation(organisation_id=u.organisation_id,participant_id=p.id,study_id=s.id,token_hash=token_hash(raw),expires_at=now()+timedelta(days=30),invited_by_id=u.id); db.add(inv); db.flush(); queue_email(db,u.organisation_id,p.email,f"Invitation: {s.title}",f"Join the study: {settings.base_url}/join-study?token={raw}"); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title); db.commit()
 @app.post("/studies/{study_id}/invite/{participant_id}")
-def invite_participant(study_id:int,participant_id:int,u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def invite_participant(study_id:int,participant_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); p=participant(db,participant_id,u.organisation_id)
     if not p.email: raise HTTPException(400,"Participant requires an email address.")
     active=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.study_id==s.id,ParticipantInvitation.participant_id==p.id,ParticipantInvitation.accepted_at.is_(None),ParticipantInvitation.revoked_at.is_(None),ParticipantInvitation.expires_at>now()))
     if active: raise HTTPException(400,"A live invitation already exists. Revoke it before resending.")
     send_participant_invite(db,u,s,p); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/participant-invitations/{invitation_id}/revoke")
-def revoke_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def revoke_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.id==invitation_id,ParticipantInvitation.organisation_id==u.organisation_id));
     if not inv: raise HTTPException(404)
     require_study_permission(db,u,study(db,inv.study_id,u.organisation_id),edit=True)
     inv.revoked_at=now(); db.commit(); return RedirectResponse(f"/studies/{inv.study_id}",303)
 @app.post("/participant-invitations/{invitation_id}/resend")
-def resend_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def resend_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.id==invitation_id,ParticipantInvitation.organisation_id==u.organisation_id));
     if not inv: raise HTTPException(404)
     require_study_permission(db,u,study(db,inv.study_id,u.organisation_id),edit=True)
@@ -493,7 +494,7 @@ def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
     if valid and inv.accepted_at: return RedirectResponse(f"/participant-portal?token={token}",303)
     return render(request,"join_study.html",token=token,invitation=inv,study=s,participant=p,valid=valid)
 @app.post("/join-study")
-def accept_study(request:Request,token:str=Form(...),consent:bool=Form(False),db:Session=Depends(get_db)):
+def accept_study(request:Request,token:str=Form(...),consent:bool=Form(False),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     inv=portal_invitation(db,token)
     if not consent: raise HTTPException(400,"Consent is required.")
     p=db.get(Participant,inv.participant_id); inv.accepted_at=inv.accepted_at or now(); p.status="active"; p.consent_status="granted"; audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse(f"/participant-portal?token={token}",303)
@@ -507,7 +508,7 @@ def participant_portal(request:Request,token:str,db:Session=Depends(get_db)):
         except json.JSONDecodeError: response_values[activity_id]={}
     msgs=db.scalars(select(ParticipantMessage).where(ParticipantMessage.study_id==s.id,ParticipantMessage.participant_id==p.id,ParticipantMessage.internal_note==False).order_by(ParticipantMessage.created_at)).all(); return render(request,"participant_portal.html",token=token,study=s,participant=p,activities=acts,responses=responses,response_values=response_values,messages=msgs)
 @app.post("/participant-portal/activity/{activity_id}")
-async def submit_activity(activity_id:int,token:str=Form(...),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),db:Session=Depends(get_db)):
+async def submit_activity(activity_id:int,token:str=Form(...),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     inv=portal_invitation(db,token); a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.study_id==inv.study_id));
     if not a: raise HTTPException(404)
     r=db.scalar(select(ActivityResponse).where(ActivityResponse.activity_id==a.id,ActivityResponse.participant_id==inv.participant_id))
@@ -537,12 +538,12 @@ async def submit_activity(activity_id:int,token:str=Form(...),action:str=Form("s
     if a.required and action=="submit" and not answer.strip() and not choice_list and not upload: raise HTTPException(400,"A response is required.")
     r.value_json=json.dumps(value); r.status="submitted" if action=="submit" else "draft"; r.submitted_at=now() if action=="submit" else None; audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit(); return RedirectResponse(f"/participant-portal?token={token}",303)
 @app.post("/participant-portal/message")
-def participant_message(token:str=Form(...),body:str=Form(...),db:Session=Depends(get_db)):
+def participant_message(token:str=Form(...),body:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     inv=portal_invitation(db,token)
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
     db.add(ParticipantMessage(organisation_id=inv.organisation_id,study_id=inv.study_id,participant_id=inv.participant_id,sender_type="participant",body=body.strip())); db.commit(); return RedirectResponse(f"/participant-portal?token={token}#messages",303)
 @app.post("/participants/{participant_id}/message")
-def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(...),internal_note:bool=Form(False),u=Depends(roles("owner","admin","researcher")),db:Session=Depends(get_db)):
+def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(...),internal_note:bool=Form(False),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
     db.add(ParticipantMessage(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id,sender_type="researcher",sender_user_id=u.id,body=body.strip(),internal_note=internal_note)); audit(db,u.organisation_id,u.id,"message.created","participant",p.id,"internal" if internal_note else s.title); db.commit(); return RedirectResponse(f"/participants/{p.id}#messages",303)
@@ -601,7 +602,7 @@ async def defender_storage_webhook(request: Request, db: Session = Depends(get_d
     return {"accepted": True}
 
 @app.post("/studies/{study_id}/access")
-def set_study_access(study_id:int,user_id:int=Form(...),permission:str=Form(...),u=Depends(roles("owner","admin")),db:Session=Depends(get_db)):
+def set_study_access(study_id:int,user_id:int=Form(...),permission:str=Form(...),u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id)
     target=db.scalar(select(User).where(User.id==user_id,User.organisation_id==u.organisation_id,User.is_active==True))
     if not target: raise HTTPException(404,"Researcher not found.")
@@ -621,7 +622,7 @@ def set_study_access(study_id:int,user_id:int=Form(...),permission:str=Form(...)
 def researchers(request:Request,u=Depends(roles("owner","admin")),db:Session=Depends(get_db)):
     users=db.scalars(select(User).where(User.organisation_id==u.organisation_id).order_by(User.name)).all(); invs=db.scalars(select(Invitation).where(Invitation.organisation_id==u.organisation_id).order_by(Invitation.created_at.desc())).all(); return render(request,"researchers.html",user=u,users=users,invitations=invs,roles=[x.value for x in Role])
 @app.post("/researchers/invite")
-def invite_researcher(name:str=Form(...),email:str=Form(...),role:str=Form("researcher"),u=Depends(roles("owner","admin")),db:Session=Depends(get_db)):
+def invite_researcher(name:str=Form(...),email:str=Form(...),role:str=Form("researcher"),u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     enum_value(role,Role,"role"); email=email.lower().strip()
     if db.scalar(select(User.id).where(User.organisation_id==u.organisation_id,User.email==email)): raise HTTPException(400,"A user already exists.")
     live=db.scalar(select(Invitation.id).where(Invitation.organisation_id==u.organisation_id,Invitation.email==email,Invitation.accepted_at.is_(None),Invitation.revoked_at.is_(None),Invitation.expires_at>now()))
@@ -631,13 +632,13 @@ def invite_researcher(name:str=Form(...),email:str=Form(...),role:str=Form("rese
 def accept_page(request:Request,token:str="",db:Session=Depends(get_db)):
     inv=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token))); return render(request,"accept.html",token=token,invitation=inv,valid=bool(inv and not inv.accepted_at and not inv.revoked_at and unexpired(inv.expires_at)))
 @app.post("/accept-invitation")
-def accept_invitation(token:str=Form(...),password:str=Form(...),db:Session=Depends(get_db)):
+def accept_invitation(token:str=Form(...),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     inv=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token)))
     if not inv or inv.accepted_at or inv.revoked_at or not unexpired(inv.expires_at): raise HTTPException(400,"Invitation invalid or expired.")
     if len(password)<10: raise HTTPException(400,"Password must contain at least 10 characters.")
     u=User(organisation_id=inv.organisation_id,name=inv.name,email=inv.email,password_hash=hash_password(password),role=inv.role); db.add(u); db.flush(); inv.accepted_at=now(); db.commit(); r=RedirectResponse("/",303); r.set_cookie("session",encode_session(u.id, u.session_version),httponly=True,samesite="strict",secure=settings.cookie_secure,max_age=43200); return r
 @app.post("/invitations/{invitation_id}/revoke")
-def revoke_researcher_invite(invitation_id:int,u=Depends(roles("owner","admin")),db:Session=Depends(get_db)):
+def revoke_researcher_invite(invitation_id:int,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     inv=db.scalar(select(Invitation).where(Invitation.id==invitation_id,Invitation.organisation_id==u.organisation_id));
     if not inv: raise HTTPException(404)
     inv.revoked_at=now(); db.commit(); return RedirectResponse("/researchers",303)

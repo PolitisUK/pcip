@@ -1,6 +1,7 @@
 import os
 os.environ['DATABASE_URL'] = 'sqlite:///./data/test.db'
 from pathlib import Path
+import re
 Path('data/test.db').unlink(missing_ok=True)
 from fastapi.testclient import TestClient
 from app.main import app
@@ -15,8 +16,21 @@ from app.main import now
 client = TestClient(app)
 
 
+def csrf_token() -> str:
+    page = client.get('/login')
+    match = re.search(r'name="csrf_token" value="([^"]+)"', page.text)
+    assert match is not None
+    return match.group(1)
+
+
+def post_with_csrf(path, data=None, files=None, follow_redirects=False):
+    payload = dict(data or {})
+    payload['csrf_token'] = csrf_token()
+    return client.post(path, data=payload, files=files, follow_redirects=follow_redirects)
+
+
 def login():
-    return client.post('/login', data={'email': 'admin@politis.local', 'password': 'PolitisDemo!'}, follow_redirects=False)
+    return post_with_csrf('/login', data={'email': 'admin@politis.local', 'password': 'PolitisDemo!'}, follow_redirects=False)
 
 
 def auth():
@@ -40,11 +54,11 @@ def test_login_and_dashboard():
 def test_project_and_study_creation():
     with client:
         auth()
-        p = client.post('/projects', data={'title': 'Access Study', 'code': 'ACC-001', 'description': 'Test', 'status_value': 'live'}, follow_redirects=False)
+        p = post_with_csrf('/projects', data={'title': 'Access Study', 'code': 'ACC-001', 'description': 'Test', 'status_value': 'live'}, follow_redirects=False)
         assert p.status_code == 303
         page = client.get('/projects'); assert 'Access Study' in page.text
         project_id = int(page.text.split('/projects/')[1].split('"')[0])
-        s = client.post(f'/projects/{project_id}/studies', data={'title': 'Access diary', 'code': 'ACC-D01', 'description': 'Diary', 'methodology': 'diary', 'status_value': 'recruiting'}, follow_redirects=False)
+        s = post_with_csrf(f'/projects/{project_id}/studies', data={'title': 'Access diary', 'code': 'ACC-D01', 'description': 'Diary', 'methodology': 'diary', 'status_value': 'recruiting'}, follow_redirects=False)
         assert s.status_code == 303
         detail = client.get(s.headers['location'])
         assert 'Access diary' in detail.text
@@ -53,16 +67,16 @@ def test_project_and_study_creation():
 def test_participant_enrolment_activity_and_invitation():
     with client:
         auth()
-        p = client.post('/participants', data={'reference': 'P-101', 'name': 'Alex Participant', 'email': 'alex.participant@example.org', 'phone': '', 'status_value': 'prospective', 'consent_status': 'pending', 'communication_preference': 'email', 'tags': 'ward 1', 'notes': ''}, follow_redirects=False)
+        p = post_with_csrf('/participants', data={'reference': 'P-101', 'name': 'Alex Participant', 'email': 'alex.participant@example.org', 'phone': '', 'status_value': 'prospective', 'consent_status': 'pending', 'communication_preference': 'email', 'tags': 'ward 1', 'notes': ''}, follow_redirects=False)
         assert p.status_code == 303
         participant_id = int(p.headers['location'].rsplit('/', 1)[-1])
         studies = client.get('/studies')
         study_id = int(studies.text.split('/studies/')[1].split('"')[0])
-        e = client.post(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+        e = post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
         assert e.status_code == 303
-        a = client.post(f'/studies/{study_id}/activities', data={'title': 'Rate the visit', 'prompt': 'How was it?', 'activity_type': 'rating', 'options': '', 'required': 'true', 'release_offset_days': '1', 'due_offset_days': '3'}, follow_redirects=False)
+        a = post_with_csrf(f'/studies/{study_id}/activities', data={'title': 'Rate the visit', 'prompt': 'How was it?', 'activity_type': 'rating', 'options': '', 'required': 'true', 'release_offset_days': '1', 'due_offset_days': '3'}, follow_redirects=False)
         assert a.status_code == 303
-        invite = client.post(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
+        invite = post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
         assert invite.status_code == 303
         outbox = client.get('/outbox')
         assert 'alex.participant@example.org' in outbox.text and 'Invitation:' in outbox.text
@@ -71,7 +85,7 @@ def test_participant_enrolment_activity_and_invitation():
 def test_researcher_invite_and_admin_pages():
     with client:
         auth()
-        p = client.post('/researchers/invite', data={'name': 'Alex Researcher', 'email': 'alex.researcher@example.org', 'role': 'researcher'}, follow_redirects=False)
+        p = post_with_csrf('/researchers/invite', data={'name': 'Alex Researcher', 'email': 'alex.researcher@example.org', 'role': 'researcher'}, follow_redirects=False)
         assert p.status_code == 303
         for path in ['/projects', '/studies', '/participants', '/researchers', '/audit', '/outbox']:
             page = client.get(path)
@@ -83,34 +97,34 @@ def test_participant_accepts_invitation():
     from sqlalchemy import select
     with client:
         auth()
-        p = client.post('/participants', data={'reference': 'P-202', 'name': 'Jamie Resident', 'email': 'jamie@example.org', 'phone': '', 'status_value': 'prospective', 'consent_status': 'pending', 'communication_preference': 'email', 'tags': '', 'notes': ''}, follow_redirects=False)
+        p = post_with_csrf('/participants', data={'reference': 'P-202', 'name': 'Jamie Resident', 'email': 'jamie@example.org', 'phone': '', 'status_value': 'prospective', 'consent_status': 'pending', 'communication_preference': 'email', 'tags': '', 'notes': ''}, follow_redirects=False)
         participant_id = int(p.headers['location'].rsplit('/', 1)[-1])
         studies = client.get('/studies')
         study_id = int(studies.text.split('/studies/')[1].split('"')[0])
-        client.post(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
-        client.post(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
         with SessionLocal() as db:
             email = db.scalar(select(OutboxEmail).where(OutboxEmail.recipient == 'jamie@example.org').order_by(OutboxEmail.id.desc()))
             token = email.body.split('token=')[1].strip()
         page = client.get(f'/join-study?token={token}')
         assert page.status_code == 200 and 'Research invitation' in page.text
-        accepted = client.post('/join-study', data={'token': token, 'consent': 'true'})
+        accepted = post_with_csrf('/join-study', data={'token': token, 'consent': 'true'}, follow_redirects=True)
         assert accepted.status_code == 200 and "You're enrolled" in accepted.text
 
 def test_invalid_status_and_activity_validation():
     with client:
         auth()
-        r = client.post('/projects', data={'title':'Invalid','code':'BAD-1','status_value':'nonsense'})
+        r = post_with_csrf('/projects', data={'title':'Invalid','code':'BAD-1','status_value':'nonsense'})
         assert r.status_code == 400
         from app.db import SessionLocal
         from app.models import Project
         from sqlalchemy import select
         with SessionLocal() as db:
             project_id = db.scalar(select(Project.id).order_by(Project.id.asc()))
-        study = client.post(f'/projects/{project_id}/studies', data={'title':'Validation study','code':'VAL-1','methodology':'diary','status_value':'draft'}, follow_redirects=False)
+        study = post_with_csrf(f'/projects/{project_id}/studies', data={'title':'Validation study','code':'VAL-1','methodology':'diary','status_value':'draft'}, follow_redirects=False)
         assert study.status_code == 303
         study_id = int(study.headers['location'].split('/')[-1])
-        r = client.post(f'/studies/{study_id}/activities', data={'title':'Bad choice','activity_type':'single_choice','options':'Only one','release_offset_days':'0','due_offset_days':'0','required':'true'})
+        r = post_with_csrf(f'/studies/{study_id}/activities', data={'title':'Bad choice','activity_type':'single_choice','options':'Only one','release_offset_days':'0','due_offset_days':'0','required':'true'})
         assert r.status_code == 400
 
 
@@ -128,25 +142,25 @@ def test_participant_portal_draft_submit_and_message():
     from sqlalchemy import select
     with client:
         auth()
-        p = client.post('/participants', data={'reference':'P-303','name':'Portal User','email':'portal@example.org','phone':'','status_value':'prospective','consent_status':'pending','communication_preference':'email','tags':'','notes':''}, follow_redirects=False)
+        p = post_with_csrf('/participants', data={'reference':'P-303','name':'Portal User','email':'portal@example.org','phone':'','status_value':'prospective','consent_status':'pending','communication_preference':'email','tags':'','notes':''}, follow_redirects=False)
         participant_id = int(p.headers['location'].rsplit('/',1)[-1])
         with SessionLocal() as db:
             first_activity=db.scalar(select(Activity).order_by(Activity.id.asc()))
             study_id=first_activity.study_id
             activity_id=first_activity.id
-        client.post(f'/studies/{study_id}/enrol', data={'participant_id':participant_id})
-        client.post(f'/studies/{study_id}/invite/{participant_id}')
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id':participant_id})
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}')
         with SessionLocal() as db:
             email=db.scalar(select(OutboxEmail).where(OutboxEmail.recipient=='portal@example.org').order_by(OutboxEmail.id.desc()))
             token=email.body.split('token=')[1].strip()
-        client.post('/join-study', data={'token':token,'consent':'true'})
+        post_with_csrf('/join-study', data={'token':token,'consent':'true'})
         portal=client.get(f'/participant-portal?token={token}')
         assert portal.status_code==200 and 'Your activities' in portal.text
-        draft=client.post(f'/participant-portal/activity/{activity_id}', data={'token':token,'action':'draft','answer':'draft answer'}, follow_redirects=False)
+        draft=post_with_csrf(f'/participant-portal/activity/{activity_id}', data={'token':token,'action':'draft','answer':'draft answer'}, follow_redirects=False)
         assert draft.status_code==303
-        submit=client.post(f'/participant-portal/activity/{activity_id}', data={'token':token,'action':'submit','answer':'final answer'}, follow_redirects=False)
+        submit=post_with_csrf(f'/participant-portal/activity/{activity_id}', data={'token':token,'action':'submit','answer':'final answer'}, follow_redirects=False)
         assert submit.status_code==303
-        msg=client.post('/participant-portal/message', data={'token':token,'body':'Hello research team'}, follow_redirects=False)
+        msg=post_with_csrf('/participant-portal/message', data={'token':token,'body':'Hello research team'}, follow_redirects=False)
         assert msg.status_code==303
         with SessionLocal() as db:
             response=db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id==participant_id,ActivityResponse.activity_id==activity_id))
@@ -159,11 +173,11 @@ def test_bulk_import_editing_and_password_reset_request():
     with client:
         auth()
         csv_data=b'reference,name,email,phone,tags\nB-1,Bulk Person,bulk@example.org,,ward 2\n'
-        r=client.post('/participants/import', files={'file':('participants.csv',BytesIO(csv_data),'text/csv')}, follow_redirects=False)
+        r=post_with_csrf('/participants/import', files={'file':('participants.csv',BytesIO(csv_data),'text/csv')}, follow_redirects=False)
         assert r.status_code==303
         page=client.get('/participants?q=Bulk')
         assert 'Bulk Person' in page.text
-        reset=client.post('/forgot-password', data={'email':'admin@politis.local'})
+        reset=post_with_csrf('/forgot-password', data={'email':'admin@politis.local'})
         assert reset.status_code==200 and 'reset link has been issued' in reset.text
 
 
@@ -208,7 +222,7 @@ def test_study_access_assignment():
                 db.add(researcher); db.commit(); db.refresh(researcher)
             study = db.scalar(select(Study).where(Study.organisation_id == owner.organisation_id).order_by(Study.id))
             researcher_id, study_id = researcher.id, study.id
-        response = client.post(f'/studies/{study_id}/access', data={'user_id': researcher_id, 'permission': 'view'}, follow_redirects=False)
+        response = post_with_csrf(f'/studies/{study_id}/access', data={'user_id': researcher_id, 'permission': 'view'}, follow_redirects=False)
         assert response.status_code == 303
         with SessionLocal() as db:
             row = db.scalar(select(StudyAccess).where(StudyAccess.study_id == study_id, StudyAccess.user_id == researcher_id))
@@ -279,7 +293,7 @@ def test_user_model_supports_external_identity():
 def test_failed_logins_lock_account():
     with client:
         for _ in range(settings.login_max_failed_attempts):
-            response = client.post(
+            response = post_with_csrf(
                 "/login",
                 data={
                     "email": "admin@politis.local",
@@ -325,3 +339,53 @@ def test_expired_lockout_allows_login_and_resets_counter():
         assert user is not None
         assert user.failed_login_count == 0
         assert user.locked_until is None
+
+
+def test_csrf_rejects_missing_and_invalid_token():
+    with client:
+        missing = client.post(
+            '/login',
+            data={'email': 'admin@politis.local', 'password': 'PolitisDemo!'},
+            follow_redirects=False,
+        )
+        assert missing.status_code == 422
+
+        invalid = client.post(
+            '/login',
+            data={
+                'email': 'admin@politis.local',
+                'password': 'PolitisDemo!',
+                'csrf_token': 'invalid-token',
+            },
+            follow_redirects=False,
+        )
+        assert invalid.status_code == 403
+        assert invalid.json()['detail'] == 'Invalid CSRF token.'
+
+
+def test_csrf_blocks_authenticated_post_without_token():
+    with client:
+        auth()
+        denied = client.post(
+            '/projects',
+            data={
+                'title': 'Blocked project',
+                'code': 'CSRF-001',
+                'description': 'Should be rejected',
+                'status_value': 'draft',
+            },
+            follow_redirects=False,
+        )
+        assert denied.status_code == 422
+
+        allowed = post_with_csrf(
+            '/projects',
+            data={
+                'title': 'Allowed project',
+                'code': 'CSRF-002',
+                'description': 'Should pass',
+                'status_value': 'draft',
+            },
+            follow_redirects=False,
+        )
+        assert allowed.status_code == 303
