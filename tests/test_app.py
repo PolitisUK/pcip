@@ -2,6 +2,7 @@ import os
 os.environ['DATABASE_URL'] = 'sqlite:///./data/test.db'
 from pathlib import Path
 import re
+from uuid import uuid4
 Path('data/test.db').unlink(missing_ok=True)
 from fastapi.testclient import TestClient
 from app.main import app
@@ -29,8 +30,18 @@ def post_with_csrf(path, data=None, files=None, follow_redirects=False):
     return client.post(path, data=payload, files=files, follow_redirects=follow_redirects)
 
 
+def unique_value(prefix: str) -> str:
+    return f"{prefix}-{uuid4().hex[:8]}"
+
+
 def login():
     return post_with_csrf('/login', data={'email': 'admin@politis.local', 'password': 'PolitisDemo!'}, follow_redirects=False)
+
+
+def login_as(email: str, password: str):
+    response = post_with_csrf('/login', data={'email': email, 'password': password}, follow_redirects=False)
+    client.cookies.update(response.cookies)
+    return response
 
 
 def auth():
@@ -386,6 +397,295 @@ def test_csrf_blocks_authenticated_post_without_token():
                 'description': 'Should pass',
                 'status_value': 'draft',
             },
+            follow_redirects=False,
+        )
+        assert allowed.status_code == 303
+
+
+def test_organisation_isolation_across_project_study_and_participant_endpoints():
+    from app.models import Organisation, User
+    from app.security import hash_password
+    with client:
+        client.cookies.clear()
+        auth()
+        code = unique_value('ORGISO').upper()
+        project = post_with_csrf(
+            '/projects',
+            data={
+                'title': f'Isolation project {code}',
+                'code': code,
+                'description': 'Org isolation test',
+                'status_value': 'live',
+            },
+            follow_redirects=False,
+        )
+        assert project.status_code == 303
+        project_id = int(project.headers['location'].split('/')[-1])
+
+        study = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={
+                'title': f'Isolation study {code}',
+                'code': f'{code}S',
+                'description': 'Org isolation test',
+                'methodology': 'diary',
+                'status_value': 'recruiting',
+            },
+            follow_redirects=False,
+        )
+        assert study.status_code == 303
+        study_id = int(study.headers['location'].split('/')[-1])
+
+        participant = post_with_csrf(
+            '/participants',
+            data={
+                'reference': f'{code}P',
+                'name': f'Participant {code}',
+                'email': f'{code.lower()}@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        assert participant.status_code == 303
+        participant_id = int(participant.headers['location'].split('/')[-1])
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+
+        second_email = f"{unique_value('owner2')}@example.org"
+        second_password = 'SecurePass123!'
+        with SessionLocal() as db:
+            second_org = Organisation(name=unique_value('Org Two'), slug=unique_value('org-two').lower())
+            db.add(second_org); db.flush()
+            db.add(User(organisation_id=second_org.id, name='Second Owner', email=second_email, password_hash=hash_password(second_password), role='owner'))
+            db.commit()
+
+        client.cookies.clear()
+        login_response = login_as(second_email, second_password)
+        assert login_response.status_code == 303
+
+        assert client.get(f'/projects/{project_id}').status_code == 404
+        assert client.get(f'/studies/{study_id}').status_code == 404
+        assert client.get(f'/participants/{participant_id}').status_code == 404
+
+        denied_update = post_with_csrf(
+            f'/participants/{participant_id}/update',
+            data={
+                'name': 'Should Fail',
+                'email': '',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+                'demographics_json': '{}',
+            },
+            follow_redirects=False,
+        )
+        assert denied_update.status_code == 404
+
+
+def test_researcher_cannot_access_admin_surfaces_or_actions():
+    from app.models import User
+    from app.security import hash_password
+    with client:
+        client.cookies.clear()
+        auth()
+        researcher_email = f"{unique_value('researcher-admin-block')}@example.org"
+        researcher_password = 'SecurePass123!'
+        with SessionLocal() as db:
+            owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            db.add(User(organisation_id=owner.organisation_id, name='Researcher Blocked', email=researcher_email, password_hash=hash_password(researcher_password), role='researcher'))
+            db.commit()
+
+        client.cookies.clear()
+        login_response = login_as(researcher_email, researcher_password)
+        assert login_response.status_code == 303
+
+        for path in ['/researchers', '/audit', '/outbox']:
+            assert client.get(path).status_code == 403
+
+        denied_invite = post_with_csrf(
+            '/researchers/invite',
+            data={'name': 'Nope', 'email': f"{unique_value('x')}@example.org", 'role': 'researcher'},
+            follow_redirects=False,
+        )
+        assert denied_invite.status_code == 403
+
+
+def test_restricted_researcher_cannot_access_unassigned_study_or_participant_records():
+    from app.models import User
+    from app.security import hash_password
+    with client:
+        client.cookies.clear()
+        auth()
+        code = unique_value('SCOPE').upper()
+        project = post_with_csrf('/projects', data={'title': f'Scope project {code}', 'code': code, 'description': '', 'status_value': 'live'}, follow_redirects=False)
+        project_id = int(project.headers['location'].split('/')[-1])
+        study = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={'title': f'Scope study {code}', 'code': f'{code}S', 'description': '', 'methodology': 'diary', 'status_value': 'recruiting'},
+            follow_redirects=False,
+        )
+        study_id = int(study.headers['location'].split('/')[-1])
+        participant = post_with_csrf(
+            '/participants',
+            data={
+                'reference': f'{code}P',
+                'name': f'Scoped Participant {code}',
+                'email': f'{code.lower()}@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant.headers['location'].split('/')[-1])
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+
+        researcher_email = f"{unique_value('restricted')}@example.org"
+        researcher_password = 'SecurePass123!'
+        with SessionLocal() as db:
+            owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            db.add(User(organisation_id=owner.organisation_id, name='Restricted Researcher', email=researcher_email, password_hash=hash_password(researcher_password), role='researcher'))
+            db.commit()
+
+        client.cookies.clear()
+        login_response = login_as(researcher_email, researcher_password)
+        assert login_response.status_code == 303
+
+        studies_page = client.get('/studies')
+        assert studies_page.status_code == 200
+        assert f'Scope study {code}' not in studies_page.text
+        assert client.get(f'/studies/{study_id}').status_code == 403
+
+        participants_page = client.get('/participants')
+        assert participants_page.status_code == 200
+        assert f'Scoped Participant {code}' not in participants_page.text
+        assert client.get(f'/participants/{participant_id}').status_code == 403
+
+
+def test_researcher_with_view_access_can_read_study_participant_but_not_edit_study():
+    from app.models import User, StudyAccess
+    from app.security import hash_password
+    with client:
+        client.cookies.clear()
+        auth()
+        code = unique_value('VIEW').upper()
+        project = post_with_csrf('/projects', data={'title': f'View project {code}', 'code': code, 'description': '', 'status_value': 'live'}, follow_redirects=False)
+        project_id = int(project.headers['location'].split('/')[-1])
+        study = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={'title': f'View study {code}', 'code': f'{code}S', 'description': '', 'methodology': 'diary', 'status_value': 'recruiting'},
+            follow_redirects=False,
+        )
+        study_id = int(study.headers['location'].split('/')[-1])
+        participant = post_with_csrf(
+            '/participants',
+            data={
+                'reference': f'{code}P',
+                'name': f'View Participant {code}',
+                'email': f'{code.lower()}@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant.headers['location'].split('/')[-1])
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+
+        researcher_email = f"{unique_value('viewer')}@example.org"
+        researcher_password = 'SecurePass123!'
+        with SessionLocal() as db:
+            owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            researcher = User(organisation_id=owner.organisation_id, name='View Researcher', email=researcher_email, password_hash=hash_password(researcher_password), role='researcher')
+            db.add(researcher); db.flush()
+            db.add(StudyAccess(organisation_id=owner.organisation_id, study_id=study_id, user_id=researcher.id, permission='view', created_by_id=owner.id))
+            db.commit()
+
+        client.cookies.clear()
+        login_response = login_as(researcher_email, researcher_password)
+        assert login_response.status_code == 303
+
+        assert client.get(f'/studies/{study_id}').status_code == 200
+        assert client.get(f'/participants/{participant_id}').status_code == 200
+
+        denied_edit = post_with_csrf(
+            f'/studies/{study_id}/activities',
+            data={
+                'title': 'Blocked edit',
+                'prompt': '',
+                'activity_type': 'long_text',
+                'options': '',
+                'required': 'true',
+                'release_offset_days': '0',
+                'due_offset_days': '',
+            },
+            follow_redirects=False,
+        )
+        assert denied_edit.status_code == 403
+
+
+def test_researcher_message_requires_participant_enrolment_in_study():
+    with client:
+        client.cookies.clear()
+        auth()
+        code = unique_value('MSGISO').upper()
+        project = post_with_csrf('/projects', data={'title': f'Message project {code}', 'code': code, 'description': '', 'status_value': 'live'}, follow_redirects=False)
+        project_id = int(project.headers['location'].split('/')[-1])
+
+        study_a = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={'title': f'Message study A {code}', 'code': f'{code}A', 'description': '', 'methodology': 'diary', 'status_value': 'recruiting'},
+            follow_redirects=False,
+        )
+        study_a_id = int(study_a.headers['location'].split('/')[-1])
+        study_b = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={'title': f'Message study B {code}', 'code': f'{code}B', 'description': '', 'methodology': 'diary', 'status_value': 'recruiting'},
+            follow_redirects=False,
+        )
+        study_b_id = int(study_b.headers['location'].split('/')[-1])
+
+        participant = post_with_csrf(
+            '/participants',
+            data={
+                'reference': f'{code}P',
+                'name': f'Message Participant {code}',
+                'email': f'{code.lower()}@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant.headers['location'].split('/')[-1])
+        post_with_csrf(f'/studies/{study_a_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+
+        denied = post_with_csrf(
+            f'/participants/{participant_id}/message',
+            data={'study_id': study_b_id, 'body': 'Should fail', 'internal_note': 'true'},
+            follow_redirects=False,
+        )
+        assert denied.status_code == 400
+
+        allowed = post_with_csrf(
+            f'/participants/{participant_id}/message',
+            data={'study_id': study_a_id, 'body': 'Allowed', 'internal_note': 'true'},
             follow_redirects=False,
         )
         assert allowed.status_code == 303

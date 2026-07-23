@@ -135,6 +135,17 @@ def require_study_permission(db: Session, user: User, study_row: Study, edit: bo
         raise HTTPException(403, "You do not have access to this study.")
     return permission
 
+
+def study_scope_for_user(user: User):
+    access_ids = select(StudyAccess.study_id).where(
+        StudyAccess.organisation_id == user.organisation_id,
+        StudyAccess.user_id == user.id,
+    )
+    return select(Study.id).where(
+        Study.organisation_id == user.organisation_id,
+        or_(Study.created_by_id == user.id, Study.id.in_(access_ids)),
+    )
+
 def portal_invitation(db, token):
     inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==token_hash(token)))
     if not inv or inv.revoked_at or not unexpired(inv.expires_at): raise HTTPException(400,"This participant link is invalid or expired.")
@@ -428,6 +439,12 @@ def delete_activity(activity_id:int,u=Depends(roles("owner","admin","researcher"
 @app.get("/participants",response_class=HTMLResponse)
 def participants_page(request:Request,q:str="",status_filter:str="",page:int=1,u=Depends(current_user),db:Session=Depends(get_db)):
     stmt=select(Participant).where(Participant.organisation_id==u.organisation_id)
+    if u.role not in {"owner","admin","observer"}:
+        participant_ids = select(StudyEnrolment.participant_id).where(
+            StudyEnrolment.organisation_id == u.organisation_id,
+            StudyEnrolment.study_id.in_(study_scope_for_user(u)),
+        )
+        stmt = stmt.where(or_(Participant.created_by_id == u.id, Participant.id.in_(participant_ids)))
     if q.strip():
         t=f"%{q.strip()}%"; stmt=stmt.where(or_(Participant.name.ilike(t),Participant.reference.ilike(t),Participant.email.ilike(t),Participant.tags.ilike(t)))
     if status_filter: enum_value(status_filter,ParticipantStatus,"participant status"); stmt=stmt.where(Participant.status==status_filter)
@@ -450,10 +467,36 @@ def import_participants(file:UploadFile=File(...),u=Depends(roles("owner","admin
     audit(db,u.organisation_id,u.id,"participant.bulk_imported","participant","bulk",str(created)); db.commit(); return RedirectResponse("/participants",303)
 @app.get("/participants/{participant_id}",response_class=HTMLResponse)
 def participant_detail(participant_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
-    p=participant(db,participant_id,u.organisation_id); ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.participant_id==p.id,StudyEnrolment.organisation_id==u.organisation_id)).all(); studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id)).all()}; invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id).order_by(ParticipantInvitation.created_at.desc())).all(); responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id).order_by(ActivityResponse.updated_at.desc())).all(); messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id).order_by(ParticipantMessage.created_at)).all(); return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus])
+    p=participant(db,participant_id,u.organisation_id)
+    if u.role in {"owner","admin","observer"}:
+        ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.participant_id==p.id,StudyEnrolment.organisation_id==u.organisation_id)).all()
+        studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id)).all()}
+        invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id).order_by(ParticipantInvitation.created_at.desc())).all()
+        responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id).order_by(ActivityResponse.updated_at.desc())).all()
+        messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id).order_by(ParticipantMessage.created_at)).all()
+    else:
+        allowed_ids = set(db.scalars(study_scope_for_user(u)).all())
+        ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.participant_id==p.id,StudyEnrolment.organisation_id==u.organisation_id,StudyEnrolment.study_id.in_(allowed_ids))).all()
+        if p.created_by_id != u.id and not ens:
+            raise HTTPException(403, "You do not have access to this participant.")
+        studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id,Study.id.in_(allowed_ids))).all()}
+        invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id,ParticipantInvitation.study_id.in_(allowed_ids)).order_by(ParticipantInvitation.created_at.desc())).all()
+        responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(allowed_ids)).order_by(ActivityResponse.updated_at.desc())).all()
+        messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id,ParticipantMessage.study_id.in_(allowed_ids)).order_by(ParticipantMessage.created_at)).all()
+    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus])
 @app.post("/participants/{participant_id}/update")
 def update_participant(participant_id:int,name:str=Form(None),email:str=Form(None),phone:str=Form(None),status_value:str=Form(...),consent_status:str=Form(...),communication_preference:str=Form(...),tags:str=Form(""),notes:str=Form(""),demographics_json:str=Form("{}"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); enum_value(status_value,ParticipantStatus,"participant status"); enum_value(consent_status,ConsentStatus,"consent status")
+    if u.role == "researcher":
+        visible = db.scalar(
+            select(StudyEnrolment.id).where(
+                StudyEnrolment.organisation_id == u.organisation_id,
+                StudyEnrolment.participant_id == p.id,
+                StudyEnrolment.study_id.in_(study_scope_for_user(u)),
+            )
+        )
+        if p.created_by_id != u.id and not visible:
+            raise HTTPException(403, "You do not have access to this participant.")
     if name is not None: p.name=name.strip(); p.email=(email or "").strip().lower() or None; p.phone=(phone or "").strip() or None
     try: json.loads(demographics_json or "{}")
     except: raise HTTPException(400,"Demographics must be valid JSON.")
@@ -545,6 +588,9 @@ def participant_message(token:str=Form(...),body:str=Form(...),csrf_ok: None = D
 @app.post("/participants/{participant_id}/message")
 def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(...),internal_note:bool=Form(False),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    enrolment = db.scalar(select(StudyEnrolment.id).where(StudyEnrolment.organisation_id==u.organisation_id,StudyEnrolment.study_id==s.id,StudyEnrolment.participant_id==p.id))
+    if not enrolment:
+        raise HTTPException(400,"Participant is not enrolled in this study.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
     db.add(ParticipantMessage(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id,sender_type="researcher",sender_user_id=u.id,body=body.strip(),internal_note=internal_note)); audit(db,u.organisation_id,u.id,"message.created","participant",p.id,"internal" if internal_note else s.title); db.commit(); return RedirectResponse(f"/participants/{p.id}#messages",303)
 @app.get("/evidence/{evidence_id}")
