@@ -155,11 +155,102 @@ def health(): return {"status":"ok","version":VERSION}
 @app.get("/login",response_class=HTMLResponse)
 def login_page(request:Request): return render(request,"login.html")
 @app.post("/login")
-def login(request:Request,email:str=Form(...),password:str=Form(...),db:Session=Depends(get_db)):
-    if not settings.local_login_enabled: return render(request,"login.html",error="Password sign-in is disabled. Use Microsoft sign-in.")
-    u=db.scalar(select(User).where(User.email==email.lower().strip(),User.is_active==True))
-    if not u or not u.password_hash or not verify_password(password,u.password_hash): return render(request,"login.html",error="Email or password is incorrect.")
-    u.last_login_at=now(); audit(db,u.organisation_id,u.id,"auth.login","user",u.id); db.commit(); r=RedirectResponse("/",303); r.set_cookie("session",encode_session(u.id, u.session_version),httponly=True,samesite="strict",secure=settings.cookie_secure,max_age=43200); return r
+@app.post("/login")
+def login(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    if not settings.local_login_enabled:
+        return render(
+            request,
+            "login.html",
+            error="Password sign-in is disabled. Use Microsoft sign-in.",
+        )
+
+    normalised_email = email.lower().strip()
+    user = db.scalar(
+        select(User).where(
+            User.email == normalised_email,
+            User.is_active == True,
+        )
+    )
+
+    generic_error = "Email or password is incorrect."
+
+    if not user or not user.password_hash:
+        return render(request, "login.html", error=generic_error)
+
+    current_time = now()
+
+    if user.locked_until:
+        locked_until = user.locked_until
+
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+
+        if locked_until > current_time:
+            return render(request, "login.html", error=generic_error)
+
+        user.locked_until = None
+        user.failed_login_count = 0
+
+    if not verify_password(password, user.password_hash):
+        user.failed_login_count += 1
+
+        if user.failed_login_count >= settings.login_max_failed_attempts:
+            user.locked_until = current_time + timedelta(
+                seconds=settings.login_lockout_seconds
+            )
+            audit(
+                db,
+                user.organisation_id,
+                user.id,
+                "auth.account_locked",
+                "user",
+                user.id,
+                "Account temporarily locked after repeated failed sign-in attempts",
+            )
+        else:
+            audit(
+                db,
+                user.organisation_id,
+                user.id,
+                "auth.login_failed",
+                "user",
+                user.id,
+                "Incorrect password",
+            )
+
+        db.commit()
+        return render(request, "login.html", error=generic_error)
+
+    user.failed_login_count = 0
+    user.locked_until = None
+    user.last_login_at = current_time
+
+    audit(
+        db,
+        user.organisation_id,
+        user.id,
+        "auth.login",
+        "user",
+        user.id,
+    )
+
+    db.commit()
+
+    response = RedirectResponse("/", 303)
+    response.set_cookie(
+        "session",
+        encode_session(user.id, user.session_version),
+        httponly=True,
+        samesite="strict",
+        secure=settings.cookie_secure,
+        max_age=settings.session_max_age_seconds,
+    )
+    return response
 
 @app.get("/auth/entra/login")
 async def entra_login(request: Request):

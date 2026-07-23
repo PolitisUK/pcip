@@ -4,6 +4,13 @@ from pathlib import Path
 Path('data/test.db').unlink(missing_ok=True)
 from fastapi.testclient import TestClient
 from app.main import app
+from datetime import timedelta
+from sqlalchemy import select
+
+from app.config import settings
+from app.db import SessionLocal
+from app.models import User
+from app.main import now
 
 client = TestClient(app)
 
@@ -268,3 +275,53 @@ def test_user_model_supports_external_identity():
     assert 'external_provider' in columns
     assert 'external_subject' in columns
     assert 'last_login_at' in columns
+
+def test_failed_logins_lock_account():
+    with client:
+        for _ in range(settings.login_max_failed_attempts):
+            response = client.post(
+                "/login",
+                data={
+                    "email": "admin@politis.local",
+                    "password": "wrong-password",
+                },
+                follow_redirects=False,
+            )
+            assert response.status_code == 200
+            assert "Email or password is incorrect." in response.text
+
+        response = login()
+        assert response.status_code == 200
+        assert "Email or password is incorrect." in response.text
+
+        with SessionLocal() as db:
+            user = db.scalar(
+                select(User).where(User.email == "admin@politis.local")
+            )
+            assert user is not None
+            assert user.failed_login_count == settings.login_max_failed_attempts
+            assert user.locked_until is not None
+
+
+def test_expired_lockout_allows_login_and_resets_counter():
+    with SessionLocal() as db:
+        user = db.scalar(
+            select(User).where(User.email == "admin@politis.local")
+        )
+        assert user is not None
+
+        user.failed_login_count = settings.login_max_failed_attempts
+        user.locked_until = now() - timedelta(seconds=1)
+        db.commit()
+
+    with client:
+        response = login()
+        assert response.status_code == 303
+
+    with SessionLocal() as db:
+        user = db.scalar(
+            select(User).where(User.email == "admin@politis.local")
+        )
+        assert user is not None
+        assert user.failed_login_count == 0
+        assert user.locked_until is None

@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     cookie_secure: bool = False
     session_max_age_seconds: int = 60 * 60 * 12
+    login_max_failed_attempts: int = 5
+    login_lockout_seconds: int = 15 * 60
     trusted_hosts: str = "127.0.0.1,localhost,testserver"
     allowed_origins: str = "http://127.0.0.1:8000,http://localhost:8000,http://testserver"
     max_upload_mb: int = 25
