@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     azure_storage_container: str = "evidence"
     azure_defender_webhook_secret: str | None = None
     defender_require_clean_download: bool = True
+    development_allow_unscanned_downloads: bool = False
     azure_sas_minutes: int = 5
     clamav_host: str | None = None
     clamav_port: int = 3310
@@ -130,6 +131,9 @@ def validate_runtime_settings(runtime: Settings) -> None:
             normalised.add(f"{parsed.scheme.lower()}://{host}")
         if base_host and f"https://{base_host}" not in normalised:
             errors.append("ALLOWED_ORIGINS must include the HTTPS origin for BASE_URL host outside development.")
+
+    if not (runtime.azure_defender_webhook_secret or "").strip():
+        errors.append("AZURE_DEFENDER_WEBHOOK_SECRET must be configured outside development.")
 
     if errors:
         raise RuntimeError("Unsafe hosted configuration: " + " ".join(errors))

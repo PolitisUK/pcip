@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import logging
 import csv, io, json, secrets, shutil
 from .csrf import get_csrf_token, csrf_protect
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File
@@ -53,11 +54,46 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
+logger = logging.getLogger("pcip.security")
 
 
 def now(): return datetime.now(timezone.utc)
 def naive_now(): return now().replace(tzinfo=None)
 def unexpired(v): return bool(v and v.replace(tzinfo=None) > naive_now())
+def hosted_environment(): return settings.environment.strip().lower() not in {"development","dev","test","testing"}
+
+
+def normalise_scan_status(value: str | None) -> str:
+    token = (value or "").strip().lower().replace(" ", "_")
+    mapping = {
+        "scan_failed": "failed",
+        "not_scanned": "not_scanned",
+    }
+    return mapping.get(token, token)
+
+
+def allow_unscanned_downloads() -> bool:
+    return settings.environment.strip().lower() in {"development", "dev"} and settings.development_allow_unscanned_downloads
+
+
+def ensure_clean_scan_for_download(scan_status: str | None):
+    if normalise_scan_status(scan_status) == "clean":
+        return
+    if allow_unscanned_downloads():
+        return
+    raise HTTPException(423, "Evidence is blocked until malware scanning is explicitly CLEAN.")
+
+
+def log_webhook_rejection(request: Request, reason: str):
+    client_host = request.client.host if request.client else "unknown"
+    logger.warning(
+        "webhook_rejected reason=%s ip=%s ua=%s",
+        reason,
+        client_host,
+        request.headers.get("user-agent", ""),
+    )
+
+
 def enum_value(v, e, field):
     if v not in {x.value for x in e}: raise HTTPException(400, f"Invalid {field}.")
     return v
@@ -605,11 +641,9 @@ def evidence(evidence_id:int,u=Depends(current_user),db:Session=Depends(get_db))
             e.scan_status, e.scan_detail = latest_status, latest_detail
             if latest_status in {"clean", "infected", "scan_failed"}: e.scan_completed_at = now()
             db.commit()
-        if e.scan_status == "infected": raise HTTPException(423,"Evidence is quarantined because Microsoft Defender detected malware.")
-        if settings.defender_require_clean_download and e.scan_status != "clean":
-            raise HTTPException(423,"Evidence is awaiting a successful Microsoft Defender scan and cannot yet be downloaded.")
+        ensure_clean_scan_for_download(e.scan_status)
         return RedirectResponse(storage.download_url(e.stored_name,e.original_name,e.content_type,settings.azure_sas_minutes),303)
-    if e.scan_status == "infected": raise HTTPException(423,"Evidence is quarantined.")
+    ensure_clean_scan_for_download(e.scan_status)
     path=storage.path(e.stored_name)
     if not path.exists(): raise HTTPException(404,"Stored evidence is unavailable.")
     return FileResponse(path,media_type=e.content_type,filename=e.original_name)
@@ -617,9 +651,16 @@ def evidence(evidence_id:int,u=Depends(current_user),db:Session=Depends(get_db))
 @app.post("/webhooks/defender-storage")
 async def defender_storage_webhook(request: Request, db: Session = Depends(get_db)):
     """Receive Event Grid validation and Defender for Storage scan-result events."""
-    configured = settings.azure_defender_webhook_secret
+    configured = (settings.azure_defender_webhook_secret or "").strip()
     supplied = request.headers.get("x-pcip-webhook-secret") or request.query_params.get("secret")
+    if hosted_environment() and not configured:
+        log_webhook_rejection(request, "missing_server_secret")
+        raise HTTPException(503, "Webhook authentication is not configured.")
+    if (hosted_environment() or configured) and not supplied:
+        log_webhook_rejection(request, "unsigned")
+        raise HTTPException(401, "Missing webhook signature.")
     if configured and not secrets.compare_digest(configured, supplied or ""):
+        log_webhook_rejection(request, "invalid_signature")
         raise HTTPException(401, "Invalid webhook secret.")
     payload = await request.json()
     events = payload if isinstance(payload, list) else [payload]

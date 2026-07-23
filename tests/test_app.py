@@ -275,6 +275,112 @@ def test_defender_webhook_validation_and_unknown_result():
         assert result.status_code == 200 and result.json()['accepted'] is True
 
 
+def test_hosted_webhook_rejects_unsigned_and_invalid_requests_and_logs(caplog):
+    from app.config import settings
+    original_env = settings.environment
+    original_secret = settings.azure_defender_webhook_secret
+    settings.environment = 'production'
+    settings.azure_defender_webhook_secret = 'webhook-signature-secret'
+    caplog.set_level('WARNING', logger='pcip.security')
+    try:
+        unsigned = client.post('/webhooks/defender-storage', json=[{'eventType': 'Microsoft.EventGrid.SubscriptionValidationEvent', 'data': {'validationCode': 'abc'}}])
+        assert unsigned.status_code == 401
+        assert 'Missing webhook signature.' in unsigned.text
+
+        invalid = client.post('/webhooks/defender-storage', headers={'x-pcip-webhook-secret': 'wrong'}, json=[{'eventType': 'Microsoft.EventGrid.SubscriptionValidationEvent', 'data': {'validationCode': 'abc'}}])
+        assert invalid.status_code == 401
+        assert 'Invalid webhook secret.' in invalid.text
+
+        messages = [r.message for r in caplog.records if 'webhook_rejected' in r.message]
+        assert any('reason=unsigned' in m for m in messages)
+        assert any('reason=invalid_signature' in m for m in messages)
+    finally:
+        settings.environment = original_env
+        settings.azure_defender_webhook_secret = original_secret
+
+
+def create_evidence_with_status(scan_status: str) -> int:
+    from app.models import Activity, EvidenceFile, Participant, Study, User
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        study = db.scalar(select(Study).where(Study.organisation_id == owner.organisation_id).order_by(Study.id.asc()))
+        activity = db.scalar(select(Activity).where(Activity.study_id == study.id).order_by(Activity.id.asc()))
+        participant = Participant(
+            organisation_id=owner.organisation_id,
+            reference=unique_value('EVP').upper(),
+            name='Evidence Participant',
+            email=None,
+            phone=None,
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            tags='',
+            demographics_json='{}',
+            notes='',
+            created_by_id=owner.id,
+        )
+        db.add(participant)
+        db.flush()
+        row = EvidenceFile(
+            organisation_id=owner.organisation_id,
+            study_id=study.id,
+            activity_id=activity.id,
+            participant_id=participant.id,
+            response_id=None,
+            original_name='blocked.txt',
+            stored_name=f"{unique_value('missing-file')}.txt",
+            content_type='text/plain',
+            size_bytes=1,
+            sha256_hex='0' * 64,
+            scan_status=scan_status,
+            scan_detail='',
+            storage_provider='local',
+            blob_uri='',
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row.id
+
+
+@pytest.mark.parametrize('scan_status', ['not_scanned', 'pending', 'failed', 'not_configured', 'error'])
+def test_evidence_download_blocks_non_clean_scan_states(scan_status):
+    with client:
+        client.cookies.clear()
+        auth()
+        evidence_id = create_evidence_with_status(scan_status)
+        response = client.get(f'/evidence/{evidence_id}')
+        assert response.status_code == 423
+        assert 'explicitly CLEAN' in response.text
+
+
+def test_evidence_download_allows_dev_bypass_only_when_explicitly_enabled():
+    from app.config import settings
+    original_env = settings.environment
+    original_bypass = settings.development_allow_unscanned_downloads
+    try:
+        settings.environment = 'development'
+        settings.development_allow_unscanned_downloads = False
+        with client:
+            client.cookies.clear()
+            auth()
+            blocked_id = create_evidence_with_status('pending')
+            blocked = client.get(f'/evidence/{blocked_id}')
+            assert blocked.status_code == 423
+
+        settings.development_allow_unscanned_downloads = True
+        with client:
+            client.cookies.clear()
+            auth()
+            bypass_id = create_evidence_with_status('pending')
+            bypass = client.get(f'/evidence/{bypass_id}')
+            # Bypass allows the request to pass the scan gate; file is still absent in local storage.
+            assert bypass.status_code == 404
+    finally:
+        settings.environment = original_env
+        settings.development_allow_unscanned_downloads = original_bypass
+
+
 def test_azure_configuration_is_present():
     from app.config import settings
     assert settings.storage_backend == 'local'
@@ -703,6 +809,7 @@ def hosted_settings(**overrides):
         'base_url': 'https://pilot.example.org',
         'trusted_hosts': 'pilot.example.org',
         'allowed_origins': 'https://pilot.example.org',
+        'azure_defender_webhook_secret': 'required-webhook-secret',
     }
     data.update(overrides)
     return SimpleNamespace(**data)
@@ -720,6 +827,7 @@ def hosted_settings(**overrides):
         ({'trusted_hosts': 'localhost,pilot.example.org'}, 'TRUSTED_HOSTS'),
         ({'allowed_origins': ''}, 'ALLOWED_ORIGINS'),
         ({'allowed_origins': 'http://pilot.example.org'}, 'ALLOWED_ORIGINS'),
+        ({'azure_defender_webhook_secret': ''}, 'AZURE_DEFENDER_WEBHOOK_SECRET'),
     ],
 )
 def test_hosted_startup_validation_rejects_insecure_settings(override, expected_fragment):
