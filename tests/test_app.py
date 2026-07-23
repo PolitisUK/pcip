@@ -5,6 +5,7 @@ import re
 from uuid import uuid4
 import pytest
 from types import SimpleNamespace
+from contextlib import contextmanager
 Path('data/test.db').unlink(missing_ok=True)
 from fastapi.testclient import TestClient
 from app.main import app
@@ -14,7 +15,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.db import SessionLocal
 from app.models import User
-from app.main import now
+from app.main import now, rate_limiter
 from app.config import validate_runtime_settings
 
 client = TestClient(app)
@@ -873,3 +874,94 @@ def test_test_environment_allows_local_defaults():
         allowed_origins='http://127.0.0.1:8000,http://localhost:8000,http://testserver',
     )
     validate_runtime_settings(candidate)
+
+
+@contextmanager
+def with_rate_limit_settings(**overrides):
+    names = [
+        'rate_limit_enabled',
+        'rate_limit_window_seconds',
+        'rate_limit_login_ip',
+        'rate_limit_login_account',
+        'rate_limit_forgot_password_ip',
+        'rate_limit_forgot_password_account',
+        'rate_limit_password_reset_ip',
+        'rate_limit_password_reset_token',
+        'rate_limit_invitation_accept_ip',
+        'rate_limit_invitation_accept_token',
+        'rate_limit_portal_write_ip',
+        'rate_limit_portal_write_token',
+    ]
+    original = {name: getattr(settings, name) for name in names}
+    try:
+        for name, value in overrides.items():
+            setattr(settings, name, value)
+        rate_limiter.reset()
+        yield
+    finally:
+        for name, value in original.items():
+            setattr(settings, name, value)
+        rate_limiter.reset()
+
+
+def test_login_rate_limit_sets_retry_after_and_audits_abuse():
+    from app.models import AuditEvent
+    with with_rate_limit_settings(rate_limit_enabled=True, rate_limit_window_seconds=60, rate_limit_login_ip=1, rate_limit_login_account=1):
+        with client:
+            client.cookies.clear()
+            first = post_with_csrf('/login', data={'email': 'admin@politis.local', 'password': 'PolitisDemo!'}, follow_redirects=False)
+            assert first.status_code == 303
+            blocked = post_with_csrf('/login', data={'email': 'admin@politis.local', 'password': 'PolitisDemo!'}, follow_redirects=False)
+            assert blocked.status_code == 429
+            assert 'Retry-After' in blocked.headers
+            assert 'Too many requests' in blocked.text
+
+        with SessionLocal() as db:
+            row = db.scalar(select(AuditEvent).where(AuditEvent.action == 'security.rate_limited').order_by(AuditEvent.id.desc()))
+            assert row is not None
+            assert row.detail.startswith('scope=login')
+
+
+def test_forgot_password_rate_limit_blocks_repeated_attempts():
+    with with_rate_limit_settings(rate_limit_enabled=True, rate_limit_window_seconds=60, rate_limit_forgot_password_ip=1, rate_limit_forgot_password_account=1):
+        with client:
+            first = post_with_csrf('/forgot-password', data={'email': 'admin@politis.local'}, follow_redirects=False)
+            assert first.status_code == 200
+            blocked = post_with_csrf('/forgot-password', data={'email': 'admin@politis.local'}, follow_redirects=False)
+            assert blocked.status_code == 429
+            assert 'Retry-After' in blocked.headers
+
+
+def test_password_reset_rate_limit_blocks_repeated_token_attempts():
+    with with_rate_limit_settings(rate_limit_enabled=True, rate_limit_window_seconds=60, rate_limit_password_reset_ip=1, rate_limit_password_reset_token=1):
+        with client:
+            first = post_with_csrf('/reset-password', data={'token': 'invalid-token', 'password': 'SecurePass123!'}, follow_redirects=False)
+            assert first.status_code == 400
+            blocked = post_with_csrf('/reset-password', data={'token': 'invalid-token', 'password': 'SecurePass123!'}, follow_redirects=False)
+            assert blocked.status_code == 429
+            assert 'Retry-After' in blocked.headers
+
+
+def test_invitation_acceptance_rate_limit_blocks_repeated_attempts():
+    with with_rate_limit_settings(rate_limit_enabled=True, rate_limit_window_seconds=60, rate_limit_invitation_accept_ip=1, rate_limit_invitation_accept_token=1):
+        with client:
+            first_researcher = post_with_csrf('/accept-invitation', data={'token': 'invalid', 'password': 'SecurePass123!'}, follow_redirects=False)
+            assert first_researcher.status_code == 400
+            blocked_researcher = post_with_csrf('/accept-invitation', data={'token': 'invalid', 'password': 'SecurePass123!'}, follow_redirects=False)
+            assert blocked_researcher.status_code == 429
+
+            rate_limiter.reset()
+            first_participant = post_with_csrf('/join-study', data={'token': 'invalid', 'consent': 'true'}, follow_redirects=False)
+            assert first_participant.status_code == 400
+            blocked_participant = post_with_csrf('/join-study', data={'token': 'invalid', 'consent': 'true'}, follow_redirects=False)
+            assert blocked_participant.status_code == 429
+
+
+def test_participant_portal_write_rate_limit_blocks_repeated_attempts():
+    with with_rate_limit_settings(rate_limit_enabled=True, rate_limit_window_seconds=60, rate_limit_portal_write_ip=1, rate_limit_portal_write_token=1):
+        with client:
+            first = post_with_csrf('/participant-portal/message', data={'token': 'invalid', 'body': 'hello'}, follow_redirects=False)
+            assert first.status_code == 400
+            blocked = post_with_csrf('/participant-portal/message', data={'token': 'invalid', 'body': 'hello'}, follow_redirects=False)
+            assert blocked.status_code == 429
+            assert 'Retry-After' in blocked.headers

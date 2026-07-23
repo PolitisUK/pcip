@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import logging
+import time
 import csv, io, json, secrets, shutil
+from collections import defaultdict, deque
 from .csrf import get_csrf_token, csrf_protect
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
@@ -60,6 +62,71 @@ logger = logging.getLogger("pcip.security")
 def now(): return datetime.now(timezone.utc)
 def naive_now(): return now().replace(tzinfo=None)
 def unexpired(v): return bool(v and v.replace(tzinfo=None) > naive_now())
+
+
+class InMemoryRateLimiter:
+    def __init__(self):
+        self._hits: dict[str, deque[float]] = defaultdict(deque)
+
+    def reset(self):
+        self._hits.clear()
+
+    def check(self, key: str, limit: int, window_seconds: int) -> int | None:
+        if limit <= 0:
+            return 1
+        now_seconds = time.monotonic()
+        window_start = now_seconds - window_seconds
+        bucket = self._hits[key]
+        while bucket and bucket[0] <= window_start:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            retry_after = max(1, int(window_seconds - (now_seconds - bucket[0])) + 1)
+            return retry_after
+        bucket.append(now_seconds)
+        return None
+
+
+rate_limiter = InMemoryRateLimiter()
+
+
+def _rate_limit_key(scope: str, label: str, value: str):
+    return f"{scope}:{label}:{value}"
+
+
+def _enforce_rate_limit(
+    request: Request,
+    db: Session,
+    scope: str,
+    ip_limit: int,
+    account_key: str | None = None,
+    account_limit: int | None = None,
+    organisation_id: int | None = None,
+    actor_user_id: int | None = None,
+):
+    if not settings.rate_limit_enabled:
+        return
+    ip = request.client.host if request.client and request.client.host else "unknown"
+    retry = rate_limiter.check(_rate_limit_key(scope, "ip", ip), ip_limit, settings.rate_limit_window_seconds)
+    account_retry = None
+    if account_key and account_limit is not None:
+        account_retry = rate_limiter.check(_rate_limit_key(scope, "account", account_key), account_limit, settings.rate_limit_window_seconds)
+
+    retry_after = max(x for x in [retry, account_retry] if x is not None) if retry is not None or account_retry is not None else None
+    if retry_after is None:
+        return
+
+    detail = f"scope={scope} ip={ip} retry_after={retry_after}"
+    logger.warning("rate_limited %s", detail)
+    if organisation_id is not None:
+        audit(db, organisation_id, actor_user_id, "security.rate_limited", "security", scope, detail)
+    db.commit()
+    raise HTTPException(
+        429,
+        f"Too many requests. Please wait {retry_after} seconds and try again.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 def hosted_environment(): return settings.environment.strip().lower() not in {"development","dev","test","testing"}
 
 
@@ -247,6 +314,16 @@ def login(
             User.is_active == True,
         )
     )
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="login",
+        ip_limit=settings.rate_limit_login_ip,
+        account_key=normalised_email,
+        account_limit=settings.rate_limit_login_account,
+        organisation_id=user.organisation_id if user else None,
+        actor_user_id=user.id if user else None,
+    )
 
     generic_error = "Email or password is incorrect."
 
@@ -379,7 +456,18 @@ def logout(csrf_ok: None = Depends(csrf_protect)): r=RedirectResponse("/login",3
 def forgot_page(request:Request): return render(request,"forgot_password.html")
 @app.post("/forgot-password",response_class=HTMLResponse)
 def forgot(request:Request,email:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    u=db.scalar(select(User).where(User.email==email.lower().strip(),User.is_active==True))
+    normalised_email = email.lower().strip()
+    u=db.scalar(select(User).where(User.email==normalised_email,User.is_active==True))
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="forgot_password",
+        ip_limit=settings.rate_limit_forgot_password_ip,
+        account_key=normalised_email,
+        account_limit=settings.rate_limit_forgot_password_account,
+        organisation_id=u.organisation_id if u else None,
+        actor_user_id=u.id if u else None,
+    )
     if u:
         raw=new_token(); db.add(PasswordReset(user_id=u.id,token_hash=token_hash(raw),expires_at=now()+timedelta(hours=1)))
         queue_email(db,u.organisation_id,u.email,"Reset your PCIP password",f"Reset your password: {settings.base_url}/reset-password?token={raw}"); audit(db,u.organisation_id,u.id,"auth.password_reset_requested","user",u.id); db.commit()
@@ -388,11 +476,23 @@ def forgot(request:Request,email:str=Form(...),csrf_ok: None = Depends(csrf_prot
 def reset_page(request:Request,token:str="",db:Session=Depends(get_db)):
     row=db.scalar(select(PasswordReset).where(PasswordReset.token_hash==token_hash(token))); valid=bool(row and not row.used_at and unexpired(row.expires_at)); return render(request,"reset_password.html",token=token,valid=valid)
 @app.post("/reset-password")
-def reset_password(token:str=Form(...),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def reset_password(request: Request, token:str=Form(...),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    token_key = token_hash(token) if token else "empty"
     row=db.scalar(select(PasswordReset).where(PasswordReset.token_hash==token_hash(token)))
+    user = db.get(User, row.user_id) if row else None
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="password_reset",
+        ip_limit=settings.rate_limit_password_reset_ip,
+        account_key=token_key,
+        account_limit=settings.rate_limit_password_reset_token,
+        organisation_id=user.organisation_id if user else None,
+        actor_user_id=user.id if user else None,
+    )
     if not row or row.used_at or not unexpired(row.expires_at): raise HTTPException(400,"Reset link is invalid or expired.")
     if len(password)<10: raise HTTPException(400,"Password must contain at least 10 characters.")
-    u=db.get(User,row.user_id); u.password_hash=hash_password(password); row.used_at=now(); audit(db,u.organisation_id,u.id,"auth.password_reset","user",u.id); db.commit(); return RedirectResponse("/login",303)
+    user.password_hash=hash_password(password); row.used_at=now(); audit(db,user.organisation_id,user.id,"auth.password_reset","user",user.id); db.commit(); return RedirectResponse("/login",303)
 
 @app.get("/",response_class=HTMLResponse)
 def dashboard(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
@@ -575,6 +675,14 @@ def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
     return render(request,"join_study.html",token=token,invitation=inv,study=s,participant=p,valid=valid)
 @app.post("/join-study")
 def accept_study(request:Request,token:str=Form(...),consent:bool=Form(False),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_invitation_accept",
+        ip_limit=settings.rate_limit_invitation_accept_ip,
+        account_key=token_hash(token) if token else "empty",
+        account_limit=settings.rate_limit_invitation_accept_token,
+    )
     inv=portal_invitation(db,token)
     if not consent: raise HTTPException(400,"Consent is required.")
     p=db.get(Participant,inv.participant_id); inv.accepted_at=inv.accepted_at or now(); p.status="active"; p.consent_status="granted"; audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse(f"/participant-portal?token={token}",303)
@@ -588,7 +696,15 @@ def participant_portal(request:Request,token:str,db:Session=Depends(get_db)):
         except json.JSONDecodeError: response_values[activity_id]={}
     msgs=db.scalars(select(ParticipantMessage).where(ParticipantMessage.study_id==s.id,ParticipantMessage.participant_id==p.id,ParticipantMessage.internal_note==False).order_by(ParticipantMessage.created_at)).all(); return render(request,"participant_portal.html",token=token,study=s,participant=p,activities=acts,responses=responses,response_values=response_values,messages=msgs)
 @app.post("/participant-portal/activity/{activity_id}")
-async def submit_activity(activity_id:int,token:str=Form(...),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+async def submit_activity(request: Request, activity_id:int,token:str=Form(...),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_portal_write",
+        ip_limit=settings.rate_limit_portal_write_ip,
+        account_key=token_hash(token) if token else "empty",
+        account_limit=settings.rate_limit_portal_write_token,
+    )
     inv=portal_invitation(db,token); a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.study_id==inv.study_id));
     if not a: raise HTTPException(404)
     r=db.scalar(select(ActivityResponse).where(ActivityResponse.activity_id==a.id,ActivityResponse.participant_id==inv.participant_id))
@@ -618,7 +734,15 @@ async def submit_activity(activity_id:int,token:str=Form(...),action:str=Form("s
     if a.required and action=="submit" and not answer.strip() and not choice_list and not upload: raise HTTPException(400,"A response is required.")
     r.value_json=json.dumps(value); r.status="submitted" if action=="submit" else "draft"; r.submitted_at=now() if action=="submit" else None; audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit(); return RedirectResponse(f"/participant-portal?token={token}",303)
 @app.post("/participant-portal/message")
-def participant_message(token:str=Form(...),body:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def participant_message(request: Request, token:str=Form(...),body:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_portal_write",
+        ip_limit=settings.rate_limit_portal_write_ip,
+        account_key=token_hash(token) if token else "empty",
+        account_limit=settings.rate_limit_portal_write_token,
+    )
     inv=portal_invitation(db,token)
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
     db.add(ParticipantMessage(organisation_id=inv.organisation_id,study_id=inv.study_id,participant_id=inv.participant_id,sender_type="participant",body=body.strip())); db.commit(); return RedirectResponse(f"/participant-portal?token={token}#messages",303)
@@ -720,7 +844,17 @@ def invite_researcher(name:str=Form(...),email:str=Form(...),role:str=Form("rese
 def accept_page(request:Request,token:str="",db:Session=Depends(get_db)):
     inv=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token))); return render(request,"accept.html",token=token,invitation=inv,valid=bool(inv and not inv.accepted_at and not inv.revoked_at and unexpired(inv.expires_at)))
 @app.post("/accept-invitation")
-def accept_invitation(token:str=Form(...),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def accept_invitation(request: Request, token:str=Form(...),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    inv_for_limit=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token)))
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="researcher_invitation_accept",
+        ip_limit=settings.rate_limit_invitation_accept_ip,
+        account_key=token_hash(token) if token else "empty",
+        account_limit=settings.rate_limit_invitation_accept_token,
+        organisation_id=inv_for_limit.organisation_id if inv_for_limit else None,
+    )
     inv=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token)))
     if not inv or inv.accepted_at or inv.revoked_at or not unexpired(inv.expires_at): raise HTTPException(400,"Invitation invalid or expired.")
     if len(password)<10: raise HTTPException(400,"Password must contain at least 10 characters.")
