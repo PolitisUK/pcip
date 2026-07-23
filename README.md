@@ -48,6 +48,11 @@ Expected result for this release: `11 passed`.
 
 See `RELEASE_NOTES_0.3.0.md` and `INCREMENT_3_REPORT.md` for scope and known production gaps.
 
+## Dependency security
+
+CI includes dependency vulnerability scanning, security linting, and release smoke verification.
+For technical dependency-update workflow guidance, see `DEPENDENCY_SECURITY_GUIDE.md`.
+
 ## Enterprise foundation in v0.5.0
 
 ### Database migrations
