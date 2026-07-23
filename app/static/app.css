@@ -201,6 +201,38 @@ h3 {
   margin-top: 18px;
 }
 
+.pilot-callout {
+  border-left: 4px solid #90c3b2;
+}
+
+.onboarding-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.onboarding-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #2e4d43;
+}
+
+.onboarding-list li::before {
+  content: "";
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 2px solid #90aea3;
+}
+
+.onboarding-list li.done::before {
+  background: #2f7a62;
+  border-color: #2f7a62;
+}
+
 .section-head {
   display: flex;
   justify-content: space-between;
@@ -546,6 +578,58 @@ details + details,
 
 summary {
   cursor: pointer;
+}
+
+.context-help {
+  margin-bottom: 18px;
+}
+
+.context-help summary {
+  font-weight: 700;
+  color: #204e42;
+}
+
+.context-help-body {
+  margin-top: 10px;
+}
+
+.wizard-steps {
+  counter-reset: step;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.wizard-steps li {
+  position: relative;
+  padding-left: 36px;
+}
+
+.wizard-steps li::before {
+  counter-increment: step;
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #dce9e4;
+  color: #11352d;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  font-size: 0.82rem;
+}
+
+.empty-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .pagination {

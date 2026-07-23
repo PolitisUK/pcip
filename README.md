@@ -103,3 +103,9 @@ Microsoft Entra account creation is deliberately controlled. Existing invited us
 - `DEPLOYMENT_GUIDE_AZURE.md`
 - `AZURE_CONFIGURATION_GUIDE.md`
 - `ENVIRONMENT_VARIABLES.md`
+
+## Pilot readiness guides
+
+- `PILOT_ADMINISTRATOR_GUIDE.md`
+- `PILOT_RESEARCHER_GUIDE.md`
+- `PILOT_PARTICIPANT_GUIDE.md`

@@ -80,6 +80,53 @@ def test_project_and_study_creation():
         assert 'Access diary' in detail.text
 
 
+def test_first_project_wizard_creates_project_and_study():
+    with client:
+        auth()
+        wizard_page = client.get('/onboarding/first-project')
+        assert wizard_page.status_code == 200
+        assert 'Launch your first pilot project' in wizard_page.text
+
+        project_code = unique_value('WIZ').upper().replace('_', '-')
+        study_code = unique_value('WST').upper().replace('_', '-')
+        submit = post_with_csrf(
+            '/onboarding/first-project',
+            data={
+                'project_title': 'Wizard Test Project',
+                'project_code': project_code,
+                'project_description': 'Created through onboarding wizard.',
+                'project_status': 'live',
+                'study_title': 'Wizard Test Study',
+                'study_code': study_code,
+                'study_description': 'Created through onboarding wizard.',
+                'study_methodology': 'mixed_method',
+                'study_status': 'recruiting',
+                'add_starter_activity': 'true',
+            },
+            follow_redirects=False,
+        )
+        assert submit.status_code == 303
+        detail = client.get(submit.headers['location'])
+        assert 'Wizard Test Study' in detail.text
+        assert 'Welcome activity' in detail.text
+
+
+def test_generate_pilot_sample_data_endpoint_is_idempotent():
+    with client:
+        auth()
+        first = post_with_csrf('/pilot/sample-data', follow_redirects=False)
+        assert first.status_code == 303
+        dashboard = client.get('/')
+        assert 'Sample pilot data' in dashboard.text
+
+        second = post_with_csrf('/pilot/sample-data', follow_redirects=False)
+        assert second.status_code == 303
+
+        participants_page = client.get('/participants')
+        assert 'PILOT-P01' in participants_page.text
+        assert 'PILOT-P02' in participants_page.text
+
+
 def test_participant_enrolment_activity_and_invitation():
     with client:
         auth()

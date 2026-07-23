@@ -26,7 +26,7 @@
       <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox" {% if request.url.path.startswith('/outbox') %}aria-current="page"{% endif %}>Email outbox</a>
       {% endif %}
     </nav>
-    <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="ghost" type="submit">Sign out</button></form>
+    <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="ghost" type="submit" data-confirm="Sign out now?">Sign out</button></form>
   </aside>
   <main class="main" id="main-content" tabindex="-1">
     <div class="top">
@@ -34,6 +34,16 @@
       <div class="userbox"><strong>{{ user.name }}</strong><br>{{ user.role|title }}</div>
     </div>
     {% if user.role == 'observer' %}<div class="notice neutral">You have observer access. Editing controls are hidden.</div>{% endif %}
+    {% if flash_notice %}<div class="success" role="status">{{ flash_notice }}</div>{% endif %}
+    {% if flash_error %}<div class="error" role="alert">{{ flash_error }}</div>{% endif %}
+    <details class="context-help section">
+      <summary>Need help on this page?</summary>
+      <div class="context-help-body">
+        {% block contextual_help %}
+        <p class="muted">Use the sidebar to move between projects, studies and participants. For first-time setup, start from Dashboard and follow the onboarding checklist.</p>
+        {% endblock %}
+      </div>
+    </details>
     {% block content %}{% endblock %}
   </main>
 </div>

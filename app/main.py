@@ -6,6 +6,7 @@ import csv, io, json, secrets
 from collections import defaultdict, deque
 from .csrf import get_csrf_token, csrf_protect
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -259,7 +260,30 @@ def roles(*allowed):
         return u
     return dep
 
+
+def set_flash(request: Request, level: str, message: str):
+    request.session["flash"] = {"level": level, "message": message}
+
+
+def consume_flash(request: Request) -> tuple[str | None, str | None]:
+    payload = request.session.pop("flash", None)
+    if not payload:
+        return None, None
+    level = str(payload.get("level", "")).strip().lower()
+    message = str(payload.get("message", "")).strip()
+    if not message:
+        return None, None
+    if level == "error":
+        return None, message
+    return message, None
+
+
+def request_wants_html(request: Request) -> bool:
+    accept = request.headers.get("accept", "").lower()
+    return "text/html" in accept
+
 def render(request, name, user=None, **ctx):
+    flash_notice, flash_error = consume_flash(request)
     return templates.TemplateResponse(
         request=request,
         name=name,
@@ -274,6 +298,8 @@ def render(request, name, user=None, **ctx):
             "local_login_enabled": settings.local_login_enabled,
             "csrf_token": get_csrf_token(request),
             "csp_nonce": getattr(request.state, "csp_nonce", ""),
+            "flash_notice": flash_notice,
+            "flash_error": flash_error,
             **ctx,
         },
     )
@@ -301,6 +327,41 @@ def render_error(request: Request, status_code: int, title: str, detail: str):
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
     return render_error(request, 404, "Page not found", "The page you requested is not available.")
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code in {301, 302, 303, 307, 308} and exc.headers and exc.headers.get("Location"):
+        return RedirectResponse(exc.headers["Location"], status_code=exc.status_code)
+
+    detail = str(exc.detail) if exc.detail else "Request could not be completed."
+    if request_wants_html(request):
+        title_map = {
+            400: "Check and try again",
+            401: "Sign-in required",
+            403: "You do not have access",
+            404: "Page not found",
+            409: "Request conflict",
+            422: "Information required",
+            429: "Too many requests",
+        }
+        title = title_map.get(exc.status_code, "Request failed")
+        return render_error(request, exc.status_code, title, detail)
+    return JSONResponse(status_code=exc.status_code, content={"detail": detail}, headers=exc.headers or None)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    if request_wants_html(request):
+        errors = exc.errors()
+        if errors:
+            first = errors[0]
+            field = ".".join(str(x) for x in first.get("loc", [])[1:]) or "field"
+            detail = f"Please review {field}: {first.get('msg', 'invalid value')}."
+        else:
+            detail = "Please review the submitted information and try again."
+        return render_error(request, 422, "Please check your information", detail)
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
 @app.exception_handler(Exception)
@@ -559,6 +620,112 @@ def paginate(stmt, db, page, per=25):
     page=max(1,page); total=db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows=db.scalars(stmt.offset((page-1)*per).limit(per)).all()
     return rows,total,max(1,(total+per-1)//per)
+
+
+def create_pilot_sample_data(db: Session, user: User) -> dict[str, int]:
+    created = {"projects": 0, "studies": 0, "participants": 0, "activities": 0, "enrolments": 0}
+    organisation_id = user.organisation_id
+
+    project = db.scalar(
+        select(Project).where(
+            Project.organisation_id == organisation_id,
+            Project.code == "PILOT-001",
+        )
+    )
+    if not project:
+        project = Project(
+            organisation_id=organisation_id,
+            title="Pilot neighbourhood listening",
+            code="PILOT-001",
+            description="Starter project with example structure for a live authority pilot.",
+            status="live",
+            created_by_id=user.id,
+        )
+        db.add(project)
+        db.flush()
+        created["projects"] += 1
+
+    study_row = db.scalar(
+        select(Study).where(
+            Study.organisation_id == organisation_id,
+            Study.code == "PILOT-ST01",
+        )
+    )
+    if not study_row:
+        study_row = Study(
+            organisation_id=organisation_id,
+            project_id=project.id,
+            title="Town centre accessibility pulse",
+            code="PILOT-ST01",
+            description="Sample study for onboarding and training teams before pilot go-live.",
+            methodology="mixed_method",
+            status="recruiting",
+            created_by_id=user.id,
+        )
+        db.add(study_row)
+        db.flush()
+        created["studies"] += 1
+
+    if not db.scalar(select(Activity.id).where(Activity.organisation_id == organisation_id, Activity.study_id == study_row.id)):
+        db.add(Activity(organisation_id=organisation_id, study_id=study_row.id, title="First journey reflection", prompt="Describe a recent journey and any challenges.", activity_type="long_text", position=1, required=True, release_offset_days=0))
+        db.add(Activity(organisation_id=organisation_id, study_id=study_row.id, title="Safety confidence", prompt="Rate your confidence moving through the area.", activity_type="rating", position=2, required=True, release_offset_days=1, due_offset_days=3))
+        created["activities"] += 2
+
+    for reference, name, email in [
+        ("PILOT-P01", "Sample Resident One", "pilot.participant.one@example.org"),
+        ("PILOT-P02", "Sample Resident Two", "pilot.participant.two@example.org"),
+    ]:
+        participant_row = db.scalar(
+            select(Participant).where(
+                Participant.organisation_id == organisation_id,
+                Participant.reference == reference,
+            )
+        )
+        if not participant_row:
+            participant_row = Participant(
+                organisation_id=organisation_id,
+                reference=reference,
+                name=name,
+                email=email,
+                status=ParticipantStatus.prospective.value,
+                consent_status=ConsentStatus.pending.value,
+                communication_preference="email",
+                tags="sample,pilot",
+                created_by_id=user.id,
+            )
+            db.add(participant_row)
+            db.flush()
+            created["participants"] += 1
+
+        enrolment = db.scalar(
+            select(StudyEnrolment).where(
+                StudyEnrolment.organisation_id == organisation_id,
+                StudyEnrolment.study_id == study_row.id,
+                StudyEnrolment.participant_id == participant_row.id,
+            )
+        )
+        if not enrolment:
+            db.add(
+                StudyEnrolment(
+                    organisation_id=organisation_id,
+                    study_id=study_row.id,
+                    participant_id=participant_row.id,
+                    status="enrolled",
+                )
+            )
+            created["enrolments"] += 1
+
+    audit(
+        db,
+        organisation_id,
+        user.id,
+        "pilot.sample_data_generated",
+        "organisation",
+        organisation_id,
+        f"projects={created['projects']} studies={created['studies']} participants={created['participants']} activities={created['activities']} enrolments={created['enrolments']}",
+    )
+    db.commit()
+    return created
 
 @app.on_event("startup")
 def startup():
@@ -838,7 +1005,124 @@ def dashboard(request:Request,u=Depends(current_user),db:Session=Depends(get_db)
     o=u.organisation_id
     metrics={"projects":db.scalar(select(func.count(Project.id)).where(Project.organisation_id==o)) or 0,"studies":db.scalar(select(func.count(Study.id)).where(Study.organisation_id==o)) or 0,"participants":db.scalar(select(func.count(Participant.id)).where(Participant.organisation_id==o)) or 0,"active":db.scalar(select(func.count(Participant.id)).where(Participant.organisation_id==o,Participant.status=="active")) or 0,"invitations":db.scalar(select(func.count(ParticipantInvitation.id)).where(ParticipantInvitation.organisation_id==o,ParticipantInvitation.accepted_at.is_(None),ParticipantInvitation.revoked_at.is_(None))) or 0,"submissions":db.scalar(select(func.count(ActivityResponse.id)).where(ActivityResponse.organisation_id==o,ActivityResponse.status=="submitted")) or 0}
     studies=db.scalars(select(Study).where(Study.organisation_id==o).order_by(Study.updated_at.desc()).limit(6)).all(); pmap={p.id:p for p in db.scalars(select(Project).where(Project.organisation_id==o)).all()}
-    return render(request,"dashboard.html",user=u,metrics=metrics,studies=studies,project_map=pmap)
+    onboarding={
+        "has_project": metrics["projects"] > 0,
+        "has_study": metrics["studies"] > 0,
+        "has_participant": metrics["participants"] > 0,
+        "has_submission": metrics["submissions"] > 0,
+        "can_seed": u.role in {"owner", "admin"},
+    }
+    return render(request,"dashboard.html",user=u,metrics=metrics,studies=studies,project_map=pmap,onboarding=onboarding)
+
+
+@app.post("/pilot/sample-data")
+def generate_pilot_sample_data(
+    request: Request,
+    u=Depends(roles("owner", "admin")),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    created = create_pilot_sample_data(db, u)
+    if any(created.values()):
+        set_flash(request, "notice", "Sample pilot data has been added to your workspace.")
+    else:
+        set_flash(request, "notice", "Sample pilot data is already available for this organisation.")
+    return RedirectResponse("/", 303)
+
+
+@app.get("/onboarding/first-project", response_class=HTMLResponse)
+def first_project_wizard_page(request: Request, u=Depends(roles("owner", "admin", "researcher"))):
+    return render(
+        request,
+        "first_project_wizard.html",
+        user=u,
+        project_statuses=[x.value for x in ProjectStatus],
+        study_statuses=[x.value for x in StudyStatus],
+        activity_types=["short_text", "long_text", "single_choice", "multiple_choice", "rating", "slider", "photo", "audio", "video", "gps", "ranking", "file"],
+    )
+
+
+@app.post("/onboarding/first-project")
+def first_project_wizard_submit(
+    request: Request,
+    project_title: str = Form(...),
+    project_code: str = Form(...),
+    project_description: str = Form(""),
+    project_status: str = Form("draft"),
+    study_title: str = Form(...),
+    study_code: str = Form(...),
+    study_description: str = Form(""),
+    study_methodology: str = Form("diary"),
+    study_status: str = Form("recruiting"),
+    add_starter_activity: bool = Form(True),
+    csrf_ok: None = Depends(csrf_protect),
+    u=Depends(roles("owner", "admin", "researcher")),
+    db: Session = Depends(get_db),
+):
+    enum_value(project_status, ProjectStatus, "project status")
+    enum_value(study_status, StudyStatus, "study status")
+
+    allowed_methods = {"diary", "walk_along", "interview", "focus_group", "co_design", "mixed_method"}
+    if study_methodology not in allowed_methods:
+        raise HTTPException(400, "Please select a valid study methodology.")
+
+    cleaned_project_title = project_title.strip()
+    cleaned_study_title = study_title.strip()
+    if len(cleaned_project_title) < 3:
+        raise HTTPException(400, "Project title must be at least 3 characters long.")
+    if len(cleaned_study_title) < 3:
+        raise HTTPException(400, "Study title must be at least 3 characters long.")
+
+    project_row = Project(
+        organisation_id=u.organisation_id,
+        title=cleaned_project_title,
+        code=project_code.strip().upper(),
+        description=project_description.strip(),
+        status=project_status,
+        created_by_id=u.id,
+    )
+    db.add(project_row)
+    try:
+        db.flush()
+    except Exception:
+        db.rollback()
+        raise HTTPException(400, "Project code already exists. Use a unique code such as BORO-001.")
+
+    study_row = Study(
+        organisation_id=u.organisation_id,
+        project_id=project_row.id,
+        title=cleaned_study_title,
+        code=study_code.strip().upper(),
+        description=study_description.strip(),
+        methodology=study_methodology,
+        status=study_status,
+        created_by_id=u.id,
+    )
+    db.add(study_row)
+    try:
+        db.flush()
+    except Exception:
+        db.rollback()
+        raise HTTPException(400, "Study code already exists. Use a unique code such as BORO-ST01.")
+
+    if add_starter_activity:
+        db.add(
+            Activity(
+                organisation_id=u.organisation_id,
+                study_id=study_row.id,
+                title="Welcome activity",
+                prompt="Share your first thoughts about this area and what should improve.",
+                activity_type="long_text",
+                position=1,
+                required=True,
+                release_offset_days=0,
+            )
+        )
+
+    audit(db, u.organisation_id, u.id, "pilot.first_project_wizard_completed", "study", study_row.id, study_row.title)
+    db.commit()
+    set_flash(request, "notice", "Your first project has been created. You can now enrol participants and send invitations.")
+    return RedirectResponse(f"/studies/{study_row.id}", 303)
 
 @app.get("/projects",response_class=HTMLResponse)
 def projects(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):

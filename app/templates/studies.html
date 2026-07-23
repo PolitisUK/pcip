@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Studies{% endblock %}
+{% block contextual_help %}
+<p class="muted">Each study should include clear participant prompts and realistic timelines. Start with one short activity to test your pilot journey end-to-end.</p>
+{% endblock %}
 {% block content %}
 <div class="card">
 	<p>Studies organise diary research, interviews, walk-alongs and other evidence-collection programmes within a project.</p>
@@ -18,7 +21,7 @@
 				<td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td>
 			</tr>
 			{% else %}
-			<tr><td colspan="5" class="empty">No studies yet. Open a project to create one.</td></tr>
+			<tr><td colspan="5"><div class="empty">No studies yet. Open a project to create one.<div class="empty-actions"><a class="btn secondary" href="/onboarding/first-project">Open first-project wizard</a></div></div></td></tr>
 			{% endfor %}
 		</tbody>
 	</table>

@@ -1,6 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Research overview{% endblock %}
+{% block contextual_help %}
+<p class="muted">Use this page as your pilot launch checklist. If this is your first time, run the first-project wizard, add sample data, then invite your first participant from the study page.</p>
+{% endblock %}
 {% block content %}
+<div class="card pilot-callout">
+	<div class="section-head">
+		<div>
+			<h2>Pilot onboarding</h2>
+			<p class="muted">Track your authority pilot readiness in four steps.</p>
+		</div>
+		<a class="btn secondary" href="/onboarding/first-project">First-project wizard</a>
+	</div>
+	<ul class="onboarding-list">
+		<li class="{% if onboarding.has_project %}done{% endif %}">Create your first project</li>
+		<li class="{% if onboarding.has_study %}done{% endif %}">Add a study with at least one activity</li>
+		<li class="{% if onboarding.has_participant %}done{% endif %}">Import or add participants</li>
+		<li class="{% if onboarding.has_submission %}done{% endif %}">Receive your first participant submission</li>
+	</ul>
+	{% if onboarding.can_seed %}
+	<form method="post" action="/pilot/sample-data" class="inline section">
+		<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+		<button class="secondary" data-confirm="Generate pilot sample data for this organisation?">Add sample pilot data</button>
+		<span class="muted">Safe to run multiple times.</span>
+	</form>
+	{% endif %}
+</div>
+
 <div class="grid metrics">
 	<div class="card"><div class="eyebrow">Projects</div><div class="metric">{{ metrics.projects }}</div></div>
 	<div class="card"><div class="eyebrow">Studies</div><div class="metric">{{ metrics.studies }}</div></div>
@@ -33,7 +59,10 @@
 		</tbody>
 	</table>
 	{% else %}
-	<p class="empty">No studies yet. Create a project and add your first study.</p>
+	<div class="empty">
+		<p>No studies yet. Start your pilot setup with the first-project wizard.</p>
+		<div class="empty-actions"><a class="btn secondary" href="/onboarding/first-project">Open wizard</a><a class="btn secondary" href="/projects">Go to projects</a></div>
+	</div>
 	{% endif %}
 </div>
 {% endblock %}
