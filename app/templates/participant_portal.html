@@ -1,1 +1,97 @@
-{% extends "base.html" %}{% block public %}<div class="portal-wrap"><header class="portal-head"><div class="brand"><img class="brand-logo" src="/static/politis_horizontal_master.png" alt="Politis logo"><span>Citizen Centric</span><small>by Politis</small></div><div><strong>{{ participant.name }}</strong><br><span class="muted">{{ study.title }}</span></div></header><main class="portal-main"><section class="card"><p class="eyebrow">You're enrolled</p><h1>{{ study.title }}</h1><p>{{ study.description }}</p></section><section class="section"><h2>Your activities</h2>{% for a in activities %}{% set r=responses.get(a.id) %}<article class="card activity-card"><div class="section-head"><div><p class="eyebrow">Activity {{ a.position }}</p><h3>{{ a.title }}</h3><p>{{ a.prompt }}</p></div><span class="badge {{ r.status if r else 'pending' }}">{{ r.status|title if r else 'Not started' }}</span></div><form method="post" action="/participant-portal/activity/{{ a.id }}" enctype="multipart/form-data" class="stack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if a.activity_type in ['short_text','long_text'] %}<label class="sr-only" for="answer-{{ a.id }}">Your response to {{ a.title }}</label><textarea id="answer-{{ a.id }}" name="answer" rows="{% if a.activity_type=='long_text' %}6{% else %}2{% endif %}">{% if response_values.get(a.id) %}{{ response_values[a.id].get('answer','') }}{% endif %}</textarea>{% elif a.activity_type in ['rating','slider'] %}<label for="answer-{{ a.id }}">Rating from 1 to 10</label><input id="answer-{{ a.id }}" type="range" name="answer" min="1" max="10" value="{{ response_values.get(a.id, {}).get('answer', 5) }}"><div class="muted">1 = low, 10 = high</div>{% elif a.activity_type in ['single_choice','multiple_choice','ranking'] %}<p class="muted">Select the relevant option(s).</p><textarea name="answer" placeholder="Enter your selected option(s)"></textarea>{% elif a.activity_type=='gps' %}<div class="row"><input id="answer-{{ a.id }}" name="answer" placeholder="Latitude, longitude"><button type="button" class="secondary js-use-location" data-location-target="answer-{{ a.id }}">Use my location</button></div>{% else %}<label for="upload-{{ a.id }}">Choose a file</label><input id="upload-{{ a.id }}" type="file" name="upload" {% if a.activity_type in ['photo','audio','video'] %}accept="{{ a.activity_type }}/*"{% endif %}><textarea name="answer" placeholder="Optional caption or note"></textarea>{% endif %}<div class="inline"><button name="action" value="draft" class="secondary">Save draft</button><button name="action" value="submit">Submit</button></div></form></article>{% else %}<div class="card empty">No activities have been published.</div>{% endfor %}</section><section id="messages" class="card section"><h2>Messages</h2><div class="conversation">{% for m in messages %}<div class="message {{ m.sender_type }}"><strong>{{ m.sender_type|title }}</strong><p>{{ m.body }}</p><small>{{ m.created_at.strftime('%d %b %Y %H:%M') }}</small></div>{% else %}<p class="empty">No messages yet.</p>{% endfor %}</div><form method="post" action="/participant-portal/message" class="stack section"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><textarea name="body" placeholder="Write to the research team" required></textarea><button>Send message</button></form></section></main></div>{% endblock %}{% block page_scripts %}<script nonce="{{ csp_nonce }}" src="/static/participant_portal.js" defer></script>{% endblock %}
+{% extends "base.html" %}
+{% block public %}
+<div class="portal-wrap">
+  <header class="portal-head">
+    <div class="brand">
+      <img class="brand-logo" src="/static/politis_symbol_colour.png" alt="Politis logo">
+      <span class="brand-copy">
+        <strong>Citizen Centric</strong>
+        <small>by Politis</small>
+      </span>
+    </div>
+    <div class="portal-summary">
+      <strong>{{ participant.name }}</strong>
+      <span class="muted">{{ study.title }}</span>
+    </div>
+  </header>
+  <main class="portal-main">
+    <section class="card">
+      <p class="eyebrow">You're enrolled</p>
+      <h1>{{ study.title }}</h1>
+      <p>{{ study.description }}</p>
+    </section>
+
+    <section class="section">
+      <h2>Your activities</h2>
+      {% for a in activities %}
+      {% set r = responses.get(a.id) %}
+      <article class="card activity-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Activity {{ a.position }}</p>
+            <h3>{{ a.title }}</h3>
+            <p>{{ a.prompt }}</p>
+          </div>
+          <span class="badge {{ r.status if r else 'pending' }}">{{ r.status|title if r else 'Not started' }}</span>
+        </div>
+
+        <form method="post" action="/participant-portal/activity/{{ a.id }}" enctype="multipart/form-data" class="stack">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          {% if a.activity_type in ['short_text', 'long_text'] %}
+          <label class="sr-only" for="answer-{{ a.id }}">Your response to {{ a.title }}</label>
+          <textarea id="answer-{{ a.id }}" name="answer" rows="{% if a.activity_type == 'long_text' %}6{% else %}2{% endif %}">{% if response_values.get(a.id) %}{{ response_values[a.id].get('answer', '') }}{% endif %}</textarea>
+          {% elif a.activity_type in ['rating', 'slider'] %}
+          <label for="answer-{{ a.id }}">Rating from 1 to 10</label>
+          <input id="answer-{{ a.id }}" type="range" name="answer" min="1" max="10" value="{{ response_values.get(a.id, {}).get('answer', 5) }}">
+          <div class="muted">1 = low, 10 = high</div>
+          {% elif a.activity_type in ['single_choice', 'multiple_choice', 'ranking'] %}
+          <p class="muted">Select the relevant option(s).</p>
+          <textarea name="answer" placeholder="Enter your selected option(s)"></textarea>
+          {% elif a.activity_type == 'gps' %}
+          <div class="row">
+            <input id="answer-{{ a.id }}" name="answer" placeholder="Latitude, longitude">
+            <button type="button" class="secondary js-use-location" data-location-target="answer-{{ a.id }}">Use my location</button>
+          </div>
+          {% else %}
+          <label for="upload-{{ a.id }}">Choose a file</label>
+          <input id="upload-{{ a.id }}" type="file" name="upload" {% if a.activity_type in ['photo', 'audio', 'video'] %}accept="{{ a.activity_type }}/*"{% endif %}>
+          <textarea name="answer" placeholder="Optional caption or note"></textarea>
+          {% endif %}
+
+          <div class="inline">
+            <button name="action" value="draft" class="secondary">Save draft</button>
+            <button name="action" value="submit">Submit</button>
+          </div>
+        </form>
+      </article>
+      {% else %}
+      <div class="card empty">No activities have been published.</div>
+      {% endfor %}
+    </section>
+
+    <section id="messages" class="card section">
+      <h2>Messages</h2>
+      <div class="conversation">
+        {% for m in messages %}
+        <div class="message {{ m.sender_type }}">
+          <strong>{{ m.sender_type|title }}</strong>
+          <p>{{ m.body }}</p>
+          <small>{{ m.created_at.strftime('%d %b %Y %H:%M') }}</small>
+        </div>
+        {% else %}
+        <p class="empty">No messages yet.</p>
+        {% endfor %}
+      </div>
+      <form method="post" action="/participant-portal/message" class="stack section">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <textarea name="body" placeholder="Write to the research team" required></textarea>
+        <button>Send message</button>
+      </form>
+    </section>
+  </main>
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+<script nonce="{{ csp_nonce }}" src="/static/participant_portal.js" defer></script>
+{% endblock %}

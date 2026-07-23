@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Research overview{% endblock %}
+{% block page_description %}<p class="page-description">Track pilot readiness, current activity and the main entry points for your workspace.</p>{% endblock %}
 {% block contextual_help %}
-<p class="muted">Use this page as your pilot launch checklist. If this is your first time, run the first-project wizard, add sample data, then invite your first participant from the study page.</p>
+<p class="muted">Use this page as your pilot launch checklist. If this is your first time, run the first project wizard, add sample data, then invite your first participant from the study page.</p>
 {% endblock %}
 {% block content %}
 <div class="card pilot-callout">
@@ -10,7 +11,7 @@
 			<h2>Pilot onboarding</h2>
 			<p class="muted">Track your authority pilot readiness in four steps.</p>
 		</div>
-		<a class="btn secondary" href="/onboarding/first-project">First-project wizard</a>
+		<a class="btn secondary" href="/onboarding/first-project">First project wizard</a>
 	</div>
 	<ul class="onboarding-list">
 		<li class="{% if onboarding.has_project %}done{% endif %}">Create your first project</li>
@@ -60,7 +61,7 @@
 	</table>
 	{% else %}
 	<div class="empty">
-		<p>No studies yet. Start your pilot setup with the first-project wizard.</p>
+		<p>No studies yet. Start your pilot setup with the first project wizard.</p>
 		<div class="empty-actions"><a class="btn secondary" href="/onboarding/first-project">Open wizard</a><a class="btn secondary" href="/projects">Go to projects</a></div>
 	</div>
 	{% endif %}

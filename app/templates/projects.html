@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Projects{% endblock %}
+{% block page_description %}<p class="page-description">Projects group related studies for a service area and provide the main record council officers work from.</p>{% endblock %}
 {% block contextual_help %}
 <p class="muted">Projects group related studies for a service area. Use a clear project code, for example HSG-001 for Housing pilot phase one.</p>
 {% endblock %}
@@ -8,7 +9,7 @@
 <div class="card">
 	<div class="section-head">
 		<h2>Create project</h2>
-		<a class="btn secondary" href="/onboarding/first-project">Use first-project wizard</a>
+		<a class="btn secondary" href="/onboarding/first-project">Use first project wizard</a>
 	</div>
 	<form method="post" action="/projects" class="stack">
 		<input type="hidden" name="csrf_token" value="{{ csrf_token }}">

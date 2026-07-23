@@ -7,14 +7,20 @@
   <title>{% block page_title %}{{ app_name }}{% endblock %}</title>
   <meta name="application-name" content="Citizen Centric">
   <link rel="icon" type="image/png" href="/static/politis_symbol_colour.png">
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v={{ version }}">
 </head>
 <body>
 <a class="skip-link" href="#main-content">Skip to main content</a>
 {% if user %}
-<div class="shell">
-  <aside class="sidebar">
-    <div class="brand"><img class="brand-logo" src="/static/politis_horizontal_master.png" alt="Politis logo"><span>Citizen Centric</span><small>by Politis · v{{ version }}</small></div>
+<div class="app-shell">
+  <header class="app-header">
+    <a class="brand" href="/" aria-label="Citizen Centric by Politis home">
+      <img class="brand-logo" src="/static/politis_symbol_colour.png" alt="Politis logo">
+      <span class="brand-copy">
+        <strong>Citizen Centric</strong>
+        <small>by Politis</small>
+      </span>
+    </a>
     <nav class="nav" aria-label="Primary navigation">
       <a class="{% if request.url.path == '/' %}active{% endif %}" href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Dashboard</a>
       <a class="{% if request.url.path.startswith('/projects') %}active{% endif %}" href="/projects" {% if request.url.path.startswith('/projects') %}aria-current="page"{% endif %}>Projects</a>
@@ -23,16 +29,26 @@
       {% if user.role in ['owner','admin'] %}
       <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers" {% if request.url.path.startswith('/researchers') %}aria-current="page"{% endif %}>Researchers</a>
       <a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit" {% if request.url.path.startswith('/audit') %}aria-current="page"{% endif %}>Audit log</a>
-      <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox" {% if request.url.path.startswith('/outbox') %}aria-current="page"{% endif %}>Email outbox</a>
+      <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox" {% if request.url.path.startswith('/outbox') %}aria-current="page"{% endif %}>Email</a>
       {% endif %}
     </nav>
-    <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="ghost" type="submit" data-confirm="Sign out now?">Sign out</button></form>
-  </aside>
-  <main class="main" id="main-content" tabindex="-1">
-    <div class="top">
-      <div><div class="eyebrow">{{ user.organisation.name }}</div><h1>{% block title %}{% endblock %}</h1></div>
-      <div class="userbox"><strong>{{ user.name }}</strong><br>{{ user.role|title }}</div>
+    <div class="header-meta">
+      <div class="header-identity">
+        <span class="header-org">{{ user.organisation.name }}</span>
+        <span class="badge header-role">{{ user.role|title }}</span>
+      </div>
+      <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="ghost signout-button" type="submit" data-confirm="Sign out now?">Sign out</button></form>
     </div>
+  </header>
+  <main class="main" id="main-content" tabindex="-1">
+    <header class="page-header">
+      <div class="eyebrow">{{ user.organisation.name }}</div>
+      <div class="page-title-row">
+        <h1>{% block title %}{% endblock %}</h1>
+        <span class="badge page-badge">{{ user.role|title }}</span>
+      </div>
+      {% block page_description %}{% endblock %}
+    </header>
     {% if user.role == 'observer' %}<div class="notice neutral">You have observer access. Editing controls are hidden.</div>{% endif %}
     {% if flash_notice %}<div class="success" role="status">{{ flash_notice }}</div>{% endif %}
     {% if flash_error %}<div class="error" role="alert">{{ flash_error }}</div>{% endif %}
@@ -40,7 +56,7 @@
       <summary>Need help on this page?</summary>
       <div class="context-help-body">
         {% block contextual_help %}
-        <p class="muted">Use the sidebar to move between projects, studies and participants. For first-time setup, start from Dashboard and follow the onboarding checklist.</p>
+        <p class="muted">Use the main navigation to move between projects, studies and participants. For first-time setup, start from Dashboard and follow the onboarding checklist.</p>
         {% endblock %}
       </div>
     </details>
@@ -51,8 +67,8 @@
 {% block public %}{% endblock %}
 {% endif %}
 <div class="sr-only" aria-live="polite" aria-atomic="true" id="live-region"></div>
-<footer class="app-footer">Citizen Centric <span>by Politis</span></footer>
-<script nonce="{{ csp_nonce }}" src="/static/app.js" defer></script>
+<footer class="app-footer">Citizen Centric <span>by Politis</span> · <small>v{{ version }}</small></footer>
+<script nonce="{{ csp_nonce }}" src="/static/app.js?v={{ version }}" defer></script>
 {% block page_scripts %}{% endblock %}
 </body>
 </html>
