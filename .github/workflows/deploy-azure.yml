@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements-dev.txt
       - run: pytest -q
       - uses: azure/login@v2
         with:
@@ -62,3 +62,21 @@ jobs:
         run: az acr build --registry "${{ steps.resources.outputs.acr }}" --image "pcip:${{ inputs.image_tag }}" .
       - name: Restart application
         run: az webapp restart -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ steps.resources.outputs.app }}"
+      - name: Verify application readiness
+        shell: bash
+        run: |
+          APP_HOST=$(az webapp show \
+            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -n "${{ steps.resources.outputs.app }}" \
+            --query defaultHostName \
+            -o tsv)
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error \
+              "https://${APP_HOST}/health/ready" \
+              | grep -q '"status":"ready"'; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Application did not become ready within five minutes." >&2
+          exit 1

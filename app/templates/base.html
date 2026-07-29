@@ -37,6 +37,18 @@
         <span class="header-org">{{ user.organisation.name }}</span>
         <span class="badge header-role">{{ user.role|title }}</span>
       </div>
+      {% if user.available_memberships is defined and user.available_memberships|length > 1 %}
+      <form method="post" action="/organisations/switch">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="sr-only" for="organisation-switcher">Organisation</label>
+        <select id="organisation-switcher" name="organisation_id">
+          {% for membership in user.available_memberships %}
+          <option value="{{ membership.organisation_id }}" {% if membership.organisation_id == user.organisation_id %}selected{% endif %}>{{ membership.organisation.name }}</option>
+          {% endfor %}
+        </select>
+        <button class="ghost" type="submit">Switch</button>
+      </form>
+      {% endif %}
       <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="ghost signout-button" type="submit" data-confirm="Sign out now?">Sign out</button></form>
     </div>
   </header>

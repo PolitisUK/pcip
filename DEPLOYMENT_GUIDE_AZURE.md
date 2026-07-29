@@ -41,10 +41,10 @@ az deployment group create \
 
 ## 4. Container Startup and Migrations
 
-The container entrypoint runs migrations before application startup:
+The container entrypoint can run migrations only when explicitly enabled:
 
 ```sh
-if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
+if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
   alembic upgrade head
 fi
 ```
@@ -90,7 +90,8 @@ Configure Azure App Service health check path as `/health`.
 ## 8. Rollback Guidance
 
 1. Redeploy the previous container image tag.
-2. Keep `RUN_MIGRATIONS=true` (migrations are forward-only; rollback scripts require explicit planning).
+2. Keep the web application at `RUN_MIGRATIONS=false`. Run the reviewed
+   migration once as a release operation before starting the new version.
 3. Validate `/health` and critical workflows.
 
 ## 9. Security Notes

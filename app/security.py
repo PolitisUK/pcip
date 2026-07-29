@@ -29,6 +29,7 @@ serializer = URLSafeTimedSerializer(
 class SessionIdentity:
     user_id: int
     session_version: int
+    organisation_id: int | None = None
 
 
 def hash_password(value: str) -> str:
@@ -50,13 +51,15 @@ def token_hash(token: str) -> str:
 def encode_session(
     user_id: int,
     session_version: int,
+    organisation_id: int | None = None,
 ) -> str:
-    return serializer.dumps(
-        {
-            "user_id": int(user_id),
-            "session_version": int(session_version),
-        }
-    )
+    payload = {
+        "user_id": int(user_id),
+        "session_version": int(session_version),
+    }
+    if organisation_id is not None:
+        payload["organisation_id"] = int(organisation_id)
+    return serializer.dumps(payload)
 
 
 def decode_session(
@@ -75,6 +78,11 @@ def decode_session(
         return SessionIdentity(
             user_id=int(payload["user_id"]),
             session_version=int(payload["session_version"]),
+            organisation_id=(
+                int(payload["organisation_id"])
+                if payload.get("organisation_id") is not None
+                else None
+            ),
         )
 
     except (

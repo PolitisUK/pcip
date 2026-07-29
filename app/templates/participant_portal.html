@@ -25,6 +25,7 @@
       <h2>Your activities</h2>
       {% for a in activities %}
       {% set r = responses.get(a.id) %}
+      {% set window = activity_windows.get(a.id) %}
       <article class="card activity-card">
         <div class="section-head">
           <div>
@@ -35,6 +36,11 @@
           <span class="badge {{ r.status if r else 'pending' }}">{{ r.status|title if r else 'Not started' }}</span>
         </div>
 
+        {% if window.status == 'upcoming' %}
+        <p class="notice">This activity will be available from {{ window.release_at.strftime('%d %b %Y %H:%M') }}.</p>
+        {% elif window.status == 'closed' %}
+        <p class="notice">This activity closed on {{ window.due_at.strftime('%d %b %Y %H:%M') }}.</p>
+        {% else %}
         <form method="post" action="/participant-portal/activity/{{ a.id }}" enctype="multipart/form-data" class="stack">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           {% if a.activity_type in ['short_text', 'long_text'] %}
@@ -63,6 +69,7 @@
             <button name="action" value="submit">Submit</button>
           </div>
         </form>
+        {% endif %}
       </article>
       {% else %}
       <div class="card empty">No activities have been published.</div>

@@ -22,6 +22,7 @@ param entraClientId string = ''
 param entraAllowedDomains string = ''
 param entraDefaultOrganisationSlug string = ''
 param defenderMonthlyScanCapGB int = 500
+param runMigrations bool = false
 
 var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, prefix, environmentName)
 var compact = toLower(replace('${prefix}${environmentName}${take(suffix, 8)}', '-', ''))
@@ -193,7 +194,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
       linuxFxVersion: 'DOCKER|${imageName}'
       acrUseManagedIdentityCreds: true
       alwaysOn: true
-      healthCheckPath: '/health'
+      healthCheckPath: '/health/ready'
       minimumElasticInstanceCount: 1
       appSettings: [
         { name: 'APP_NAME', value: 'Citizen Centric' }
@@ -203,6 +204,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'SECRET_KEY', value: '@Microsoft.KeyVault(SecretUri=${sessionSecret.properties.secretUriWithVersion})' }
         { name: 'BASE_URL', value: 'https://${appHostName}' }
         { name: 'COOKIE_SECURE', value: 'true' }
+        { name: 'SESSION_COOKIE_SECURE', value: 'true' }
         { name: 'TRUSTED_HOSTS', value: appHostName }
         { name: 'ALLOWED_ORIGINS', value: 'https://${appHostName}' }
         { name: 'STORAGE_BACKEND', value: 'azure_blob' }
@@ -212,7 +214,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'DEFENDER_REQUIRE_CLEAN_DOWNLOAD', value: 'true' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
         { name: 'WEBSITES_PORT', value: '8000' }
-        { name: 'RUN_MIGRATIONS', value: 'true' }
+        { name: 'RUN_MIGRATIONS', value: string(runMigrations) }
         { name: 'ENTRA_ENABLED', value: string(!empty(entraClientId)) }
         { name: 'ENTRA_TENANT_ID', value: entraTenantId }
         { name: 'ENTRA_CLIENT_ID', value: entraClientId }

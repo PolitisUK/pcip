@@ -23,6 +23,7 @@ class StoredObject:
 class StorageBackend(Protocol):
     provider_name: str
 
+    def ensure_ready(self) -> None: ...
     def save_stream(self, stream: BinaryIO, original_name: str, max_bytes: int) -> StoredObject: ...
     def delete(self, key: str) -> None: ...
     def scan_result(self, key: str) -> tuple[str, str]: ...
@@ -34,6 +35,9 @@ class LocalStorage:
 
     def __init__(self, root: Path):
         self.root = root
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def ensure_ready(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def save_stream(self, stream: BinaryIO, original_name: str, max_bytes: int) -> StoredObject:
@@ -95,12 +99,14 @@ class AzureBlobStorage:
             raise RuntimeError("AZURE_STORAGE_ACCOUNT_URL or AZURE_STORAGE_CONNECTION_STRING is required.")
         self.container_name = settings.azure_storage_container
         self.container = self.service.get_container_client(self.container_name)
+
+    def ensure_ready(self) -> None:
+        from azure.core.exceptions import ResourceExistsError
+
         try:
             self.container.create_container()
-        except Exception as exc:
-            # ResourceExistsError is deliberately tolerated without importing another Azure type.
-            if "ContainerAlreadyExists" not in str(exc) and "container already exists" not in str(exc).lower():
-                raise
+        except ResourceExistsError:
+            pass
 
     def save_stream(self, stream: BinaryIO, original_name: str, max_bytes: int) -> StoredObject:
         suffix = Path(original_name).suffix.lower()[:12]

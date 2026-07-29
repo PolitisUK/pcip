@@ -6,7 +6,7 @@ This guide defines a practical technical process for dependency hygiene in this 
 
 CI performs:
 - `pip check` to detect broken/incompatible dependency resolution.
-- `pip-audit -r requirements.txt` to identify known vulnerabilities.
+- `pip-audit -r requirements.lock` to identify known vulnerabilities.
 - `bandit` on `app/` for Python security anti-patterns.
 
 ## Update cadence
@@ -19,11 +19,11 @@ Recommended technical cadence:
 ## Suggested update workflow
 
 1. Create an update branch.
-2. Upgrade targeted packages in `requirements.txt`.
+2. Upgrade targeted packages in `requirements.txt` and regenerate `requirements.lock`.
 3. Run:
-   - `python -m pip install -r requirements.txt`
+   - `python -m pip install -r requirements-dev.txt`
    - `python -m pip check`
-   - `python -m pip-audit -r requirements.txt`
+   - `python -m pip-audit -r requirements.lock`
    - `python -m pytest -q`
 4. Verify release artifact build still succeeds.
 5. Merge with release notes summarizing upgraded packages and risk.
