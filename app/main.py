@@ -1787,8 +1787,9 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
         ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.participant_id==p.id,StudyEnrolment.organisation_id==u.organisation_id)).all()
         invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id).order_by(ParticipantInvitation.created_at.desc())).all()
         responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id).order_by(ActivityResponse.updated_at.desc())).all()
+        evidence_files=db.scalars(select(EvidenceFile).where(EvidenceFile.participant_id==p.id,EvidenceFile.organisation_id==u.organisation_id).order_by(EvidenceFile.created_at.desc())).all()
         messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id).order_by(ParticipantMessage.created_at)).all()
-        study_ids = {e.study_id for e in ens} | {i.study_id for i in invs} | {r.study_id for r in responses} | {m.study_id for m in messages}
+        study_ids = {e.study_id for e in ens} | {i.study_id for i in invs} | {r.study_id for r in responses} | {e.study_id for e in evidence_files} | {m.study_id for m in messages}
         studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id, Study.id.in_(study_ids))).all()} if study_ids else {}
     else:
         allowed_ids = set(db.scalars(study_scope_for_user(u)).all())
@@ -1798,10 +1799,11 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
         studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id,Study.id.in_(allowed_ids))).all()}
         invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id,ParticipantInvitation.study_id.in_(allowed_ids)).order_by(ParticipantInvitation.created_at.desc())).all()
         responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(allowed_ids)).order_by(ActivityResponse.updated_at.desc())).all()
+        evidence_files=db.scalars(select(EvidenceFile).where(EvidenceFile.participant_id==p.id,EvidenceFile.organisation_id==u.organisation_id,EvidenceFile.study_id.in_(allowed_ids)).order_by(EvidenceFile.created_at.desc())).all()
         messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id,ParticipantMessage.study_id.in_(allowed_ids)).order_by(ParticipantMessage.created_at)).all()
     privacy_counts = participant_related_counts(db, p.id, u.organisation_id) if u.role in {"owner", "admin"} else None
     privacy_workflow_token = request.session.get(privacy_workflow_key(p.id)) if u.role in {"owner", "admin"} else None
-    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
+    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
 
 
 @app.get("/participants/{participant_id}/export")

@@ -1125,6 +1125,26 @@ def create_evidence_with_status(scan_status: str) -> int:
         return row.id
 
 
+def test_participant_detail_surfaces_evidence_file_and_scan_status():
+    from app.models import EvidenceFile
+
+    with client:
+        client.cookies.clear()
+        auth()
+        evidence_id = create_evidence_with_status('pending')
+        with SessionLocal() as db:
+            evidence = db.get(EvidenceFile, evidence_id)
+            participant_id = evidence.participant_id
+
+        response = client.get(f'/participants/{participant_id}')
+
+        assert response.status_code == 200
+        assert 'Evidence files' in response.text
+        assert 'blocked.txt' in response.text
+        assert 'Pending' in response.text
+        assert f'/evidence/{evidence_id}' in response.text
+
+
 @pytest.mark.parametrize('scan_status', ['not_scanned', 'pending', 'failed', 'not_configured', 'error'])
 def test_evidence_download_blocks_non_clean_scan_states(scan_status):
     with client:

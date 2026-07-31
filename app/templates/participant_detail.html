@@ -107,6 +107,26 @@
   </table>
 </section>
 
+<section class="card card--data section">
+  <h2>Evidence files</h2>
+  <table class="table">
+    <thead><tr><th>File</th><th>Study</th><th>Scan status</th><th>Uploaded</th><th>Action</th></tr></thead>
+    <tbody>
+      {% for evidence in evidence_files %}
+      <tr>
+        <td>{{ evidence.original_name }}</td>
+        <td>{{ studies[evidence.study_id].title }}</td>
+        <td><span class="badge {{ evidence.scan_status }}">{{ evidence.scan_status|replace('_',' ')|title }}</span></td>
+        <td>{{ evidence.created_at.strftime('%d %b %Y %H:%M') }}</td>
+        <td><a class="btn secondary" href="/evidence/{{ evidence.id }}">Check/download</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">No evidence files uploaded.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
 <section id="messages" class="card card--data section">
   <h2>Messages and internal notes</h2>
   <div class="conversation">
