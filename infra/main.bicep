@@ -21,7 +21,7 @@ param entraTenantId string = ''
 param entraClientId string = ''
 param entraAllowedDomains string = ''
 param entraDefaultOrganisationSlug string = ''
-param defenderMonthlyScanCapGB int = 500
+param defenderMonthlyScanCapGB int = 10
 param runMigrations bool = false
 
 var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, prefix, environmentName)
@@ -229,13 +229,23 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
   dependsOn: [postgresDatabase, azureServicesFirewall]
 }
 
-resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, app.id, 'blob-contributor')
+resource blobOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(evidenceContainer.id, app.id, 'blob-owner')
+  scope: evidenceContainer
+  properties: {
+    principalId: app.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
+  }
+}
+
+resource blobDelegator 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, app.id, 'blob-delegator')
   scope: storage
   properties: {
     principalId: app.identity.principalId
     principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')
   }
 }
 
