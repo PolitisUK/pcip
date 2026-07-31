@@ -21,7 +21,8 @@ param entraTenantId string = ''
 param entraClientId string = ''
 param entraAllowedDomains string = ''
 param entraDefaultOrganisationSlug string = ''
-param defenderMonthlyScanCapGB int = 500
+param defenderMonthlyScanCapGB int = 10
+param runMigrations bool = false
 
 var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, prefix, environmentName)
 var compact = toLower(replace('${prefix}${environmentName}${take(suffix, 8)}', '-', ''))
@@ -193,7 +194,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
       linuxFxVersion: 'DOCKER|${imageName}'
       acrUseManagedIdentityCreds: true
       alwaysOn: true
-      healthCheckPath: '/health'
+      healthCheckPath: '/health/ready'
       minimumElasticInstanceCount: 1
       appSettings: [
         { name: 'APP_NAME', value: 'Citizen Centric' }
@@ -203,6 +204,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'SECRET_KEY', value: '@Microsoft.KeyVault(SecretUri=${sessionSecret.properties.secretUriWithVersion})' }
         { name: 'BASE_URL', value: 'https://${appHostName}' }
         { name: 'COOKIE_SECURE', value: 'true' }
+        { name: 'SESSION_COOKIE_SECURE', value: 'true' }
         { name: 'TRUSTED_HOSTS', value: appHostName }
         { name: 'ALLOWED_ORIGINS', value: 'https://${appHostName}' }
         { name: 'STORAGE_BACKEND', value: 'azure_blob' }
@@ -212,7 +214,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'DEFENDER_REQUIRE_CLEAN_DOWNLOAD', value: 'true' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
         { name: 'WEBSITES_PORT', value: '8000' }
-        { name: 'RUN_MIGRATIONS', value: 'true' }
+        { name: 'RUN_MIGRATIONS', value: string(runMigrations) }
         { name: 'ENTRA_ENABLED', value: string(!empty(entraClientId)) }
         { name: 'ENTRA_TENANT_ID', value: entraTenantId }
         { name: 'ENTRA_CLIENT_ID', value: entraClientId }
@@ -227,13 +229,23 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
   dependsOn: [postgresDatabase, azureServicesFirewall]
 }
 
-resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, app.id, 'blob-contributor')
+resource blobOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(evidenceContainer.id, app.id, 'blob-owner')
+  scope: evidenceContainer
+  properties: {
+    principalId: app.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
+  }
+}
+
+resource blobDelegator 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, app.id, 'blob-delegator')
   scope: storage
   properties: {
     principalId: app.identity.principalId
     principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')
   }
 }
 

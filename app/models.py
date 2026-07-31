@@ -1,7 +1,17 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
-from sqlalchemy import String, DateTime, ForeignKey, Boolean, Text, UniqueConstraint, Integer
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -53,6 +63,9 @@ class Organisation(Base):
     slug: Mapped[str] = mapped_column(String(100), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     users: Mapped[list[User]] = relationship(back_populates="organisation")
+    memberships: Mapped[list[OrganisationMembership]] = relationship(
+        back_populates="organisation"
+    )
 
 
 class User(Base):
@@ -76,6 +89,42 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     organisation: Mapped[Organisation] = relationship(back_populates="users")
+    memberships: Mapped[list[OrganisationMembership]] = relationship(
+        back_populates="user"
+    )
+
+
+Index("ux_users_email_normalized", func.lower(User.email), unique=True)
+
+
+class OrganisationMembership(Base):
+    __tablename__ = "organisation_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "organisation_id",
+            name="uq_organisation_memberships_user_org",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    organisation_id: Mapped[int] = mapped_column(
+        ForeignKey("organisations.id"),
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(
+        String(30),
+        default=Role.researcher.value,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+    user: Mapped[User] = relationship(back_populates="memberships")
+    organisation: Mapped[Organisation] = relationship(
+        back_populates="memberships"
+    )
 
 
 class Project(Base):

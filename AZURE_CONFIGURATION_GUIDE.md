@@ -12,7 +12,8 @@ Required App Service settings:
 - `SESSION_COOKIE_SECURE=true`
 - `TRUSTED_HOSTS=<your-app-host>`
 - `ALLOWED_ORIGINS=https://<your-app-host>`
-- `RUN_MIGRATIONS=true`
+- `RUN_MIGRATIONS=false` for the web application; run migrations once through
+  the approved release migration operation
 - `LOG_LEVEL=INFO`
 
 Health check:

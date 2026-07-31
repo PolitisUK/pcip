@@ -1,38 +1,24 @@
 # Azure deployment foundation
 
-This folder provisions the first Azure-native PCIP environment using Bicep:
+`main.bicep` represents a complete PCIP environment: Linux App Service and
+plan, ACR, PostgreSQL Flexible Server, Blob Storage and Defender scanning, Key
+Vault, Log Analytics, Application Insights, identities, and role assignments.
 
-- Linux Azure App Service with a system-assigned managed identity;
-- private evidence container in Azure Blob Storage;
-- Microsoft Defender for Storage with on-upload malware scanning and blob-index scan results;
-- Storage Blob Data Contributor access for the web application's managed identity;
-- Application Insights and Log Analytics;
-- Azure Key Vault foundation;
-- HTTPS-only App Service configuration.
+The defaults are a deployment foundation, not an approved production
+resilience or network design. In particular, the default PostgreSQL tier has no
+high availability or geo-redundant backup, and several services permit public
+network access.
 
-The database URL is supplied as a secure deployment parameter so Azure Database for PostgreSQL Flexible Server can be created separately with an approved networking and resilience design. The container image placeholder must be replaced with the selected Azure Container Registry or GitHub Container Registry image.
+Hosted migration execution defaults to `runMigrations=false`. A reviewed
+database migration must run once as a release operation; restarting or scaling
+the Web App must not implicitly change the schema. The development parameter
+example opts into automatic migration.
 
-## Deploy
+Do not deploy this template to production until the current database revision,
+rollback artifact, resource names, and secure parameters have been verified.
+The canonical deployment procedure and operating controls are maintained in:
 
-```bash
-az group create --name pcip-dev-rg --location uksouth
-az deployment group create \
-  --resource-group pcip-dev-rg \
-  --template-file infra/main.bicep \
-  --parameters prefix=pcip environmentName=dev \
-  --parameters databaseUrl='<postgresql URL>' secretKey='<long random value>' defenderWebhookSecret='<long random value>'
-```
-
-After deployment, configure an Event Grid delivery of Defender scan results to:
-
-```text
-https://<app-host>/webhooks/defender-storage?secret=<the configured secret>
-```
-
-Blob tags are also checked directly before each download. A participant upload remains unavailable until the result is `No threats found` when `DEFENDER_REQUIRE_CLEAN_DOWNLOAD=true`.
-
-Additional deployment and configuration references:
-
-- `DEPLOYMENT_GUIDE_AZURE.md`
-- `AZURE_CONFIGURATION_GUIDE.md`
-- `ENVIRONMENT_VARIABLES.md`
+- `../DEPLOYMENT.md`
+- `../OPERATIONS.md`
+- `../AZURE_CONFIGURATION_GUIDE.md`
+- `../ENVIRONMENT_VARIABLES.md`

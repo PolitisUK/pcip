@@ -1,13 +1,17 @@
 import os
-os.environ['DATABASE_URL'] = 'sqlite:///./data/test.db'
 from pathlib import Path
+from tempfile import gettempdir
+from uuid import uuid4
+
+TEST_DATABASE_PATH = Path(gettempdir()) / f"pcip-test-{uuid4().hex}.db"
+TEST_DATABASE_PATH.unlink(missing_ok=True)
+os.environ['DATABASE_URL'] = f"sqlite:///{TEST_DATABASE_PATH}"
+
 import re
 from glob import glob
-from uuid import uuid4
 import pytest
 from types import SimpleNamespace
 from contextlib import contextmanager
-Path('data/test.db').unlink(missing_ok=True)
 from fastapi.testclient import TestClient
 from app.main import app
 from datetime import timedelta
@@ -16,10 +20,26 @@ from sqlalchemy import select
 from app.config import settings
 from app.db import SessionLocal
 from app.models import User
-from app.main import now, rate_limiter
+from app.observability import configure_observability
+from app.main import (
+    InMemoryRateLimiter,
+    activity_window,
+    entra_identity_from_claims,
+    now,
+    rate_limiter,
+)
 from app.config import validate_runtime_settings
 
 client = TestClient(app)
+
+
+@pytest.fixture(scope='session', autouse=True)
+def cleanup_test_database():
+    yield
+    from app.db import engine
+
+    engine.dispose()
+    TEST_DATABASE_PATH.unlink(missing_ok=True)
 
 
 def csrf_token() -> str:
@@ -60,11 +80,152 @@ def test_health_and_version():
         assert data['version'] == '0.6.0'
 
 
+def test_readiness_checks_database():
+    with client:
+        data = client.get('/health/ready')
+        assert data.status_code == 200
+        assert data.json()['status'] == 'ready'
+
+
+def test_readiness_fails_without_exposing_database_error(monkeypatch):
+    import app.main as main_module
+
+    class UnavailableEngine:
+        def connect(self):
+            raise RuntimeError('sensitive database connection detail')
+
+    with client:
+        monkeypatch.setattr(main_module, 'engine', UnavailableEngine())
+        response = client.get('/health/ready')
+    assert response.status_code == 503
+    assert response.json() == {'status': 'unavailable'}
+    assert 'sensitive' not in response.text
+
+
+def test_observability_is_disabled_without_connection_string():
+    candidate = SimpleNamespace(
+        applicationinsights_connection_string=None,
+    )
+    assert configure_observability(candidate) is False
+
+
 def test_login_and_dashboard():
     with client:
         r = auth(); assert r.status_code == 303
         d = client.get('/')
         assert d.status_code == 200 and 'Seven-day town centre diary' in d.text
+
+
+def test_global_user_can_hold_memberships_in_multiple_organisations():
+    from app.models import Organisation, OrganisationMembership
+    from app.security import decode_session, hash_password
+
+    email = f"{unique_value('global-user')}@example.org"
+    password = 'SecurePass123!'
+    with client:
+        client.cookies.clear()
+        with SessionLocal() as db:
+            existing_org = db.scalar(
+                select(Organisation).order_by(Organisation.id)
+            )
+            second_org = Organisation(
+                name=unique_value('Second organisation'),
+                slug=unique_value('second-org').lower(),
+            )
+            db.add(second_org)
+            db.flush()
+            user = User(
+                organisation_id=existing_org.id,
+                name='Global User',
+                email=email,
+                password_hash=hash_password(password),
+                role='researcher',
+            )
+            db.add(user)
+            db.flush()
+            db.add_all([
+                OrganisationMembership(
+                    user_id=user.id,
+                    organisation_id=existing_org.id,
+                    role='researcher',
+                ),
+                OrganisationMembership(
+                    user_id=user.id,
+                    organisation_id=second_org.id,
+                    role='observer',
+                ),
+            ])
+            db.commit()
+            second_org_id = second_org.id
+        response = login_as(email, password)
+        assert response.status_code == 303
+        assert response.headers['location'] == '/'
+        assert client.cookies.get('session')
+        switched = post_with_csrf(
+            '/organisations/switch',
+            data={'organisation_id': second_org_id},
+            follow_redirects=False,
+        )
+        assert switched.status_code == 303
+        identity = decode_session(client.cookies.get('session'))
+        assert identity is not None
+        assert identity.organisation_id == second_org_id
+        dashboard = client.get('/')
+        assert dashboard.status_code == 200
+        assert 'Observer' in dashboard.text
+
+
+def test_entra_identity_requires_configured_tenant_claim():
+    original_tenant = settings.entra_tenant_id
+    try:
+        settings.entra_tenant_id = 'expected-tenant'
+        common = {
+            'sub': 'entra-subject',
+            'preferred_username': 'researcher@example.org',
+            'name': 'Researcher',
+        }
+        assert entra_identity_from_claims(common) is None
+        assert entra_identity_from_claims(
+            {**common, 'tid': 'different-tenant'}
+        ) is None
+        assert entra_identity_from_claims(
+            {**common, 'tid': 'expected-tenant'}
+        ) == (
+            'entra-subject',
+            'researcher@example.org',
+            'Researcher',
+        )
+    finally:
+        settings.entra_tenant_id = original_tenant
+
+
+def test_activity_window_uses_study_start_and_offsets():
+    start = now()
+    study = SimpleNamespace(start_at=start)
+    activity = SimpleNamespace(
+        release_offset_days=1,
+        due_offset_days=3,
+    )
+    assert activity_window(
+        study,
+        activity,
+        start + timedelta(hours=12),
+    )['status'] == 'upcoming'
+    assert activity_window(
+        study,
+        activity,
+        start + timedelta(days=2),
+    )['status'] == 'open'
+    assert activity_window(
+        study,
+        activity,
+        start + timedelta(days=4),
+    )['status'] == 'closed'
+    assert activity_window(
+        SimpleNamespace(start_at=None),
+        activity,
+        start,
+    )['status'] == 'open'
 
 
 def test_project_and_study_creation():
@@ -156,7 +317,7 @@ def test_researcher_invite_and_admin_pages():
 
 def test_participant_accepts_invitation():
     from app.db import SessionLocal
-    from app.models import ParticipantInvitation, OutboxEmail
+    from app.models import OutboxEmail
     from sqlalchemy import select
     with client:
         auth()
@@ -205,8 +366,9 @@ def test_password_reset_token_is_exchanged_and_replay_is_blocked():
         assert 'invalid or expired' in replay.text
 
 
-def test_participant_invitation_token_is_exchanged_and_replay_is_blocked():
-    from app.models import OutboxEmail
+def test_participant_invitation_token_can_create_a_fresh_session_until_revoked():
+    from app.models import OutboxEmail, ParticipantInvitation
+    from app.security import token_hash
     with client:
         client.cookies.clear()
         auth()
@@ -235,9 +397,23 @@ def test_participant_invitation_token_is_exchanged_and_replay_is_blocked():
         assert 'name="token"' not in clean_page.text
 
         client.cookies.clear()
-        replay = client.get(f'/join-study?token={token}', follow_redirects=True)
-        assert replay.status_code == 200
-        assert 'Invitation unavailable' in replay.text
+        reopened = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert reopened.status_code == 303
+        assert reopened.headers['location'] == '/join-study'
+        assert client.get('/join-study').status_code == 200
+
+        with SessionLocal() as db:
+            invitation = db.scalar(
+                select(ParticipantInvitation)
+                .where(ParticipantInvitation.token_hash == token_hash(token))
+            )
+            invitation.revoked_at = now()
+            db.commit()
+
+        client.cookies.clear()
+        revoked = client.get(f'/join-study?token={token}', follow_redirects=True)
+        assert revoked.status_code == 200
+        assert 'Invitation unavailable' in revoked.text
 
 
 def test_researcher_invitation_token_is_exchanged_and_replay_is_blocked():
@@ -270,6 +446,104 @@ def test_researcher_invitation_token_is_exchanged_and_replay_is_blocked():
         assert replay.status_code == 200
         assert 'Invitation unavailable' in replay.text
 
+
+def test_existing_global_identity_can_accept_second_organisation_membership():
+    from app.models import (
+        Organisation,
+        OrganisationMembership,
+        OutboxEmail,
+    )
+    from app.security import hash_password
+
+    existing_email = f"{unique_value('existing-global')}@example.org"
+    existing_password = 'SecurePass123!'
+    with client:
+        client.cookies.clear()
+        auth()
+        with SessionLocal() as db:
+            owner = db.scalar(
+                select(User).where(User.email == 'admin@politis.local')
+            )
+            second_org = Organisation(
+                name=unique_value('Membership organisation'),
+                slug=unique_value('membership-org').lower(),
+            )
+            db.add(second_org)
+            db.flush()
+            db.add(
+                OrganisationMembership(
+                    user_id=owner.id,
+                    organisation_id=second_org.id,
+                    role='owner',
+                )
+            )
+            existing = User(
+                organisation_id=owner.organisation_id,
+                name='Existing Global User',
+                email=existing_email,
+                password_hash=hash_password(existing_password),
+                role='researcher',
+            )
+            db.add(existing)
+            db.flush()
+            db.add(
+                OrganisationMembership(
+                    user_id=existing.id,
+                    organisation_id=owner.organisation_id,
+                    role='researcher',
+                )
+            )
+            db.commit()
+            second_org_id = second_org.id
+            existing_id = existing.id
+
+        switched = post_with_csrf(
+            '/organisations/switch',
+            data={'organisation_id': second_org_id},
+            follow_redirects=False,
+        )
+        assert switched.status_code == 303
+        invited = post_with_csrf(
+            '/researchers/invite',
+            data={
+                'name': 'Existing Global User',
+                'email': existing_email,
+                'role': 'observer',
+            },
+            follow_redirects=False,
+        )
+        assert invited.status_code == 303
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient == existing_email)
+                .order_by(OutboxEmail.id.desc())
+            )
+            token = email.body.split('token=')[1].strip()
+
+        exchanged = client.get(
+            f'/accept-invitation?token={token}',
+            follow_redirects=True,
+        )
+        assert exchanged.status_code == 200
+        assert 'Existing account password' in exchanged.text
+        accepted = post_with_csrf(
+            '/accept-invitation',
+            data={'password': existing_password},
+            follow_redirects=False,
+        )
+        assert accepted.status_code == 303
+        with SessionLocal() as db:
+            membership = db.scalar(
+                select(OrganisationMembership).where(
+                    OrganisationMembership.user_id == existing_id,
+                    OrganisationMembership.organisation_id == second_org_id,
+                )
+            )
+            assert membership is not None
+            assert membership.role == 'observer'
+
+
 def test_invalid_status_and_activity_validation():
     with client:
         auth()
@@ -285,6 +559,36 @@ def test_invalid_status_and_activity_validation():
         study_id = int(study.headers['location'].split('/')[-1])
         r = post_with_csrf(f'/studies/{study_id}/activities', data={'title':'Bad choice','activity_type':'single_choice','options':'Only one','release_offset_days':'0','due_offset_days':'0','required':'true'})
         assert r.status_code == 400
+        invalid_methodology = post_with_csrf(
+            f'/studies/{study_id}/edit',
+            data={'title':'Validation study','methodology':'unsupported','status_value':'draft'},
+        )
+        assert invalid_methodology.status_code == 400
+        valid_activity = post_with_csrf(
+            f'/studies/{study_id}/activities',
+            data={'title':'Valid activity','activity_type':'long_text','release_offset_days':'0','due_offset_days':'2'},
+            follow_redirects=False,
+        )
+        assert valid_activity.status_code == 303
+        from app.models import Activity
+        with SessionLocal() as db:
+            activity_id = db.scalar(select(Activity.id).where(Activity.study_id == study_id))
+        invalid_activity_edit = post_with_csrf(
+            f'/activities/{activity_id}/edit',
+            data={'title':'Changed','activity_type':'unsupported','release_offset_days':'0','due_offset_days':'2'},
+        )
+        assert invalid_activity_edit.status_code == 400
+        invalid_participant = post_with_csrf(
+            '/participants',
+            data={
+                'reference':'BAD-COMMS',
+                'name':'Invalid Comms',
+                'status_value':'prospective',
+                'consent_status':'pending',
+                'communication_preference':'carrier_pigeon',
+            },
+        )
+        assert invalid_participant.status_code == 400
 
 
 def test_navigation_active_state_and_mobile_safe_markup():
@@ -295,9 +599,11 @@ def test_navigation_active_state_and_mobile_safe_markup():
         assert 'aria-label="Primary navigation"' in html
 
 
-def test_participant_portal_draft_submit_and_message():
+def test_participant_portal_draft_submit_and_message(monkeypatch):
+    from io import BytesIO
+    import app.main as main_module
     from app.db import SessionLocal
-    from app.models import OutboxEmail, Activity, ActivityResponse, ParticipantMessage
+    from app.models import Activity, ActivityResponse, EvidenceFile, OutboxEmail, ParticipantMessage, Study
     from sqlalchemy import select
     with client:
         auth()
@@ -314,8 +620,54 @@ def test_participant_portal_draft_submit_and_message():
             token=email.body.split('token=')[1].strip()
         client.get(f'/join-study?token={token}')
         post_with_csrf('/join-study', data={'consent':'true'})
+        with SessionLocal() as db:
+            study_row = db.get(Study, study_id)
+            study_row.start_at = now() + timedelta(days=1)
+            db.commit()
+        upcoming_portal = client.get('/participant-portal')
+        assert upcoming_portal.status_code == 200
+        assert 'will be available from' in upcoming_portal.text
+        blocked = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action':'draft','answer':'too early'},
+            follow_redirects=False,
+        )
+        assert blocked.status_code == 409
+        with SessionLocal() as db:
+            study_row = db.get(Study, study_id)
+            study_row.start_at = None
+            db.commit()
         portal=client.get('/participant-portal')
         assert portal.status_code==200 and 'Your activities' in portal.text
+        evidence_files_before = set(Path(settings.local_storage_path).glob('*'))
+
+        def fail_activity_audit(*_args, **_kwargs):
+            raise RuntimeError('simulated database workflow failure')
+
+        with monkeypatch.context() as patch:
+            patch.setattr(main_module, 'audit', fail_activity_audit)
+            with pytest.raises(RuntimeError, match='simulated database workflow failure'):
+                post_with_csrf(
+                    f'/participant-portal/activity/{activity_id}',
+                    data={'action':'draft','answer':''},
+                    files={'upload':('cleanup.txt',BytesIO(b'ordinary evidence'),'text/plain')},
+                    follow_redirects=False,
+                )
+        assert set(Path(settings.local_storage_path).glob('*')) == evidence_files_before
+        with SessionLocal() as db:
+            assert db.scalar(select(EvidenceFile).where(EvidenceFile.participant_id == participant_id, EvidenceFile.activity_id == activity_id)) is None
+            assert db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id == participant_id, ActivityResponse.activity_id == activity_id)) is None
+
+        infected = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action':'draft','answer':''},
+            files={'upload':('unsafe.txt',BytesIO(b'EICAR-STANDARD-ANTIVIRUS-TEST-FILE'),'text/plain')},
+            follow_redirects=False,
+        )
+        assert infected.status_code == 400
+        with SessionLocal() as db:
+            assert db.scalar(select(EvidenceFile).where(EvidenceFile.participant_id == participant_id, EvidenceFile.activity_id == activity_id)) is None
+            assert db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id == participant_id, ActivityResponse.activity_id == activity_id)) is None
         draft=post_with_csrf(f'/participant-portal/activity/{activity_id}', data={'action':'draft','answer':'draft answer'}, follow_redirects=False)
         assert draft.status_code==303
         submit=post_with_csrf(f'/participant-portal/activity/{activity_id}', data={'action':'submit','answer':'final answer'}, follow_redirects=False)
@@ -341,8 +693,30 @@ def test_bulk_import_editing_and_password_reset_request():
         assert reset.status_code==200 and 'reset link has been issued' in reset.text
 
 
+def test_bulk_import_rejects_invalid_email_and_oversized_file(monkeypatch):
+    from io import BytesIO
+    import app.main as main_module
+
+    with client:
+        auth()
+        invalid_email = b'reference,name,email\nCSV-BAD-1,Bad Email,not-an-email\n'
+        response = post_with_csrf(
+            '/participants/import',
+            files={'file':('participants.csv',BytesIO(invalid_email),'text/csv')},
+        )
+        assert response.status_code == 400
+
+        monkeypatch.setattr(main_module, 'MAX_CSV_IMPORT_BYTES', 32)
+        oversized = b'reference,name\nCSV-BIG-1,' + (b'x' * 64) + b'\n'
+        response = post_with_csrf(
+            '/participants/import',
+            files={'file':('participants.csv',BytesIO(oversized),'text/csv')},
+        )
+        assert response.status_code == 413
+
+
 def test_admin_can_export_participant_data_and_audit_event():
-    from app.models import AuditEvent, Participant
+    from app.models import AuditEvent
     with client:
         client.cookies.clear()
         auth()
@@ -629,7 +1003,7 @@ def test_templates_do_not_use_inline_scripts_or_inline_event_handlers():
 
 def test_study_access_assignment():
     from app.db import SessionLocal
-    from app.models import User, Study, StudyAccess
+    from app.models import OrganisationMembership, User, Study, StudyAccess
     from app.security import hash_password
     from sqlalchemy import select
     with client:
@@ -639,7 +1013,9 @@ def test_study_access_assignment():
             researcher = db.scalar(select(User).where(User.email == 'permissions@example.org'))
             if not researcher:
                 researcher = User(organisation_id=owner.organisation_id, name='Permissions Researcher', email='permissions@example.org', password_hash=hash_password('SecurePass123!'), role='researcher')
-                db.add(researcher); db.commit(); db.refresh(researcher)
+                db.add(researcher); db.flush()
+                db.add(OrganisationMembership(user_id=researcher.id, organisation_id=owner.organisation_id, role='researcher'))
+                db.commit(); db.refresh(researcher)
             study = db.scalar(select(Study).where(Study.organisation_id == owner.organisation_id).order_by(Study.id))
             researcher_id, study_id = researcher.id, study.id
         response = post_with_csrf(f'/studies/{study_id}/access', data={'user_id': researcher_id, 'permission': 'view'}, follow_redirects=False)
@@ -747,6 +1123,26 @@ def create_evidence_with_status(scan_status: str) -> int:
         db.commit()
         db.refresh(row)
         return row.id
+
+
+def test_participant_detail_surfaces_evidence_file_and_scan_status():
+    from app.models import EvidenceFile
+
+    with client:
+        client.cookies.clear()
+        auth()
+        evidence_id = create_evidence_with_status('pending')
+        with SessionLocal() as db:
+            evidence = db.get(EvidenceFile, evidence_id)
+            participant_id = evidence.participant_id
+
+        response = client.get(f'/participants/{participant_id}')
+
+        assert response.status_code == 200
+        assert 'Evidence files' in response.text
+        assert 'blocked.txt' in response.text
+        assert 'Pending' in response.text
+        assert f'/evidence/{evidence_id}' in response.text
 
 
 @pytest.mark.parametrize('scan_status', ['not_scanned', 'pending', 'failed', 'not_configured', 'error'])
@@ -1084,6 +1480,15 @@ def test_restricted_researcher_cannot_access_unassigned_study_or_participant_rec
         login_response = login_as(researcher_email, researcher_password)
         assert login_response.status_code == 303
 
+        dashboard = client.get('/')
+        assert dashboard.status_code == 200
+        assert f'Scope study {code}' not in dashboard.text
+
+        projects_page = client.get('/projects')
+        assert projects_page.status_code == 200
+        assert f'Scope project {code}' not in projects_page.text
+        assert client.get(f'/projects/{project_id}').status_code == 403
+
         studies_page = client.get('/studies')
         assert studies_page.status_code == 200
         assert f'Scope study {code}' not in studies_page.text
@@ -1140,6 +1545,17 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
         client.cookies.clear()
         login_response = login_as(researcher_email, researcher_password)
         assert login_response.status_code == 303
+
+        dashboard = client.get('/')
+        assert dashboard.status_code == 200
+        assert f'View study {code}' in dashboard.text
+
+        projects_page = client.get('/projects')
+        assert projects_page.status_code == 200
+        assert f'View project {code}' in projects_page.text
+        project_detail = client.get(f'/projects/{project_id}')
+        assert project_detail.status_code == 200
+        assert f'View study {code}' in project_detail.text
 
         assert client.get(f'/studies/{study_id}').status_code == 200
         assert client.get(f'/participants/{participant_id}').status_code == 200
@@ -1225,6 +1641,7 @@ def hosted_settings(**overrides):
         'trusted_hosts': 'pilot.example.org',
         'allowed_origins': 'https://pilot.example.org',
         'azure_defender_webhook_secret': 'required-webhook-secret',
+        'seed_demo_data': False,
     }
     data.update(overrides)
     return SimpleNamespace(**data)
@@ -1244,6 +1661,7 @@ def hosted_settings(**overrides):
         ({'allowed_origins': 'http://pilot.example.org'}, 'ALLOWED_ORIGINS'),
         ({'azure_defender_webhook_secret': ''}, 'AZURE_DEFENDER_WEBHOOK_SECRET'),
         ({'database_url': 'sqlite:///./data/app.db'}, 'DATABASE_URL'),
+        ({'seed_demo_data': True}, 'SEED_DEMO_DATA'),
     ],
 )
 def test_hosted_startup_validation_rejects_insecure_settings(override, expected_fragment):
@@ -1263,6 +1681,21 @@ def test_hosted_startup_validation_accepts_secure_settings():
         allowed_origins='https://secure.pilot.example.org',
     )
     validate_runtime_settings(candidate)
+
+
+def test_azure_bicep_sets_required_secure_cookie_settings():
+    bicep = Path('infra/main.bicep').read_text()
+    assert "{ name: 'COOKIE_SECURE', value: 'true' }" in bicep
+    assert "{ name: 'SESSION_COOKIE_SECURE', value: 'true' }" in bicep
+    assert 'param runMigrations bool = false' in bicep
+    assert "{ name: 'RUN_MIGRATIONS', value: string(runMigrations) }" in bicep
+
+
+def test_migrations_are_automatic_only_in_local_compose():
+    entrypoint = Path('entrypoint.sh').read_text()
+    compose = Path('docker-compose.yml').read_text()
+    assert '${RUN_MIGRATIONS:-false}' in entrypoint
+    assert 'RUN_MIGRATIONS: "true"' in compose
 
 
 def test_development_environment_allows_local_defaults():
@@ -1337,6 +1770,14 @@ def test_login_rate_limit_sets_retry_after_and_audits_abuse():
             assert row.detail.startswith('scope=login')
 
 
+def test_in_memory_rate_limiter_bounds_unique_keys():
+    limiter = InMemoryRateLimiter(max_keys=2)
+    assert limiter.check('first', 2, 60) is None
+    assert limiter.check('second', 2, 60) is None
+    assert limiter.check('third', 2, 60) is None
+    assert list(limiter._hits) == ['second', 'third']
+
+
 def test_forgot_password_rate_limit_blocks_repeated_attempts():
     with with_rate_limit_settings(rate_limit_enabled=True, rate_limit_window_seconds=60, rate_limit_forgot_password_ip=1, rate_limit_forgot_password_account=1):
         with client:
@@ -1383,7 +1824,7 @@ def test_participant_portal_write_rate_limit_blocks_repeated_attempts():
 
 
 def test_stolen_cookie_stops_working_after_admin_password_reset():
-    from app.models import OutboxEmail
+    from app.models import OrganisationMembership, OutboxEmail
     from app.security import hash_password
 
     researcher_email = f"{unique_value('stolen-cookie')}@example.org"
@@ -1401,6 +1842,8 @@ def test_stolen_cookie_stops_working_after_admin_password_reset():
             is_active=True,
         )
         db.add(researcher)
+        db.flush()
+        db.add(OrganisationMembership(user_id=researcher.id, organisation_id=owner.organisation_id, role='researcher'))
         db.commit()
         db.refresh(researcher)
         researcher_id = researcher.id

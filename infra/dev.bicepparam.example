@@ -14,3 +14,4 @@ param entraClientId = '<application-client-id>'
 param entraClientSecret = '<client-secret>'
 param entraAllowedDomains = 'politisconsulting.co.uk'
 param entraDefaultOrganisationSlug = 'politis'
+param runMigrations = true

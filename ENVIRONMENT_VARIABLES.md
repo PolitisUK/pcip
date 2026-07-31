@@ -20,6 +20,8 @@ This document lists runtime environment variables used by Citizen Centric.
 
 - `DATABASE_URL` (default local sqlite; must be non-sqlite outside development)
 - `STARTUP_VALIDATE_MIGRATIONS` (default: `true`)
+- `RUN_MIGRATIONS` (container-entrypoint switch; default: `false`; use only for
+  an explicit single-run migration operation)
 
 ## Host and Origin Protection
 
@@ -98,7 +100,7 @@ This document lists runtime environment variables used by Citizen Centric.
 
 ## Seed Data
 
-- `SEED_DEMO_DATA` (set to `false` in production)
+- `SEED_DEMO_DATA` (must be `false` outside development; hosted startup rejects `true`)
 
 ## Azure Key Vault Integration
 

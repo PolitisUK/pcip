@@ -5,12 +5,12 @@
 		<div class="brand public-brand"><img class="brand-logo" src="/static/politis_symbol_colour.png" alt="Politis logo"><span class="brand-copy"><strong>Citizen Centric</strong><small>by Politis</small></span></div>
 		<p class="eyebrow">Researcher invitation</p>
 		{% if valid %}
-		<h1>Activate your researcher account</h1>
+		<h1>{% if existing_identity %}Join this organisation{% else %}Activate your researcher account{% endif %}</h1>
 		<p>You have been invited as <strong>{{ invitation.role }}</strong>.</p>
 		<form method="post" action="/accept-invitation" class="stack">
 			<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-			<div class="field"><label>Create password</label><input type="password" name="password" minlength="10" autocomplete="new-password" required></div>
-			<button>Activate account</button>
+			<div class="field"><label>{% if existing_identity %}Existing account password{% else %}Create password{% endif %}</label><input type="password" name="password" minlength="10" autocomplete="{% if existing_identity %}current-password{% else %}new-password{% endif %}" required></div>
+			<button>{% if existing_identity %}Join organisation{% else %}Activate account{% endif %}</button>
 		</form>
 		{% else %}
 		<h1>Invitation unavailable</h1>

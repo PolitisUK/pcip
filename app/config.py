@@ -198,6 +198,9 @@ def validate_runtime_settings(runtime: Settings) -> None:
     if database_url.strip().lower().startswith("sqlite"):
         errors.append("DATABASE_URL cannot use sqlite outside development; configure Azure SQL/PostgreSQL.")
 
+    if getattr(runtime, "seed_demo_data", False):
+        errors.append("SEED_DEMO_DATA must be disabled outside development.")
+
     backend = getattr(runtime, "storage_backend", "local").strip().lower()
     if backend == "azure_blob":
         storage_account_url = getattr(runtime, "azure_storage_account_url", None)

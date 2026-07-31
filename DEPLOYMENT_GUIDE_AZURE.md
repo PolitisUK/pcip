@@ -16,7 +16,8 @@ This guide covers production deployment of Citizen Centric on Microsoft Azure Ap
 1. Build and push the container image used by App Service.
 2. Provision Azure resources using Bicep in [infra/main.bicep](infra/main.bicep).
 3. Configure App Service managed identity permissions:
-- Storage Blob Data Contributor on Storage Account
+- Storage Blob Data Owner on the evidence container
+- Storage Blob Delegator on the Storage Account
 - AcrPull on Container Registry
 - Key Vault Secrets User on Key Vault
 4. Confirm required secrets exist in Key Vault:
@@ -41,10 +42,10 @@ az deployment group create \
 
 ## 4. Container Startup and Migrations
 
-The container entrypoint runs migrations before application startup:
+The container entrypoint can run migrations only when explicitly enabled:
 
 ```sh
-if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
+if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
   alembic upgrade head
 fi
 ```
@@ -75,7 +76,7 @@ Response includes:
 - `environment`
 - `storage_backend`
 
-Configure Azure App Service health check path as `/health`.
+Configure Azure App Service health check path as `/health/ready`.
 
 ## 7. Post-Deployment Validation
 
@@ -90,7 +91,8 @@ Configure Azure App Service health check path as `/health`.
 ## 8. Rollback Guidance
 
 1. Redeploy the previous container image tag.
-2. Keep `RUN_MIGRATIONS=true` (migrations are forward-only; rollback scripts require explicit planning).
+2. Keep the web application at `RUN_MIGRATIONS=false`. Run the reviewed
+   migration once as a release operation before starting the new version.
 3. Validate `/health` and critical workflows.
 
 ## 9. Security Notes
@@ -98,4 +100,5 @@ Configure Azure App Service health check path as `/health`.
 - Do not use SQLite in production.
 - Keep `COOKIE_SECURE=true` and HTTPS-only base URL.
 - Keep `DEFENDER_REQUIRE_CLEAN_DOWNLOAD=true`.
+- Enable Defender on-upload malware scanning with Blob index-tag results and an explicit monthly cap.
 - Restrict `TRUSTED_HOSTS` and `ALLOWED_ORIGINS` to production domains only.
