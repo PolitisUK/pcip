@@ -1,4 +1,79 @@
-{% extends "base.html" %}{% block title %}{{ project.title }}{% endblock %}{% block content %}
-<div class="card"><div class="section-head"><div><span class="badge {{ project.status }}">{{ project.status|title }}</span><p>{{ project.description or 'No description supplied.' }}</p><p class="muted">Project code: {{ project.code }}</p></div><a class="btn secondary" href="/projects">Back to projects</a></div>{% if can_edit %}<details class="section"><summary><strong>Edit project</strong></summary><form method="post" action="/projects/{{ project.id }}/edit" class="stack section"><div class="row"><div class="field"><label>Title</label><input name="title" value="{{ project.title }}" required></div><div class="field"><label>Status</label><select name="status_value">{% for x in ['draft','live','closed','archived'] %}<option {% if x==project.status %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></div></div><div class="field"><label>Description</label><textarea name="description">{{ project.description }}</textarea></div><button>Save project</button></form></details>{% endif %}</div>
-{% if can_edit %}<div class="card section"><h2>Create a study</h2><form method="post" action="/projects/{{ project.id }}/studies" class="stack"><div class="row"><div class="field"><label>Study title</label><input name="title" required></div><div class="field small"><label>Study code</label><input name="code" required></div><div class="field"><label>Methodology</label><select name="methodology"><option value="diary">Diary study</option><option value="walk_along">Walk-along</option><option value="interview">Interview</option><option value="focus_group">Focus group</option><option value="co_design">Co-design</option><option value="mixed_method">Mixed method</option></select></div><div class="field small"><label>Status</label><select name="status_value">{% for s in statuses %}<option>{{ s }}</option>{% endfor %}</select></div></div><div class="field"><label>Description</label><textarea name="description" rows="3"></textarea></div><button>Create study</button></form></div>{% endif %}
-<div class="card section"><h2>Studies</h2>{% if studies %}<table class="table"><thead><tr><th>Study</th><th>Method</th><th>Status</th></tr></thead><tbody>{% for s in studies %}<tr><td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td><td>{{ s.methodology|replace('_',' ')|title }}</td><td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td></tr>{% endfor %}</tbody></table>{% else %}<p class="empty">No studies in this project.</p>{% endif %}</div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}{{ project.title }}{% endblock %}
+{% block page_description %}<p class="page-description">Review the project summary, update settings, and create studies from the same place.</p>{% endblock %}
+{% block content %}
+<section class="card card--hero section-compact">
+  <div class="section-head">
+    <div>
+      <span class="badge {{ project.status }}">{{ project.status|title }}</span>
+      <p>{{ project.description or 'No description supplied.' }}</p>
+      <p class="muted">Project code: {{ project.code }}</p>
+    </div>
+    <a class="btn secondary" href="/projects">Back to projects</a>
+  </div>
+
+  {% if can_edit %}
+  <details class="section compact-details">
+    <summary>Edit project</summary>
+    <div class="context-help-body">
+      <form method="post" action="/projects/{{ project.id }}/edit" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="row">
+          <div class="field"><label>Title</label><input name="title" value="{{ project.title }}" required></div>
+          <div class="field"><label>Status</label><select name="status_value">{% for x in ['draft','live','closed','archived'] %}<option {% if x==project.status %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></div>
+        </div>
+        <div class="field"><label>Description</label><textarea name="description">{{ project.description }}</textarea></div>
+        <button>Save project</button>
+      </form>
+    </div>
+  </details>
+  {% endif %}
+</section>
+
+{% if can_edit %}
+<section class="card card--action section">
+  <div class="section-head">
+    <div>
+      <h2>Create a study</h2>
+      <p class="muted">Add the first study for this project and continue the workflow.</p>
+    </div>
+  </div>
+  <form method="post" action="/projects/{{ project.id }}/studies" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="row">
+      <div class="field"><label>Study title</label><input name="title" required></div>
+      <div class="field small"><label>Study code</label><input name="code" required></div>
+      <div class="field"><label>Methodology</label><select name="methodology"><option value="diary">Diary study</option><option value="walk_along">Walk-along</option><option value="interview">Interview</option><option value="focus_group">Focus group</option><option value="co_design">Co-design</option><option value="mixed_method">Mixed method</option></select></div>
+      <div class="field small"><label>Status</label><select name="status_value">{% for s in statuses %}<option>{{ s }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="field"><label>Description</label><textarea name="description" rows="3"></textarea></div>
+    <button>Create study</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="card card--data section">
+  <div class="section-head">
+    <h2>Studies</h2>
+    <span class="muted">{{ studies|length }} total</span>
+  </div>
+  {% if studies %}
+  <table class="table">
+    <thead><tr><th>Study</th><th>Method</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for s in studies %}
+      <tr>
+        <td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td>
+        <td>{{ s.methodology|replace('_',' ')|title }}</td>
+        <td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty empty--compact">
+    <p>No studies in this project yet. Add the first study to begin collecting evidence.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

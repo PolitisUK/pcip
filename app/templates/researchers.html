@@ -1,1 +1,52 @@
-{% extends "base.html" %}{% block title %}Researchers{% endblock %}{% block content %}<div class="card"><h2>Invite a researcher</h2><form method="post" action="/researchers/invite" class="row"><div class="field"><label>Name</label><input name="name" required></div><div class="field"><label>Email</label><input name="email" type="email" required></div><div class="field"><label>Role</label><select name="role">{% for r in roles %}<option>{{ r }}</option>{% endfor %}</select></div><button>Send invitation</button></form></div><div class="section card"><h2>Active users</h2><table class="table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>{% for x in users %}<tr><td>{{ x.name }}</td><td>{{ x.email }}</td><td>{{ x.role|title }}</td><td>{{ 'Active' if x.is_active else 'Disabled' }}</td></tr>{% endfor %}</tbody></table></div><div class="section card"><h2>Invitations</h2><table class="table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>{% for i in invitations %}<tr><td>{{ i.name }}</td><td>{{ i.email }}</td><td>{{ i.role|title }}</td><td>{% if i.accepted_at %}Accepted{% elif i.revoked_at %}Revoked{% else %}Pending{% endif %}</td><td>{% if not i.accepted_at and not i.revoked_at %}<form method="post" action="/invitations/{{ i.id }}/revoke"><button class="mini danger" data-confirm="Revoke this invitation?">Revoke</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="5" class="empty">No invitations sent.</td></tr>{% endfor %}</tbody></table></div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Researchers{% endblock %}
+{% block page_description %}<p class="page-description">Invite colleagues and manage access for the people who administer your workspace.</p>{% endblock %}
+{% block contextual_help %}
+<p class="muted">Owners and administrators can invite team members and revoke invitations that are no longer needed.</p>
+{% endblock %}
+{% block content %}
+<section class="card card--action">
+	<h2>Invite a researcher</h2>
+	<form method="post" action="/researchers/invite" class="row">
+		<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+		<div class="field"><label>Name</label><input name="name" required></div>
+		<div class="field"><label>Email</label><input name="email" type="email" required></div>
+		<div class="field"><label>Role</label><select name="role">{% for r in roles %}<option>{{ r }}</option>{% endfor %}</select></div>
+		<button>Send invitation</button>
+	</form>
+</section>
+
+<section class="section card card--data">
+	<div class="section-head"><h2>Active users</h2><span class="muted">{{ users|length }} total</span></div>
+	<table class="table">
+		<thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead>
+		<tbody>
+			{% for x in users %}
+			<tr><td>{{ x.name }}</td><td>{{ x.email }}</td><td>{{ x.role|title }}</td><td>{{ 'Active' if x.is_active else 'Disabled' }}</td></tr>
+			{% else %}
+			<tr><td colspan="4" class="empty">No active users are available.</td></tr>
+			{% endfor %}
+		</tbody>
+	</table>
+</section>
+
+<section class="section card card--data">
+	<div class="section-head"><h2>Invitations</h2><span class="muted">{{ invitations|length }} total</span></div>
+	<table class="table">
+		<thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead>
+		<tbody>
+			{% for i in invitations %}
+			<tr>
+				<td>{{ i.name }}</td>
+				<td>{{ i.email }}</td>
+				<td>{{ i.role|title }}</td>
+				<td>{% if i.accepted_at %}Accepted{% elif i.revoked_at %}Revoked{% else %}Pending{% endif %}</td>
+				<td>{% if not i.accepted_at and not i.revoked_at %}<form method="post" action="/invitations/{{ i.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="mini danger" data-confirm="Revoke this invitation?">Revoke</button></form>{% endif %}</td>
+			</tr>
+			{% else %}
+			<tr><td colspan="5" class="empty">No invitations sent.</td></tr>
+			{% endfor %}
+		</tbody>
+	</table>
+</section>
+{% endblock %}

@@ -21,13 +21,15 @@ param entraTenantId string = ''
 param entraClientId string = ''
 param entraAllowedDomains string = ''
 param entraDefaultOrganisationSlug string = ''
-param defenderMonthlyScanCapGB int = 500
+param defenderMonthlyScanCapGB int = 10
+param runMigrations bool = false
 
 var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, prefix, environmentName)
 var compact = toLower(replace('${prefix}${environmentName}${take(suffix, 8)}', '-', ''))
 var storageName = take('${compact}st', 24)
 var registryName = take('${compact}acr', 50)
 var appName = '${prefix}-${environmentName}-${take(suffix, 6)}'
+var appHostName = '${appName}.azurewebsites.net'
 var planName = '${appName}-plan'
 var insightsName = '${appName}-appi'
 var logName = '${appName}-log'
@@ -192,18 +194,19 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
       linuxFxVersion: 'DOCKER|${imageName}'
       acrUseManagedIdentityCreds: true
       alwaysOn: true
-      healthCheckPath: '/health'
+      healthCheckPath: '/health/ready'
       minimumElasticInstanceCount: 1
       appSettings: [
-        { name: 'APP_NAME', value: 'Politis Civic Intelligence' }
+        { name: 'APP_NAME', value: 'Citizen Centric' }
         { name: 'ENVIRONMENT', value: environmentName }
         { name: 'SEED_DEMO_DATA', value: 'false' }
         { name: 'DATABASE_URL', value: '@Microsoft.KeyVault(SecretUri=${dbSecret.properties.secretUriWithVersion})' }
         { name: 'SECRET_KEY', value: '@Microsoft.KeyVault(SecretUri=${sessionSecret.properties.secretUriWithVersion})' }
-        { name: 'BASE_URL', value: 'https://${app.properties.defaultHostName}' }
+        { name: 'BASE_URL', value: 'https://${appHostName}' }
         { name: 'COOKIE_SECURE', value: 'true' }
-        { name: 'TRUSTED_HOSTS', value: app.properties.defaultHostName }
-        { name: 'ALLOWED_ORIGINS', value: 'https://${app.properties.defaultHostName}' }
+        { name: 'SESSION_COOKIE_SECURE', value: 'true' }
+        { name: 'TRUSTED_HOSTS', value: appHostName }
+        { name: 'ALLOWED_ORIGINS', value: 'https://${appHostName}' }
         { name: 'STORAGE_BACKEND', value: 'azure_blob' }
         { name: 'AZURE_STORAGE_ACCOUNT_URL', value: storage.properties.primaryEndpoints.blob }
         { name: 'AZURE_STORAGE_CONTAINER', value: evidenceContainer.name }
@@ -211,7 +214,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'DEFENDER_REQUIRE_CLEAN_DOWNLOAD', value: 'true' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
         { name: 'WEBSITES_PORT', value: '8000' }
-        { name: 'RUN_MIGRATIONS', value: 'true' }
+        { name: 'RUN_MIGRATIONS', value: string(runMigrations) }
         { name: 'ENTRA_ENABLED', value: string(!empty(entraClientId)) }
         { name: 'ENTRA_TENANT_ID', value: entraTenantId }
         { name: 'ENTRA_CLIENT_ID', value: entraClientId }
@@ -226,13 +229,23 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
   dependsOn: [postgresDatabase, azureServicesFirewall]
 }
 
-resource blobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, app.id, 'blob-contributor')
+resource blobOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(evidenceContainer.id, app.id, 'blob-owner')
+  scope: evidenceContainer
+  properties: {
+    principalId: app.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
+  }
+}
+
+resource blobDelegator 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, app.id, 'blob-delegator')
   scope: storage
   properties: {
     principalId: app.identity.principalId
     principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')
   }
 }
 
@@ -256,7 +269,7 @@ resource keyVaultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01
   }
 }
 
-output appUrl string = 'https://${app.properties.defaultHostName}'
+output appUrl string = 'https://${appHostName}'
 output appName string = app.name
 output storageAccountName string = storage.name
 output registryName string = registry.name
@@ -264,4 +277,4 @@ output registryLoginServer string = registry.properties.loginServer
 output postgresServerName string = postgres.name
 output keyVaultName string = vault.name
 output managedIdentityPrincipalId string = app.identity.principalId
-output entraRedirectUri string = 'https://${app.properties.defaultHostName}/auth/entra/callback'
+output entraRedirectUri string = 'https://${appHostName}/auth/entra/callback'

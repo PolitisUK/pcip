@@ -1,4 +1,72 @@
-{% extends "base.html" %}{% block title %}Participants{% endblock %}{% block content %}
-{% if can_edit %}<div class="two-col"><div class="card"><h2>Add participant</h2><form method="post" action="/participants" class="stack"><div class="row"><div class="field"><label>Reference</label><input name="reference" required></div><div class="field"><label>Name</label><input name="name" required></div></div><div class="row"><div class="field"><label>Email</label><input name="email" type="email"></div><div class="field"><label>Phone</label><input name="phone"></div></div><input type="hidden" name="status_value" value="prospective"><input type="hidden" name="consent_status" value="pending"><input type="hidden" name="communication_preference" value="email"><div class="field"><label>Tags</label><input name="tags"></div><div class="field"><label>Private notes</label><textarea name="notes"></textarea></div><button>Add participant</button></form></div><div class="card"><h2>Bulk CSV import</h2><p class="muted">Columns: reference, name, email, phone, tags.</p><form method="post" action="/participants/import" enctype="multipart/form-data" class="stack"><input type="file" name="file" accept=".csv,text/csv" required><button>Import participants</button></form></div></div>{% endif %}
-<div class="card section"><form method="get" class="row"><div class="field"><label>Search</label><input name="q" value="{{ q }}" placeholder="Name, reference, email or tag"></div><div class="field"><label>Status</label><select name="status_filter"><option value="">All statuses</option>{% for s in statuses %}<option value="{{ s }}" {% if s==status_filter %}selected{% endif %}>{{ s|title }}</option>{% endfor %}</select></div><button>Filter</button></form></div>
-<div class="card section"><div class="section-head"><h2>{{ total }} participants</h2><span class="muted">Page {{ page }} of {{ pages }}</span></div><table class="table"><thead><tr><th>Reference</th><th>Name</th><th>Email</th><th>Status</th><th>Consent</th></tr></thead><tbody>{% for p in participants %}<tr><td>{{ p.reference }}</td><td><a href="/participants/{{ p.id }}"><strong>{{ p.name }}</strong></a></td><td>{{ p.email or '—' }}</td><td><span class="badge {{ p.status }}">{{ p.status|title }}</span></td><td><span class="badge {{ p.consent_status }}">{{ p.consent_status|title }}</span></td></tr>{% else %}<tr><td colspan="5" class="empty">No participants match this search.</td></tr>{% endfor %}</tbody></table>{% if pages>1 %}<div class="pagination">{% if page>1 %}<a class="btn secondary" href="?q={{ q }}&status_filter={{ status_filter }}&page={{ page-1 }}">Previous</a>{% endif %}{% if page<pages %}<a class="btn secondary" href="?q={{ q }}&status_filter={{ status_filter }}&page={{ page+1 }}">Next</a>{% endif %}</div>{% endif %}</div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Participants{% endblock %}
+{% block page_description %}<p class="page-description">Manage participant records, invitations and privacy actions from one place.</p>{% endblock %}
+{% block contextual_help %}
+<p class="muted">Use references that map to your authority case-management IDs. You can start with sample data from Dashboard if you need a training walkthrough.</p>
+{% endblock %}
+{% block content %}
+{% if can_edit %}
+<section class="two-col">
+	<div class="card card--action">
+		<h2>Add participant</h2>
+		<form method="post" action="/participants" class="stack">
+			<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+			<div class="row">
+				<div class="field"><label>Reference</label><input name="reference" required placeholder="P-001"></div>
+				<div class="field"><label>Name</label><input name="name" minlength="2" required></div>
+			</div>
+			<div class="row">
+				<div class="field"><label>Email</label><input name="email" type="email"></div>
+				<div class="field"><label>Phone</label><input name="phone"></div>
+			</div>
+			<input type="hidden" name="status_value" value="prospective">
+			<input type="hidden" name="consent_status" value="pending">
+			<input type="hidden" name="communication_preference" value="email">
+			<div class="field"><label>Tags</label><input name="tags" placeholder="ward-2,tenant"></div>
+			<div class="field"><label>Private notes</label><textarea name="notes" placeholder="Optional internal notes"></textarea></div>
+			<button>Add participant</button>
+		</form>
+	</div>
+	<div class="card">
+		<h2>Bulk CSV import</h2>
+		<p class="muted">Columns: reference, name, email, phone, tags.</p>
+		<form method="post" action="/participants/import" enctype="multipart/form-data" class="stack">
+			<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+			<input type="file" name="file" accept=".csv,text/csv" required>
+			<button>Import participants</button>
+		</form>
+	</div>
+</section>
+{% endif %}
+
+<section class="card section">
+	<form method="get" class="row">
+		<div class="field"><label>Search</label><input name="q" value="{{ q }}" placeholder="Name, reference, email or tag"></div>
+		<div class="field"><label>Status</label><select name="status_filter"><option value="">All statuses</option>{% for s in statuses %}<option value="{{ s }}" {% if s==status_filter %}selected{% endif %}>{{ s|title }}</option>{% endfor %}</select></div>
+		<button>Filter</button>
+	</form>
+</section>
+
+<section class="card card--data section">
+	<div class="section-head"><h2>{{ total }} participants</h2><span class="muted">Page {{ page }} of {{ pages }}</span></div>
+	<table class="table">
+		<thead><tr><th>Reference</th><th>Name</th><th>Email</th><th>Status</th><th>Consent</th></tr></thead>
+		<tbody>
+			{% for p in participants %}
+			<tr>
+				<td>{{ p.reference }}</td>
+				<td><a href="/participants/{{ p.id }}"><strong>{{ p.name }}</strong></a></td>
+				<td>{{ p.email or '—' }}</td>
+				<td><span class="badge {{ p.status }}">{{ p.status|title }}</span></td>
+				<td><span class="badge {{ p.consent_status }}">{{ p.consent_status|title }}</span></td>
+			</tr>
+			{% else %}
+			<tr><td colspan="5"><div class="empty">No participants match this search.<div class="empty-actions"><a class="btn secondary" href="/participants">Clear filters</a>{% if can_edit %}<a class="btn secondary" href="/">Open dashboard</a>{% endif %}</div></div></td></tr>
+			{% endfor %}
+		</tbody>
+	</table>
+	{% if pages>1 %}
+	<div class="pagination">{% if page>1 %}<a class="btn secondary" href="?q={{ q }}&status_filter={{ status_filter }}&page={{ page-1 }}">Previous</a>{% endif %}{% if page<pages %}<a class="btn secondary" href="?q={{ q }}&status_filter={{ status_filter }}&page={{ page+1 }}">Next</a>{% endif %}</div>
+	{% endif %}
+</section>
+{% endblock %}

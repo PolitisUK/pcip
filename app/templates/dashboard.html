@@ -1,4 +1,142 @@
-{% extends "base.html" %}{% block title %}Research overview{% endblock %}{% block content %}
-<div class="grid metrics"><div class="card"><div class="eyebrow">Projects</div><div class="metric">{{ metrics.projects }}</div></div><div class="card"><div class="eyebrow">Studies</div><div class="metric">{{ metrics.studies }}</div></div><div class="card"><div class="eyebrow">Participants</div><div class="metric">{{ metrics.participants }}</div></div><div class="card"><div class="eyebrow">Active participants</div><div class="metric">{{ metrics.active }}</div></div><div class="card"><div class="eyebrow">Pending invitations</div><div class="metric">{{ metrics.invitations }}</div></div><div class="card"><div class="eyebrow">Submitted activities</div><div class="metric">{{ metrics.submissions }}</div></div></div>
-<div class="card section"><div class="section-head"><div><h2>Recent studies</h2><p class="muted">Current research programmes across your organisation.</p></div><a class="btn secondary" href="/studies">View all studies</a></div>{% if studies %}<table class="table"><thead><tr><th>Study</th><th>Project</th><th>Method</th><th>Status</th></tr></thead><tbody>{% for s in studies %}<tr><td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td><td>{{ project_map[s.project_id].title }}</td><td>{{ s.methodology|replace('_',' ')|title }}</td><td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td></tr>{% endfor %}</tbody></table>{% else %}<p class="muted">No studies yet. Create a project and add your first study.</p>{% endif %}</div>
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_description %}<p class="page-description">Monitor your current engagement work, see what needs attention next, and move straight into the most common actions.</p>{% endblock %}
+{% block contextual_help %}
+<p class="muted">Start with the continue-work cards if you are setting up your first project. If you already have live activity, use the summary cards and recent activity to jump back in.</p>
+{% endblock %}
+{% block content %}
+<section class="hero card card--hero">
+	<div class="hero-copy">
+		<div class="eyebrow">Welcome back, {{ user.name }}.</div>
+		<h2>Here is the current state of your workspace.</h2>
+		<p class="muted">Track live studies, participants and invitations without losing sight of the next setup step.</p>
+	</div>
+	<div class="hero-actions">
+		<a class="btn" href="/onboarding/first-project">Create first project</a>
+		<a class="btn secondary" href="/projects">Open projects</a>
+	</div>
+</section>
+
+<section class="summary-grid section">
+	<div class="card summary-card summary-card--primary">
+		<div class="summary-label">Active projects</div>
+		<div class="summary-value">{{ metrics.projects }}</div>
+		<div class="summary-note">Projects currently available in your workspace</div>
+	</div>
+	<div class="card summary-card">
+		<div class="summary-label">Live studies</div>
+		<div class="summary-value">{{ metrics.studies }}</div>
+		<div class="summary-note">Studies ready for recruitment or fieldwork</div>
+	</div>
+	<div class="card summary-card">
+		<div class="summary-label">Registered participants</div>
+		<div class="summary-value">{{ metrics.participants }}</div>
+		<div class="summary-note">People already in your research workspace</div>
+	</div>
+	<div class="card summary-card">
+		<div class="summary-label">Pending invitations</div>
+		<div class="summary-value">{{ metrics.invitations }}</div>
+		<div class="summary-note">Invitations awaiting participant action</div>
+	</div>
+	<div class="card summary-card summary-card--accent">
+		<div class="summary-label">Recent responses</div>
+		<div class="summary-value">{{ metrics.submissions }}</div>
+		<div class="summary-note">Submitted activities received so far</div>
+	</div>
+	<div class="card summary-card">
+		<div class="summary-label">Open privacy actions</div>
+		<div class="summary-value">{{ metrics.active }}</div>
+		<div class="summary-note">Active participants in the current workspace</div>
+	</div>
+</section>
+
+<section class="section two-col dashboard-follow-up">
+	<div class="card action-card">
+		<div class="section-head">
+			<div>
+				<h2>Continue work</h2>
+				<p class="muted">Pick up the most common next step.</p>
+			</div>
+		</div>
+		<div class="action-list">
+			<a class="action-item" href="/onboarding/first-project">
+				<strong>Start your first project</strong>
+				<span>Set up a project and its first study in one guided flow.</span>
+			</a>
+			<a class="action-item" href="/studies">
+				<strong>Review live studies</strong>
+				<span>Open current studies and check activity, access and invitations.</span>
+			</a>
+			<a class="action-item" href="/participants">
+				<strong>Manage participant records</strong>
+				<span>Import, update or review participants and privacy actions.</span>
+			</a>
+		</div>
+		{% if onboarding.can_seed %}
+		<form method="post" action="/pilot/sample-data" class="inline section dashboard-seed">
+			<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+			<button class="secondary" data-confirm="Generate pilot sample data for this organisation?">Add sample pilot data</button>
+			<span class="muted">Safe to run multiple times.</span>
+		</form>
+		{% endif %}
+	</div>
+
+	<div class="card action-card">
+		<div class="section-head">
+			<div>
+				<h2>Recent activity</h2>
+				<p class="muted">Useful recent actions if your workspace has activity.</p>
+			</div>
+			<a class="btn secondary" href="/audit">Open audit log</a>
+		</div>
+		{% if recent_events %}
+		<ul class="activity-feed">
+			{% for event in recent_events %}
+			<li class="activity-feed__item">
+				<div class="activity-feed__meta">
+					<span class="badge">{{ event.action|replace('_', ' ')|title }}</span>
+					<span class="muted">{{ event.created_at.strftime('%d %b %Y %H:%M') }}</span>
+				</div>
+				<strong>{{ event.entity_type|replace('_', ' ')|title }} #{{ event.entity_id }}</strong>
+				<p class="muted">{{ event.detail or 'No additional detail supplied.' }}</p>
+			</li>
+			{% endfor %}
+		</ul>
+		{% else %}
+		<div class="empty empty--compact">
+			<p>No recent activity yet. As people begin using the workspace, the latest actions will appear here.</p>
+		</div>
+		{% endif %}
+	</div>
+</section>
+
+<section class="card section card--data">
+	<div class="section-head">
+		<div>
+			<h2>Recent studies</h2>
+			<p class="muted">Current research programmes across your organisation.</p>
+		</div>
+		<a class="btn secondary" href="/studies">View all studies</a>
+	</div>
+	{% if studies %}
+	<table class="table">
+		<thead><tr><th>Study</th><th>Project</th><th>Method</th><th>Status</th></tr></thead>
+		<tbody>
+			{% for s in studies %}
+			<tr>
+				<td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td>
+				<td>{{ project_map[s.project_id].title }}</td>
+				<td>{{ s.methodology|replace('_',' ')|title }}</td>
+				<td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td>
+			</tr>
+			{% endfor %}
+		</tbody>
+	</table>
+	{% else %}
+	<div class="empty empty--compact">
+		<p>No studies yet. Start your setup with the first project wizard.</p>
+		<div class="empty-actions"><a class="btn secondary" href="/onboarding/first-project">Open wizard</a></div>
+	</div>
+	{% endif %}
+</section>
 {% endblock %}

@@ -1,1 +1,31 @@
-{% extends "base.html" %}{% block title %}Email outbox{% endblock %}{% block content %}{% if not smtp_enabled %}<div class="notice">SMTP is not configured. Emails are captured here for testing.</div>{% endif %}<div class="card"><div class="section-head"><h2>{{ total }} emails</h2><span>Page {{ page }} of {{ pages }}</span></div><table class="table"><thead><tr><th>Created</th><th>Recipient</th><th>Subject</th><th>Delivery</th><th>Message</th></tr></thead><tbody>{% for r in rows %}<tr><td>{{ r.created_at.strftime('%d %b %H:%M') }}</td><td>{{ r.recipient }}</td><td>{{ r.subject }}</td><td>{% if r.sent_at %}Sent{% elif r.error %}Failed{% else %}Queued locally{% endif %}</td><td><details><summary>View</summary><pre>{{ r.body }}</pre></details></td></tr>{% else %}<tr><td colspan="5" class="empty">No emails queued.</td></tr>{% endfor %}</tbody></table><div class="pagination">{% if page>1 %}<a class="btn secondary" href="?page={{ page-1 }}">Previous</a>{% endif %}{% if page<pages %}<a class="btn secondary" href="?page={{ page+1 }}">Next</a>{% endif %}</div></div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Email{% endblock %}
+{% block page_description %}<p class="page-description">Review captured messages and sent mail for this organisation.</p>{% endblock %}
+{% block contextual_help %}
+<p class="muted">When SMTP is disabled, emails are captured here for local testing and quality checks.</p>
+{% endblock %}
+{% block content %}
+{% if not smtp_enabled %}
+<div class="notice info">SMTP is not configured. Emails are captured here for testing.</div>
+{% endif %}
+<section class="card card--data">
+	<div class="section-head"><h2>{{ total }} emails</h2><span class="muted">Page {{ page }} of {{ pages }}</span></div>
+	<table class="table">
+		<thead><tr><th>Created</th><th>Recipient</th><th>Subject</th><th>Delivery</th><th>Message</th></tr></thead>
+		<tbody>
+			{% for r in rows %}
+			<tr>
+				<td>{{ r.created_at.strftime('%d %b %H:%M') }}</td>
+				<td>{{ r.recipient }}</td>
+				<td>{{ r.subject }}</td>
+				<td>{% if r.sent_at %}Sent{% elif r.error %}Failed{% else %}Queued locally{% endif %}</td>
+				<td><details><summary>View</summary><pre>{{ r.body }}</pre></details></td>
+			</tr>
+			{% else %}
+			<tr><td colspan="5" class="empty">No emails queued.</td></tr>
+			{% endfor %}
+		</tbody>
+	</table>
+	<div class="pagination">{% if page>1 %}<a class="btn secondary" href="?page={{ page-1 }}">Previous</a>{% endif %}{% if page<pages %}<a class="btn secondary" href="?page={{ page+1 }}">Next</a>{% endif %}</div>
+</section>
+{% endblock %}

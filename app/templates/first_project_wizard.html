@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Create your first engagement project{% endblock %}
+{% block page_description %}<p class="page-description">Set up a project and first study together in one guided setup flow.</p>{% endblock %}
+{% block contextual_help %}
+<p class="muted">This guided setup creates the project and first study together. You can edit every field later from the project and study pages.</p>
+{% endblock %}
+{% block content %}
+<div class="card wizard-card wizard-hero">
+  <div class="wizard-progress" aria-hidden="true">
+    <span class="wizard-step is-complete">1</span>
+    <span class="wizard-step is-active">2</span>
+    <span class="wizard-step is-optional">3</span>
+  </div>
+  <h2>Launch your first pilot project</h2>
+  <ol class="wizard-steps">
+    <li><strong>Project:</strong> create the engagement project and describe the service challenge.</li>
+    <li><strong>Study:</strong> add the first study for participant evidence collection.</li>
+    <li><strong>Optional:</strong> create a starter activity so the team can test the workflow immediately.</li>
+  </ol>
+</div>
+
+<form method="post" action="/onboarding/first-project" class="stack section wizard-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <div class="card">
+    <h2>Project details</h2>
+    <div class="row">
+      <div class="field">
+        <label>Project title</label>
+        <input name="project_title" minlength="3" placeholder="Neighbourhood accessibility pilot" required>
+      </div>
+      <div class="field small">
+        <label>Project code</label>
+        <input name="project_code" placeholder="ACC-001" pattern="[A-Za-z0-9-]{3,20}" title="Use 3 to 20 letters, numbers or hyphens." required>
+      </div>
+      <div class="field small">
+        <label>Project status</label>
+        <select name="project_status">
+          {% for value in project_statuses %}
+          <option value="{{ value }}" {% if value == 'live' %}selected{% endif %}>{{ value|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Project description</label>
+      <textarea name="project_description" rows="3" placeholder="What problem is this project exploring?"></textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>First study details</h2>
+    <div class="row">
+      <div class="field">
+        <label>Study title</label>
+        <input name="study_title" minlength="3" placeholder="Town centre walkability" required>
+      </div>
+      <div class="field small">
+        <label>Study code</label>
+        <input name="study_code" placeholder="ACC-ST01" pattern="[A-Za-z0-9-]{3,20}" title="Use 3 to 20 letters, numbers or hyphens." required>
+      </div>
+      <div class="field small">
+        <label>Study status</label>
+        <select name="study_status">
+          {% for value in study_statuses %}
+          <option value="{{ value }}" {% if value == 'recruiting' %}selected{% endif %}>{{ value|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Methodology</label>
+        <select name="study_methodology">
+          <option value="diary">Diary</option>
+          <option value="walk_along">Walk-along</option>
+          <option value="interview">Interview</option>
+          <option value="focus_group">Focus group</option>
+          <option value="co_design">Co-design</option>
+          <option value="mixed_method" selected>Mixed method</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+        <label>Study description</label>
+      <textarea name="study_description" rows="3" placeholder="What participant insight is needed for this pilot?"></textarea>
+    </div>
+    <label class="check"><input type="checkbox" name="add_starter_activity" value="true" checked> Add a starter activity so the team can test participant workflows immediately.</label>
+  </div>
+
+  <div class="inline">
+    <button>Create engagement project</button>
+    <a class="btn secondary" href="/projects">Cancel</a>
+  </div>
+</form>
+{% endblock %}

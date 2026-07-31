@@ -1,4 +1,34 @@
-{% extends "base.html" %}{% block title %}Studies{% endblock %}{% block content %}
-<div class="card"><p>Studies organise diary research, interviews, walk-alongs and other evidence-collection programmes within a project.</p></div>
-<div class="card section"><table class="table"><thead><tr><th>Study</th><th>Project</th><th>Method</th><th>Participants</th><th>Status</th></tr></thead><tbody>{% for s in studies %}<tr><td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td><td><a href="/projects/{{ s.project_id }}">{{ projects[s.project_id].title }}</a></td><td>{{ s.methodology|replace('_',' ')|title }}</td><td>{{ enrolment_counts.get(s.id,0) }}</td><td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td></tr>{% else %}<tr><td colspan="5" class="muted">No studies yet. Open a project to create one.</td></tr>{% endfor %}</tbody></table></div>
+{% extends "base.html" %}
+{% block title %}Studies{% endblock %}
+{% block page_description %}<p class="page-description">Studies organise evidence collection within a project and hold the activities participants complete.</p>{% endblock %}
+{% block contextual_help %}
+<p class="muted">Each study should include clear participant prompts and realistic timelines. Start with one short activity to test your pilot journey end-to-end.</p>
+{% endblock %}
+{% block content %}
+<section class="card card--hero section-compact">
+	<p>Studies organise diary research, interviews, walk-alongs and other evidence-collection programmes within a project.</p>
+</section>
+
+<section class="card card--data section">
+	<div class="section-head">
+		<h2>All studies</h2>
+		<span class="muted">{{ studies|length }} total</span>
+	</div>
+	<table class="table">
+		<thead><tr><th>Study</th><th>Project</th><th>Method</th><th>Participants</th><th>Status</th></tr></thead>
+		<tbody>
+			{% for s in studies %}
+			<tr>
+				<td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td>
+				<td><a href="/projects/{{ s.project_id }}">{{ projects[s.project_id].title }}</a></td>
+				<td>{{ s.methodology|replace('_',' ')|title }}</td>
+				<td>{{ enrolment_counts.get(s.id,0) }}</td>
+				<td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td>
+			</tr>
+			{% else %}
+			<tr><td colspan="5"><div class="empty">No studies yet. Open a project to create one.<div class="empty-actions"><a class="btn secondary" href="/onboarding/first-project">Open first project wizard</a></div></div></td></tr>
+			{% endfor %}
+		</tbody>
+	</table>
+</section>
 {% endblock %}

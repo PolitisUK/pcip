@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block page_title %}{{ status_code }} · {{ app_name }}{% endblock %}
+{% block public %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="brand public-brand">
+      <img class="brand-logo" src="/static/politis_symbol_colour.png" alt="Politis logo">
+      <span class="brand-copy"><strong>Citizen Centric</strong><small>by Politis</small></span>
+    </div>
+    <p class="eyebrow">Error {{ status_code }}</p>
+    <h1>{{ error_title }}</h1>
+    <p role="alert">{{ error_detail }}</p>
+    <a class="btn secondary" href="/">Return to dashboard</a>
+  </div>
+</div>
+{% endblock %}

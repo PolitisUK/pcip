@@ -1,8 +1,10 @@
-# Politis Civic Intelligence Platform
+# Citizen Centric
 
-Current version: **0.3.0**
+by Politis
 
-PCIP is a multi-tenant civic research platform for councils and public-sector research teams. This cumulative release includes researcher authentication, organisations, projects, studies, participants, recruitment, consent, activity design, a participant portal, evidence uploads, messaging, audit logging and administration.
+Current version: **0.6.0**
+
+Citizen Centric is a multi-tenant civic research platform for councils and public-sector research teams. The internal engineering codename `PCIP` remains in repository and infrastructure identifiers.
 
 ## Local installation on macOS
 
@@ -10,7 +12,7 @@ PCIP is a multi-tenant civic research platform for councils and public-sector re
 cp .env.example .env
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install -r requirements.txt
+python3 -m pip install -r requirements-dev.txt
 python3 -m uvicorn app.main:app --reload
 ```
 
@@ -36,7 +38,9 @@ Without SMTP configuration, outgoing emails are captured in the local Email outb
 
 ## Storage
 
-Local evidence files are placed in `data/uploads`. Production deployment should replace this with encrypted cloud object storage, malware scanning and lifecycle policies.
+Local evidence files are placed in `data/uploads`. The Azure template configures
+private Blob storage, managed-identity access, soft delete, and Defender for
+Storage malware scanning for hosted deployments.
 
 ## Tests
 
@@ -44,9 +48,22 @@ Local evidence files are placed in `data/uploads`. Production deployment should 
 PYTHONPATH=. python -m pytest -q
 ```
 
-Expected result for this release: `11 passed`.
+Current verified result: `77 passed` with 81% aggregate application coverage.
 
-See `RELEASE_NOTES_0.3.0.md` and `INCREMENT_3_REPORT.md` for scope and known production gaps.
+The maintained engineering documents are:
+
+- `ARCHITECTURE.md`
+- `DEPLOYMENT.md`
+- `TECHNICAL_DEBT.md`
+- `OPERATIONS.md`
+
+Historical release and increment documents remain as context but are not the
+authoritative description of current production readiness.
+
+## Dependency security
+
+CI includes dependency vulnerability scanning, security linting, and release smoke verification.
+For technical dependency-update workflow guidance, see `DEPENDENCY_SECURITY_GUIDE.md`.
 
 ## Enterprise foundation in v0.5.0
 
@@ -86,6 +103,22 @@ Key files:
 - `scripts/configure_github_oidc.sh`
 - `RELEASE_NOTES_0.6.0.md`
 
-The container runs `alembic upgrade head` before starting the web application. Set `RUN_MIGRATIONS=false` only when migrations are managed separately.
+The release container does not run migrations implicitly. Local Compose sets
+`RUN_MIGRATIONS=true`; hosted releases must run a reviewed migration once per
+release before starting the new application version.
 
 Microsoft Entra account creation is deliberately controlled. Existing invited users are linked by email. Automatic provisioning requires all of `ENTRA_AUTO_PROVISION=true`, a valid `ENTRA_DEFAULT_ORGANISATION_SLUG`, and any desired domain allow-list.
+
+## Production deployment documentation
+
+- `DEPLOYMENT.md`
+- `OPERATIONS.md`
+- `TECHNICAL_DEBT.md`
+- `AZURE_CONFIGURATION_GUIDE.md`
+- `ENVIRONMENT_VARIABLES.md`
+
+## Pilot readiness guides
+
+- `PILOT_ADMINISTRATOR_GUIDE.md`
+- `PILOT_RESEARCHER_GUIDE.md`
+- `PILOT_PARTICIPANT_GUIDE.md`
