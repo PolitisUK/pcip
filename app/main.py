@@ -55,10 +55,13 @@ from .observability import configure_observability
 from .participant_services import (
     activity_window,
     apply_response_action,
+    build_evidence_file,
     create_participant_invitation,
     find_live_unaccepted_invitation,
     grant_participant_consent,
+    is_evidence_downloadable,
     mark_invitation_revoked,
+    resolve_org_scoped_evidence,
     resolve_invitation_by_token,
     resolve_or_create_activity_response,
     resolve_org_scoped_invitation,
@@ -276,7 +279,7 @@ def allow_unscanned_downloads() -> bool:
 
 
 def ensure_clean_scan_for_download(scan_status: str | None):
-    if normalise_scan_status(scan_status) == "clean":
+    if is_evidence_downloadable(scan_status):
         return
     if allow_unscanned_downloads():
         return
@@ -2072,7 +2075,22 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
                     raise HTTPException(400,"The uploaded file failed malware screening.")
             else:
                 scan_status,scan_detail="pending","Awaiting Microsoft Defender for Storage on-upload scan."
-            ev=EvidenceFile(organisation_id=inv.organisation_id,study_id=inv.study_id,activity_id=a.id,participant_id=inv.participant_id,response_id=r.id,original_name=original,stored_name=stored.key,content_type=upload.content_type or "application/octet-stream",size_bytes=stored.size,sha256_hex=stored.sha256_hex,scan_status=scan_status,scan_detail=scan_detail,storage_provider=stored.provider,blob_uri=stored.uri); db.add(ev); db.flush(); value["evidence_id"]=ev.id
+            ev = build_evidence_file(
+                organisation_id=inv.organisation_id,
+                study_id=inv.study_id,
+                activity_id=a.id,
+                participant_id=inv.participant_id,
+                response_id=r.id,
+                original_name=original,
+                stored_name=stored.key,
+                content_type=upload.content_type or "application/octet-stream",
+                size_bytes=stored.size,
+                sha256_hex=stored.sha256_hex,
+                scan_status=scan_status,
+                scan_detail=scan_detail,
+                storage_provider=stored.provider,
+                blob_uri=stored.uri,
+            ); db.add(ev); db.flush(); value["evidence_id"]=ev.id
         except Exception:
             if stored_key:
                 delete_stored_object_safely(stored_key, "upload_processing_failed")
@@ -2115,7 +2133,7 @@ def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(.
     db.add(ParticipantMessage(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id,sender_type="researcher",sender_user_id=u.id,body=body.strip(),internal_note=internal_note)); audit(db,u.organisation_id,u.id,"message.created","participant",p.id,"internal" if internal_note else s.title); db.commit(); return RedirectResponse(f"/participants/{p.id}#messages",303)
 @app.get("/evidence/{evidence_id}")
 def evidence(evidence_id:int,u=Depends(current_user),db:Session=Depends(get_db)):
-    e=db.scalar(select(EvidenceFile).where(EvidenceFile.id==evidence_id,EvidenceFile.organisation_id==u.organisation_id));
+    e = resolve_org_scoped_evidence(db, u.organisation_id, evidence_id)
     if not e: raise HTTPException(404)
     require_study_permission(db,u,study(db,e.study_id,u.organisation_id))
     if e.storage_provider == "azure_blob":

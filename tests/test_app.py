@@ -3198,3 +3198,318 @@ def test_participant_portal_route_preserves_evidence_upload_response_association
             assert evidence.response_id == response.id
             payload = json.loads(response.value_json)
             assert payload.get('evidence_id') == evidence.id
+
+
+def test_evidence_service_build_record_preserves_all_fields():
+    from app.participant_services import build_evidence_file
+
+    evidence = build_evidence_file(
+        organisation_id=10,
+        study_id=20,
+        activity_id=30,
+        participant_id=40,
+        response_id=50,
+        original_name='proof.txt',
+        stored_name='abc123.txt',
+        content_type='text/plain',
+        size_bytes=123,
+        sha256_hex='f' * 64,
+        scan_status='pending',
+        scan_detail='Awaiting Microsoft Defender for Storage on-upload scan.',
+        storage_provider='local',
+        blob_uri='https://example.invalid/blob',
+    )
+
+    assert evidence.organisation_id == 10
+    assert evidence.study_id == 20
+    assert evidence.activity_id == 30
+    assert evidence.participant_id == 40
+    assert evidence.response_id == 50
+    assert evidence.original_name == 'proof.txt'
+    assert evidence.stored_name == 'abc123.txt'
+    assert evidence.content_type == 'text/plain'
+    assert evidence.size_bytes == 123
+    assert evidence.sha256_hex == 'f' * 64
+    assert evidence.scan_status == 'pending'
+    assert evidence.scan_detail == 'Awaiting Microsoft Defender for Storage on-upload scan.'
+    assert evidence.storage_provider == 'local'
+    assert evidence.blob_uri == 'https://example.invalid/blob'
+
+
+def test_evidence_service_org_scoped_lookup_returns_none_for_other_org():
+    from app.models import Activity, EvidenceFile, Organisation, Participant, Study
+    from app.participant_services import resolve_org_scoped_evidence
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id.asc())
+        )
+        activity_row = db.scalar(
+            select(Activity)
+            .where(Activity.study_id == study_row.id)
+            .order_by(Activity.id.asc())
+        )
+        participant_row = Participant(
+            organisation_id=owner.organisation_id,
+            reference=unique_value('EVID-SCOPE').upper(),
+            name='Evidence Scope Participant',
+            email=None,
+            phone=None,
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            tags='',
+            demographics_json='{}',
+            notes='',
+            created_by_id=owner.id,
+        )
+        db.add(participant_row)
+        db.flush()
+        evidence = EvidenceFile(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+            response_id=None,
+            original_name='scope.txt',
+            stored_name=f"{unique_value('scope-file')}.txt",
+            content_type='text/plain',
+            size_bytes=1,
+            sha256_hex='0' * 64,
+            scan_status='pending',
+            scan_detail='',
+            storage_provider='local',
+            blob_uri='',
+        )
+        db.add(evidence)
+        db.flush()
+        other_org = Organisation(
+            name=unique_value('Evidence Org'),
+            slug=unique_value('evidence-org').lower(),
+        )
+        db.add(other_org)
+        db.flush()
+
+        assert resolve_org_scoped_evidence(db, owner.organisation_id, evidence.id) is not None
+        assert resolve_org_scoped_evidence(db, other_org.id, evidence.id) is None
+
+
+@pytest.mark.parametrize('scan_status', ['pending', 'infected', 'failed', 'unknown', 'not_scanned', 'scan_failed'])
+def test_evidence_service_downloadable_only_for_clean(scan_status):
+    from app.participant_services import is_evidence_downloadable
+
+    assert is_evidence_downloadable(scan_status) is False
+    assert is_evidence_downloadable('clean') is True
+
+
+def test_evidence_service_helpers_perform_no_commit_and_no_storage_access(monkeypatch):
+    from app.models import Activity, EvidenceFile, Participant, Study
+    from app.participant_services import build_evidence_file
+
+    def fail_storage_access(*_args, **_kwargs):
+        raise AssertionError('storage access should not occur')
+
+    monkeypatch.setattr('app.storage.storage.path', fail_storage_access)
+    monkeypatch.setattr('app.storage.storage.save_stream', fail_storage_access)
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id.asc())
+        )
+        activity_row = db.scalar(
+            select(Activity)
+            .where(Activity.study_id == study_row.id)
+            .order_by(Activity.id.asc())
+        )
+        participant_row = Participant(
+            organisation_id=owner.organisation_id,
+            reference=unique_value('EVID-NOCOMMIT').upper(),
+            name='Evidence No Commit',
+            email=None,
+            phone=None,
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            tags='',
+            demographics_json='{}',
+            notes='',
+            created_by_id=owner.id,
+        )
+        db.add(participant_row)
+        db.commit()
+        organisation_id = owner.organisation_id
+        participant_id = participant_row.id
+        activity_id = activity_row.id
+        study_id = study_row.id
+
+    with SessionLocal() as db:
+        evidence = build_evidence_file(
+            organisation_id=organisation_id,
+            study_id=study_id,
+            activity_id=activity_id,
+            participant_id=participant_id,
+            response_id=None,
+            original_name='no-commit.txt',
+            stored_name='no-commit-key.txt',
+            content_type='text/plain',
+            size_bytes=10,
+            sha256_hex='1' * 64,
+            scan_status='pending',
+            scan_detail='',
+            storage_provider='local',
+            blob_uri='',
+        )
+        db.add(evidence)
+        db.rollback()
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(EvidenceFile).where(EvidenceFile.stored_name == 'no-commit-key.txt')
+        )
+        assert row is None
+
+
+def test_participant_upload_route_still_creates_identical_evidence_metadata():
+    from io import BytesIO
+    from app.models import Activity, ActivityResponse, EvidenceFile, OutboxEmail
+
+    with client:
+        auth()
+        created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('EVID-UPLOAD').upper(),
+                'name': 'Evidence Upload Participant',
+                'email': f"{unique_value('evidence-upload')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
+
+        with SessionLocal() as db:
+            first_activity = db.scalar(select(Activity).order_by(Activity.id.asc()))
+            assert first_activity is not None
+            study_id = first_activity.study_id
+            activity_id = first_activity.id
+
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id})
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}')
+
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient.like('%evidence-upload%@example.org'))
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        client.get(f'/join-study?token={token}')
+        post_with_csrf('/join-study', data={'consent': 'true'})
+
+        uploaded = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action': 'submit', 'answer': ''},
+            files={'upload': ('metadata.txt', BytesIO(b'ordinary evidence'), 'text/plain')},
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+
+        with SessionLocal() as db:
+            response = db.scalar(
+                select(ActivityResponse).where(
+                    ActivityResponse.activity_id == activity_id,
+                    ActivityResponse.participant_id == participant_id,
+                )
+            )
+            evidence = db.scalar(
+                select(EvidenceFile).where(
+                    EvidenceFile.activity_id == activity_id,
+                    EvidenceFile.participant_id == participant_id,
+                )
+            )
+            assert response is not None
+            assert evidence is not None
+            assert evidence.organisation_id == response.organisation_id
+            assert evidence.study_id == response.study_id
+            assert evidence.activity_id == response.activity_id
+            assert evidence.participant_id == response.participant_id
+            assert evidence.response_id == response.id
+            assert evidence.original_name == 'metadata.txt'
+            assert evidence.content_type == 'text/plain'
+            assert evidence.size_bytes == len(b'ordinary evidence')
+            assert evidence.scan_status == 'not_configured'
+
+
+def test_clean_evidence_download_remains_authorised_and_downloadable(tmp_path):
+    import io
+    from app.models import Activity, EvidenceFile, Participant, Study, User
+    from app.storage import storage
+
+    original_storage_path = settings.local_storage_path
+    try:
+        settings.local_storage_path = str(tmp_path)
+        with client:
+            client.cookies.clear()
+            auth()
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+                study = db.scalar(select(Study).where(Study.organisation_id == owner.organisation_id).order_by(Study.id.asc()))
+                activity = db.scalar(select(Activity).where(Activity.study_id == study.id).order_by(Activity.id.asc()))
+                participant = Participant(
+                    organisation_id=owner.organisation_id,
+                    reference=unique_value('EVID-CLEAN').upper(),
+                    name='Evidence Clean Participant',
+                    email=None,
+                    phone=None,
+                    status='prospective',
+                    consent_status='pending',
+                    communication_preference='email',
+                    tags='',
+                    demographics_json='{}',
+                    notes='',
+                    created_by_id=owner.id,
+                )
+                db.add(participant)
+                db.flush()
+                stored = storage.save_stream(io.BytesIO(b'clean evidence'), 'clean.txt', 1024)
+                evidence = EvidenceFile(
+                    organisation_id=owner.organisation_id,
+                    study_id=study.id,
+                    activity_id=activity.id,
+                    participant_id=participant.id,
+                    response_id=None,
+                    original_name='clean.txt',
+                    stored_name=stored.key,
+                    content_type='text/plain',
+                    size_bytes=stored.size,
+                    sha256_hex=stored.sha256_hex,
+                    scan_status='clean',
+                    scan_detail='',
+                    storage_provider=stored.provider,
+                    blob_uri=stored.uri,
+                )
+                db.add(evidence)
+                db.commit()
+                evidence_id = evidence.id
+
+            response = client.get(f'/evidence/{evidence_id}')
+            assert response.status_code == 200
+            assert response.content == b'clean evidence'
+            assert response.headers['content-type'].startswith('text/plain')
+    finally:
+        settings.local_storage_path = original_storage_path
