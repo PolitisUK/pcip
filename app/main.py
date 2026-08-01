@@ -52,6 +52,7 @@ from .storage import storage
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
 from .observability import configure_observability
+from .participant_services import activity_window
 
 VERSION = "0.6.0"
 BASE = Path(__file__).resolve().parent
@@ -134,45 +135,6 @@ def now(): return datetime.now(timezone.utc)
 def naive_now(): return now().replace(tzinfo=None)
 def unexpired(v): return bool(v and v.replace(tzinfo=None) > naive_now())
 
-
-def activity_window(
-    study_row: Study,
-    activity_row: Activity,
-    current_time: datetime | None = None,
-) -> dict[str, datetime | str | None]:
-    if not study_row.start_at:
-        return {
-            "status": "open",
-            "release_at": None,
-            "due_at": None,
-        }
-
-    start_at = study_row.start_at
-    if start_at.tzinfo is None:
-        start_at = start_at.replace(tzinfo=timezone.utc)
-    current = current_time or now()
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-
-    release_at = start_at + timedelta(
-        days=max(0, int(activity_row.release_offset_days or 0))
-    )
-    due_at = (
-        start_at + timedelta(days=int(activity_row.due_offset_days))
-        if activity_row.due_offset_days is not None
-        else None
-    )
-    if current < release_at:
-        status = "upcoming"
-    elif due_at and current > due_at:
-        status = "closed"
-    else:
-        status = "open"
-    return {
-        "status": status,
-        "release_at": release_at,
-        "due_at": due_at,
-    }
 
 
 class InMemoryRateLimiter:
