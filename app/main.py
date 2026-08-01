@@ -52,7 +52,7 @@ from .storage import storage
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
 from .observability import configure_observability
-from .participant_services import activity_window
+from .participant_services import activity_window, resolve_participant_invitation
 
 VERSION = "0.6.0"
 BASE = Path(__file__).resolve().parent
@@ -1966,7 +1966,7 @@ def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
 @app.post("/join-study")
 def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
+    inv = resolve_participant_invitation(db, session_row)
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
@@ -1987,7 +1987,7 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
     if not session_row:
         return RedirectResponse("/join-study",303)
-    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id)
+    inv = resolve_participant_invitation(db, session_row)
     if not inv or inv.revoked_at or not unexpired(inv.expires_at):
         return RedirectResponse("/join-study",303)
     if not inv.accepted_at: return RedirectResponse("/join-study",303)
@@ -1999,7 +1999,7 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
 @app.post("/participant-portal/activity/{activity_id}")
 async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
+    inv = resolve_participant_invitation(db, session_row)
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
@@ -2066,7 +2066,7 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
 @app.post("/participant-portal/message")
 def participant_message(request: Request, token:str=Form(""),body:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
+    inv = resolve_participant_invitation(db, session_row)
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,

@@ -2057,3 +2057,147 @@ def test_pwa_registration_uses_root_service_worker_scope():
     assert '.register("/service-worker.js", { scope: "/" })' in script
     assert 'localStorage' not in script
     assert 'sessionStorage' not in script
+
+
+def test_resolve_participant_invitation_success():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Project, PublicAuthSession, Study
+    from app.participant_services import resolve_participant_invitation
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        project = db.scalar(
+            select(Project)
+            .where(Project.organisation_id == user.organisation_id)
+            .order_by(Project.id)
+        )
+        if not project:
+            project = Project(
+                organisation_id=user.organisation_id,
+                title=unique_value('Resolver project'),
+                code=unique_value('resolver-project').upper(),
+                description='Resolver test project',
+                status='draft',
+                created_by_id=user.id,
+            )
+            db.add(project)
+            db.flush()
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        if not study_row:
+            study_row = Study(
+                organisation_id=user.organisation_id,
+                project_id=project.id,
+                title=unique_value('Resolver study'),
+                code=unique_value('resolver-study').upper(),
+                description='Resolver test study',
+                methodology='diary',
+                status='draft',
+                created_by_id=user.id,
+            )
+            db.add(study_row)
+            db.flush()
+
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == user.organisation_id)
+            .order_by(Participant.id)
+        )
+        if not participant_row:
+            participant_row = Participant(
+                organisation_id=user.organisation_id,
+                reference=unique_value('resolver-participant').upper(),
+                name='Resolver Participant',
+                email=f"{unique_value('resolver')}@example.org",
+                status='invited',
+                consent_status='pending',
+                communication_preference='email',
+                created_by_id=user.id,
+            )
+            db.add(participant_row)
+            db.flush()
+
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+        )
+        db.add(invitation)
+        db.flush()
+
+        session_row = PublicAuthSession(
+            scope='participant_portal',
+            session_hash=token_hash(new_token()),
+            participant_invitation_id=invitation.id,
+            expires_at=now() + timedelta(hours=1),
+        )
+        db.add(session_row)
+        db.flush()
+
+        resolved = resolve_participant_invitation(db, session_row)
+        assert resolved is not None
+        assert resolved.id == invitation.id
+
+
+def test_resolve_participant_invitation_missing_participant_invitation_id():
+    from app.main import now
+    from app.models import PublicAuthSession
+    from app.participant_services import resolve_participant_invitation
+
+    with SessionLocal() as db:
+        session_row = PublicAuthSession(
+            scope='participant_portal',
+            session_hash='resolver-missing-id',
+            participant_invitation_id=None,
+            expires_at=now() + timedelta(hours=1),
+        )
+        assert resolve_participant_invitation(db, session_row) is None
+
+
+def test_resolve_participant_invitation_missing_invitation_record():
+    from app.main import now
+    from app.models import PublicAuthSession
+    from app.participant_services import resolve_participant_invitation
+
+    with SessionLocal() as db:
+        session_row = PublicAuthSession(
+            scope='participant_portal',
+            session_hash='resolver-missing-invitation',
+            participant_invitation_id=999999999,
+            expires_at=now() + timedelta(hours=1),
+        )
+        assert resolve_participant_invitation(db, session_row) is None
+
+
+def test_resolve_participant_invitation_does_not_validate_auth_or_scope():
+    from app.main import now
+    from app.models import ParticipantInvitation, PublicAuthSession
+    from app.participant_services import resolve_participant_invitation
+
+    with SessionLocal() as db:
+        invitation = db.scalar(
+            select(ParticipantInvitation).order_by(ParticipantInvitation.id.desc())
+        )
+        assert invitation is not None
+
+        session_row = PublicAuthSession(
+            scope='unrelated_scope',
+            session_hash='resolver-no-auth-check',
+            participant_invitation_id=invitation.id,
+            expires_at=now() - timedelta(hours=1),
+            revoked_at=now(),
+        )
+
+        resolved = resolve_participant_invitation(db, session_row)
+        assert resolved is not None
+        assert resolved.id == invitation.id
