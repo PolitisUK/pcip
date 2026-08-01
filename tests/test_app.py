@@ -2201,3 +2201,316 @@ def test_resolve_participant_invitation_does_not_validate_auth_or_scope():
         resolved = resolve_participant_invitation(db, session_row)
         assert resolved is not None
         assert resolved.id == invitation.id
+
+
+def test_invitation_service_token_hash_lookup_success_and_no_match():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import resolve_invitation_by_token
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == user.organisation_id)
+            .order_by(Participant.id)
+        )
+        assert participant_row is not None
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        raw_token = new_token()
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(raw_token),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+        )
+        db.add(invitation)
+        db.flush()
+
+        resolved = resolve_invitation_by_token(db, raw_token)
+        assert resolved is not None
+        assert resolved.id == invitation.id
+
+        assert resolve_invitation_by_token(db, new_token()) is None
+
+
+def test_invitation_service_live_lookup_excludes_accepted_revoked_and_expired():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import find_live_unaccepted_invitation
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        def make_participant(suffix: str) -> Participant:
+            participant_row = Participant(
+                organisation_id=user.organisation_id,
+                reference=unique_value(f'INV-{suffix}').upper(),
+                name=f'Invitation {suffix}',
+                email=f"{unique_value(f'inv-{suffix}')}@example.org",
+                status='prospective',
+                consent_status='pending',
+                communication_preference='email',
+                created_by_id=user.id,
+            )
+            db.add(participant_row)
+            db.flush()
+            return participant_row
+
+        live_participant = make_participant('live')
+        live_invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=live_participant.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=2),
+            invited_by_id=user.id,
+        )
+        db.add(live_invitation)
+        db.flush()
+
+        accepted_participant = make_participant('accepted')
+        db.add(
+            ParticipantInvitation(
+                organisation_id=user.organisation_id,
+                participant_id=accepted_participant.id,
+                study_id=study_row.id,
+                token_hash=token_hash(new_token()),
+                expires_at=now() + timedelta(days=2),
+                accepted_at=now(),
+                invited_by_id=user.id,
+            )
+        )
+
+        revoked_participant = make_participant('revoked')
+        db.add(
+            ParticipantInvitation(
+                organisation_id=user.organisation_id,
+                participant_id=revoked_participant.id,
+                study_id=study_row.id,
+                token_hash=token_hash(new_token()),
+                expires_at=now() + timedelta(days=2),
+                revoked_at=now(),
+                invited_by_id=user.id,
+            )
+        )
+
+        expired_participant = make_participant('expired')
+        db.add(
+            ParticipantInvitation(
+                organisation_id=user.organisation_id,
+                participant_id=expired_participant.id,
+                study_id=study_row.id,
+                token_hash=token_hash(new_token()),
+                expires_at=now() - timedelta(minutes=1),
+                invited_by_id=user.id,
+            )
+        )
+        db.flush()
+
+        assert (
+            find_live_unaccepted_invitation(db, study_row.id, live_participant.id, now()).id
+            == live_invitation.id
+        )
+        assert (
+            find_live_unaccepted_invitation(db, study_row.id, accepted_participant.id, now())
+            is None
+        )
+        assert (
+            find_live_unaccepted_invitation(db, study_row.id, revoked_participant.id, now())
+            is None
+        )
+        assert (
+            find_live_unaccepted_invitation(db, study_row.id, expired_participant.id, now())
+            is None
+        )
+
+
+def test_invitation_service_org_scoped_lookup_blocks_other_organisation():
+    from app.main import now
+    from app.models import Organisation, Participant, ParticipantInvitation, Study
+    from app.participant_services import resolve_org_scoped_invitation
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id)
+        )
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == owner.organisation_id)
+            .order_by(Participant.id)
+        )
+        assert study_row is not None
+        assert participant_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=owner.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=owner.id,
+        )
+        db.add(invitation)
+        db.flush()
+
+        other_org = Organisation(
+            name=unique_value('Invitation scope org'),
+            slug=unique_value('invitation-scope-org').lower(),
+        )
+        db.add(other_org)
+        db.flush()
+
+        assert resolve_org_scoped_invitation(db, owner.organisation_id, invitation.id) is not None
+        assert resolve_org_scoped_invitation(db, other_org.id, invitation.id) is None
+
+
+def test_invitation_service_mark_revoked_sets_timestamp():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import mark_invitation_revoked
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == user.organisation_id)
+            .order_by(Participant.id)
+        )
+        assert study_row is not None
+        assert participant_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+        )
+        db.add(invitation)
+        db.flush()
+
+        revoked_at = now()
+        mark_invitation_revoked(invitation, revoked_at)
+        assert invitation.revoked_at == revoked_at
+
+
+def test_invitation_routes_preserve_invite_revoke_resend_behaviour():
+    from app.models import ParticipantInvitation
+
+    with client:
+        auth()
+        participant_response = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('ROUTE-P').upper(),
+                'name': 'Route Behaviour Participant',
+                'email': f"{unique_value('route-behaviour')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        assert participant_response.status_code == 303
+        participant_id = int(participant_response.headers['location'].rsplit('/', 1)[-1])
+
+        studies_page = client.get('/studies')
+        study_id = int(studies_page.text.split('/studies/')[1].split('"')[0])
+
+        enrol = post_with_csrf(
+            f'/studies/{study_id}/enrol',
+            data={'participant_id': participant_id},
+            follow_redirects=False,
+        )
+        assert enrol.status_code == 303
+
+        first_invite = post_with_csrf(
+            f'/studies/{study_id}/invite/{participant_id}',
+            follow_redirects=False,
+        )
+        assert first_invite.status_code == 303
+
+        duplicate_invite = post_with_csrf(
+            f'/studies/{study_id}/invite/{participant_id}',
+            follow_redirects=False,
+        )
+        assert duplicate_invite.status_code == 400
+        assert 'A live invitation already exists' in duplicate_invite.text
+
+        with SessionLocal() as db:
+            active_invitation = db.scalar(
+                select(ParticipantInvitation)
+                .where(
+                    ParticipantInvitation.study_id == study_id,
+                    ParticipantInvitation.participant_id == participant_id,
+                    ParticipantInvitation.revoked_at.is_(None),
+                )
+                .order_by(ParticipantInvitation.id.desc())
+            )
+            assert active_invitation is not None
+            invitation_id = active_invitation.id
+
+        revoke = post_with_csrf(
+            f'/participant-invitations/{invitation_id}/revoke',
+            follow_redirects=False,
+        )
+        assert revoke.status_code == 303
+
+        resend = post_with_csrf(
+            f'/participant-invitations/{invitation_id}/resend',
+            follow_redirects=False,
+        )
+        assert resend.status_code == 303
+
+        with SessionLocal() as db:
+            invitations = db.scalars(
+                select(ParticipantInvitation)
+                .where(
+                    ParticipantInvitation.study_id == study_id,
+                    ParticipantInvitation.participant_id == participant_id,
+                )
+                .order_by(ParticipantInvitation.id.asc())
+            ).all()
+            assert len(invitations) >= 2
+            assert invitations[-1].id != invitation_id
+            assert invitations[-1].revoked_at is None

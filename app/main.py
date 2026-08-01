@@ -52,7 +52,15 @@ from .storage import storage
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
 from .observability import configure_observability
-from .participant_services import activity_window, resolve_participant_invitation
+from .participant_services import (
+    activity_window,
+    create_participant_invitation,
+    find_live_unaccepted_invitation,
+    mark_invitation_revoked,
+    resolve_invitation_by_token,
+    resolve_org_scoped_invitation,
+    resolve_participant_invitation,
+)
 
 VERSION = "0.6.0"
 BASE = Path(__file__).resolve().parent
@@ -1911,31 +1919,39 @@ def enrol(study_id:int,participant_id:int=Form(...),u=Depends(roles("owner","adm
     return RedirectResponse(f"/studies/{s.id}",303)
 
 def send_participant_invite(db,u,s,p):
-    raw=new_token(); inv=ParticipantInvitation(organisation_id=u.organisation_id,participant_id=p.id,study_id=s.id,token_hash=token_hash(raw),expires_at=now()+timedelta(days=30),invited_by_id=u.id); db.add(inv); db.flush(); queue_email(db,u.organisation_id,p.email,f"Invitation: {s.title}",f"Join the study: {settings.base_url}/join-study?token={raw}"); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title); db.commit()
+    _, raw = create_participant_invitation(
+        db,
+        organisation_id=u.organisation_id,
+        participant_id=p.id,
+        study_id=s.id,
+        invited_by_id=u.id,
+        expires_at=now() + timedelta(days=30),
+    )
+    queue_email(db,u.organisation_id,p.email,f"Invitation: {s.title}",f"Join the study: {settings.base_url}/join-study?token={raw}"); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title); db.commit()
 @app.post("/studies/{study_id}/invite/{participant_id}")
 def invite_participant(study_id:int,participant_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); p=participant(db,participant_id,u.organisation_id)
     if not p.email: raise HTTPException(400,"Participant requires an email address.")
-    active=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.study_id==s.id,ParticipantInvitation.participant_id==p.id,ParticipantInvitation.accepted_at.is_(None),ParticipantInvitation.revoked_at.is_(None),ParticipantInvitation.expires_at>now()))
+    active = find_live_unaccepted_invitation(db, s.id, p.id, now())
     if active: raise HTTPException(400,"A live invitation already exists. Revoke it before resending.")
     send_participant_invite(db,u,s,p); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/participant-invitations/{invitation_id}/revoke")
 def revoke_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.id==invitation_id,ParticipantInvitation.organisation_id==u.organisation_id));
+    inv = resolve_org_scoped_invitation(db, u.organisation_id, invitation_id)
     if not inv: raise HTTPException(404)
     require_study_permission(db,u,study(db,inv.study_id,u.organisation_id),edit=True)
-    inv.revoked_at=now(); db.commit(); return RedirectResponse(f"/studies/{inv.study_id}",303)
+    mark_invitation_revoked(inv, now()); db.commit(); return RedirectResponse(f"/studies/{inv.study_id}",303)
 @app.post("/participant-invitations/{invitation_id}/resend")
 def resend_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.id==invitation_id,ParticipantInvitation.organisation_id==u.organisation_id));
+    inv = resolve_org_scoped_invitation(db, u.organisation_id, invitation_id)
     if not inv: raise HTTPException(404)
     require_study_permission(db,u,study(db,inv.study_id,u.organisation_id),edit=True)
-    inv.revoked_at=now(); send_participant_invite(db,u,study(db,inv.study_id,u.organisation_id),participant(db,inv.participant_id,u.organisation_id)); return RedirectResponse(f"/studies/{inv.study_id}",303)
+    mark_invitation_revoked(inv, now()); send_participant_invite(db,u,study(db,inv.study_id,u.organisation_id),participant(db,inv.participant_id,u.organisation_id)); return RedirectResponse(f"/studies/{inv.study_id}",303)
 
 @app.get("/join-study",response_class=HTMLResponse)
 def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
     if token:
-        inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==token_hash(token)))
+        inv = resolve_invitation_by_token(db, token)
         valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at))
         if not valid:
             return render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
