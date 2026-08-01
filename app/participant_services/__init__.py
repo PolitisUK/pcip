@@ -1,4 +1,5 @@
 from .activities import activity_window
+from .consent import grant_participant_consent
 from .invitations import (
 	create_participant_invitation,
 	find_live_unaccepted_invitation,
@@ -10,6 +11,7 @@ from .sessions import resolve_participant_invitation
 
 __all__ = [
 	"activity_window",
+	"grant_participant_consent",
 	"create_participant_invitation",
 	"find_live_unaccepted_invitation",
 	"mark_invitation_revoked",

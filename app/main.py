@@ -56,6 +56,7 @@ from .participant_services import (
     activity_window,
     create_participant_invitation,
     find_live_unaccepted_invitation,
+    grant_participant_consent,
     mark_invitation_revoked,
     resolve_invitation_by_token,
     resolve_org_scoped_invitation,
@@ -1995,7 +1996,7 @@ def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csr
     if not inv or inv.revoked_at or not unexpired(inv.expires_at):
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not consent: raise HTTPException(400,"Consent is required.")
-    p=db.get(Participant,inv.participant_id); inv.accepted_at=inv.accepted_at or now(); p.status="active"; p.consent_status="granted"; audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse("/participant-portal",303)
+    p=db.get(Participant,inv.participant_id); grant_participant_consent(inv, p, now()); audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse("/participant-portal",303)
 @app.get("/participant-portal",response_class=HTMLResponse)
 def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
     if token:

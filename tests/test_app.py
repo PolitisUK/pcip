@@ -2514,3 +2514,289 @@ def test_invitation_routes_preserve_invite_revoke_resend_behaviour():
             assert len(invitations) >= 2
             assert invitations[-1].id != invitation_id
             assert invitations[-1].revoked_at is None
+
+
+def test_grant_participant_consent_sets_accepted_at_when_absent():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import grant_participant_consent
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        participant_row = Participant(
+            organisation_id=user.organisation_id,
+            reference=unique_value('CONSENT-SET').upper(),
+            name='Consent Set',
+            email=f"{unique_value('consent-set')}@example.org",
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            created_by_id=user.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+            accepted_at=None,
+        )
+        db.add(invitation)
+        db.flush()
+
+        accepted_at = now()
+        grant_participant_consent(invitation, participant_row, accepted_at)
+
+        assert invitation.accepted_at == accepted_at
+
+
+def test_grant_participant_consent_preserves_existing_accepted_at():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import grant_participant_consent
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        participant_row = Participant(
+            organisation_id=user.organisation_id,
+            reference=unique_value('CONSENT-PRESERVE').upper(),
+            name='Consent Preserve',
+            email=f"{unique_value('consent-preserve')}@example.org",
+            status='invited',
+            consent_status='pending',
+            communication_preference='email',
+            created_by_id=user.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        existing_accepted_at = now() - timedelta(hours=2)
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+            accepted_at=existing_accepted_at,
+        )
+        db.add(invitation)
+        db.flush()
+
+        grant_participant_consent(invitation, participant_row, now())
+
+        assert invitation.accepted_at == existing_accepted_at
+
+
+def test_grant_participant_consent_sets_active_and_granted_statuses():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import grant_participant_consent
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        participant_row = Participant(
+            organisation_id=user.organisation_id,
+            reference=unique_value('CONSENT-STATUS').upper(),
+            name='Consent Status',
+            email=f"{unique_value('consent-status')}@example.org",
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            created_by_id=user.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+        )
+        db.add(invitation)
+        db.flush()
+
+        grant_participant_consent(invitation, participant_row, now())
+
+        assert participant_row.status == 'active'
+        assert participant_row.consent_status == 'granted'
+
+
+def test_grant_participant_consent_performs_no_commit_by_itself():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import grant_participant_consent
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        participant_row = Participant(
+            organisation_id=user.organisation_id,
+            reference=unique_value('CONSENT-NOCOMMIT').upper(),
+            name='Consent No Commit',
+            email=f"{unique_value('consent-nocommit')}@example.org",
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            created_by_id=user.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+        )
+        db.add(invitation)
+        db.commit()
+        participant_id = participant_row.id
+        invitation_id = invitation.id
+
+    with SessionLocal() as db:
+        invitation = db.get(ParticipantInvitation, invitation_id)
+        participant_row = db.get(Participant, participant_id)
+        assert invitation is not None
+        assert participant_row is not None
+        grant_participant_consent(invitation, participant_row, now())
+        db.rollback()
+
+    with SessionLocal() as db:
+        invitation = db.get(ParticipantInvitation, invitation_id)
+        participant_row = db.get(Participant, participant_id)
+        assert invitation is not None
+        assert participant_row is not None
+        assert invitation.accepted_at is None
+        assert participant_row.status == 'prospective'
+        assert participant_row.consent_status == 'pending'
+
+
+def test_join_study_post_preserves_consent_rejection_and_acceptance_flow():
+    from app.models import AuditEvent, OutboxEmail, Participant, ParticipantInvitation
+    from app.security import token_hash
+
+    with client:
+        auth()
+        p = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('CONSENT-ROUTE').upper(),
+                'name': 'Consent Route Participant',
+                'email': f"{unique_value('consent-route')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        assert p.status_code == 303
+        participant_id = int(p.headers['location'].rsplit('/', 1)[-1])
+
+        studies_page = client.get('/studies')
+        study_id = int(studies_page.text.split('/studies/')[1].split('"')[0])
+
+        post_with_csrf(
+            f'/studies/{study_id}/enrol',
+            data={'participant_id': participant_id},
+            follow_redirects=False,
+        )
+        post_with_csrf(
+            f'/studies/{study_id}/invite/{participant_id}',
+            follow_redirects=False,
+        )
+
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient.like('%consent-route%@example.org'))
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        exchange = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert exchange.status_code == 303
+
+        rejected = post_with_csrf('/join-study', data={'consent': ''}, follow_redirects=False)
+        assert rejected.status_code == 400
+        assert 'Consent is required.' in rejected.text
+
+        accepted = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert accepted.status_code == 303
+        assert accepted.headers['location'] == '/participant-portal'
+
+        with SessionLocal() as db:
+            invitation = db.scalar(
+                select(ParticipantInvitation)
+                .where(ParticipantInvitation.token_hash == token_hash(token))
+            )
+            participant_row = db.get(Participant, participant_id)
+            assert invitation is not None
+            assert participant_row is not None
+            assert invitation.accepted_at is not None
+            assert participant_row.status == 'active'
+            assert participant_row.consent_status == 'granted'
+            audit_event = db.scalar(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.action == 'participant.invitation_accepted',
+                    AuditEvent.organisation_id == invitation.organisation_id,
+                    AuditEvent.actor_user_id.is_(None),
+                    AuditEvent.entity_type == 'participant',
+                    AuditEvent.entity_id == str(participant_id),
+                )
+                .order_by(AuditEvent.id.desc())
+            )
+            assert audit_event is not None
