@@ -14,7 +14,7 @@
       <span class="muted">{{ study.title }}</span>
     </div>
   </header>
-  <main class="portal-main">
+  <main class="portal-main" id="main-content" tabindex="-1">
     <section class="card">
       <p class="eyebrow">You're enrolled</p>
       <h1>{{ study.title }}</h1>
@@ -101,4 +101,5 @@
 
 {% block page_scripts %}
 <script nonce="{{ csp_nonce }}" src="/static/participant_portal.js" defer></script>
+<script nonce="{{ csp_nonce }}" src="/static/participant_pwa.js" defer></script>
 {% endblock %}

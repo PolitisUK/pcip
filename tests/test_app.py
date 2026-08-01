@@ -1971,3 +1971,89 @@ def test_password_reset_invalidates_existing_session_cookie():
         denied = client.get('/', follow_redirects=False)
         assert denied.status_code == 303
         assert denied.headers['location'] == '/login'
+
+
+def test_pwa_manifest_is_valid_and_participant_focused():
+    import json
+
+    response = client.get('/static/manifest.webmanifest')
+
+    assert response.status_code == 200
+    manifest = json.loads(response.text)
+    assert manifest['name'] == 'Citizen Centric Participant'
+    assert manifest['start_url'] == '/participant-portal'
+    assert manifest['scope'] == '/'
+    assert manifest['display'] == 'standalone'
+    assert manifest['icons'] == []
+
+
+def test_service_worker_is_root_scoped_and_not_cached():
+    response = client.get('/service-worker.js')
+
+    assert response.status_code == 200
+    assert response.headers['cache-control'] == 'no-cache'
+    assert response.headers['service-worker-allowed'] == '/'
+    assert 'application/javascript' in response.headers['content-type']
+
+
+def test_service_worker_caches_only_explicit_public_assets():
+    response = client.get('/service-worker.js')
+
+    assert response.status_code == 200
+    script = response.text
+
+    assert 'PUBLIC_STATIC_ASSETS' in script
+    assert '/static/offline.html' in script
+    assert '/static/politis_symbol_colour.png' in script
+    assert 'request.mode === "navigate"' in script
+
+    sensitive_paths = [
+        '/participant-portal',
+        '/join-study',
+        '/evidence/',
+        '/api/',
+        '/participants/',
+        '/messages/',
+    ]
+    for path in sensitive_paths:
+        assert path not in script
+
+
+def test_offline_page_contains_no_participant_information():
+    response = client.get('/static/offline.html')
+
+    assert response.status_code == 200
+    assert "You’re offline" in response.text
+    assert 'No participant page, response, message or evidence' in response.text
+    assert 'csrf_token' not in response.text
+    assert 'invitation' not in response.text.lower()
+    assert 'participant.name' not in response.text
+
+
+def test_base_template_links_to_manifest():
+    template = Path('app/templates/base.html').read_text()
+
+    assert (
+        '<link rel="manifest" href="/static/manifest.webmanifest">'
+        in template
+    )
+    assert '<meta name="theme-color" content="#215bb3">' in template
+
+
+def test_participant_templates_register_pwa_once():
+    join_template = Path('app/templates/join_study.html').read_text()
+    portal_template = Path('app/templates/participant_portal.html').read_text()
+
+    script_reference = 'src="/static/participant_pwa.js"'
+
+    assert join_template.count(script_reference) == 1
+    assert portal_template.count(script_reference) == 1
+    assert 'id="main-content"' in portal_template
+
+
+def test_pwa_registration_uses_root_service_worker_scope():
+    script = Path('app/static/participant_pwa.js').read_text()
+
+    assert '.register("/service-worker.js", { scope: "/" })' in script
+    assert 'localStorage' not in script
+    assert 'sessionStorage' not in script

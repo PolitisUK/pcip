@@ -20,3 +20,7 @@
 	</div>
 </div>
 {% endblock %}
+
+{% block page_scripts %}
+<script nonce="{{ csp_nonce }}" src="/static/participant_pwa.js" defer></script>
+{% endblock %}
