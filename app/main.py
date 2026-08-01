@@ -54,13 +54,16 @@ from .entra import oauth, configured as entra_configured
 from .observability import configure_observability
 from .participant_services import (
     activity_window,
+    apply_response_action,
     create_participant_invitation,
     find_live_unaccepted_invitation,
     grant_participant_consent,
     mark_invitation_revoked,
     resolve_invitation_by_token,
+    resolve_or_create_activity_response,
     resolve_org_scoped_invitation,
     resolve_participant_invitation,
+    serialise_response_payload,
 )
 
 VERSION = "0.6.0"
@@ -2036,9 +2039,14 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
         raise HTTPException(409,"This activity is not available yet.")
     if window["status"] == "closed":
         raise HTTPException(409,"The due date for this activity has passed.")
-    r=db.scalar(select(ActivityResponse).where(ActivityResponse.activity_id==a.id,ActivityResponse.participant_id==inv.participant_id))
-    if not r: r=ActivityResponse(organisation_id=inv.organisation_id,study_id=inv.study_id,activity_id=a.id,participant_id=inv.participant_id); db.add(r); db.flush()
-    choice_list=[x.strip() for x in choices.split("|") if x.strip()]; value={"answer":answer,"choices":choice_list}
+    r = resolve_or_create_activity_response(
+        db,
+        organisation_id=inv.organisation_id,
+        study_id=inv.study_id,
+        activity_id=a.id,
+        participant_id=inv.participant_id,
+    )
+    value, choice_list = serialise_response_payload(answer, choices)
     stored_key = None
     if upload and upload.filename:
         original=Path(upload.filename).name
@@ -2073,7 +2081,7 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
             raise
     try:
         if a.required and action=="submit" and not answer.strip() and not choice_list and not upload: raise HTTPException(400,"A response is required.")
-        r.value_json=json.dumps(value); r.status="submitted" if action=="submit" else "draft"; r.submitted_at=now() if action=="submit" else None; audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit()
+        apply_response_action(r, value, action, now()); audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit()
     except Exception:
         db.rollback()
         if stored_key:

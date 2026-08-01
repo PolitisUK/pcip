@@ -2800,3 +2800,401 @@ def test_join_study_post_preserves_consent_rejection_and_acceptance_flow():
                 .order_by(AuditEvent.id.desc())
             )
             assert audit_event is not None
+
+
+def test_response_service_lookup_success_and_no_match():
+    from app.models import Activity, ActivityResponse, Participant
+    from app.participant_services import resolve_activity_response
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(select(Activity).order_by(Activity.id.asc()))
+        assert activity_row is not None
+        actor = db.scalar(
+            select(User)
+            .where(User.organisation_id == activity_row.organisation_id)
+            .order_by(User.id.asc())
+        )
+        assert actor is not None
+
+        participant_row = Participant(
+            organisation_id=activity_row.organisation_id,
+            reference=unique_value('RESP-LOOKUP').upper(),
+            name='Response Lookup',
+            email=f"{unique_value('response-lookup')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=actor.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        response = ActivityResponse(
+            organisation_id=activity_row.organisation_id,
+            study_id=activity_row.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+            value_json='{}',
+            status='draft',
+        )
+        db.add(response)
+        db.flush()
+
+        found = resolve_activity_response(db, activity_row.id, participant_row.id)
+        assert found is not None
+        assert found.id == response.id
+
+        assert resolve_activity_response(db, activity_row.id, participant_row.id + 999999) is None
+
+
+def test_response_service_create_sets_foreign_keys():
+    from app.models import Activity, Participant
+    from app.participant_services import resolve_or_create_activity_response
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(select(Activity).order_by(Activity.id.asc()))
+        assert activity_row is not None
+        actor = db.scalar(
+            select(User)
+            .where(User.organisation_id == activity_row.organisation_id)
+            .order_by(User.id.asc())
+        )
+        assert actor is not None
+
+        participant_row = Participant(
+            organisation_id=activity_row.organisation_id,
+            reference=unique_value('RESP-CREATE').upper(),
+            name='Response Create',
+            email=f"{unique_value('response-create')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=actor.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        response = resolve_or_create_activity_response(
+            db,
+            organisation_id=activity_row.organisation_id,
+            study_id=activity_row.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+        )
+
+        assert response.organisation_id == activity_row.organisation_id
+        assert response.study_id == activity_row.study_id
+        assert response.activity_id == activity_row.id
+        assert response.participant_id == participant_row.id
+
+
+def test_response_service_payload_serialization_shape_is_unchanged():
+    from app.participant_services import serialise_response_payload
+
+    value, choice_list = serialise_response_payload('final answer', '  one |two| | three  ')
+
+    assert choice_list == ['one', 'two', 'three']
+    assert value == {'answer': 'final answer', 'choices': ['one', 'two', 'three']}
+
+
+def test_response_service_apply_action_draft_and_submit_status_and_submitted_at():
+    from app.main import now
+    from app.models import Activity, ActivityResponse, Participant
+    from app.participant_services import apply_response_action
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(select(Activity).order_by(Activity.id.asc()))
+        assert activity_row is not None
+        actor = db.scalar(
+            select(User)
+            .where(User.organisation_id == activity_row.organisation_id)
+            .order_by(User.id.asc())
+        )
+        assert actor is not None
+
+        participant_row = Participant(
+            organisation_id=activity_row.organisation_id,
+            reference=unique_value('RESP-ACTION').upper(),
+            name='Response Action',
+            email=f"{unique_value('response-action')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=actor.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        response = ActivityResponse(
+            organisation_id=activity_row.organisation_id,
+            study_id=activity_row.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+            value_json='{}',
+            status='draft',
+        )
+        db.add(response)
+        db.flush()
+
+        apply_response_action(response, {'answer': 'draft', 'choices': []}, 'draft', now())
+        assert response.status == 'draft'
+        assert response.submitted_at is None
+
+        submitted_at = now()
+        apply_response_action(response, {'answer': 'submit', 'choices': ['a']}, 'submit', submitted_at)
+        assert response.status == 'submitted'
+        assert response.submitted_at == submitted_at
+
+
+def test_response_service_submit_overwrites_existing_submitted_at_current_behavior():
+    from app.main import now
+    from app.models import Activity, ActivityResponse, Participant
+    from app.participant_services import apply_response_action
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(select(Activity).order_by(Activity.id.asc()))
+        assert activity_row is not None
+        actor = db.scalar(
+            select(User)
+            .where(User.organisation_id == activity_row.organisation_id)
+            .order_by(User.id.asc())
+        )
+        assert actor is not None
+
+        participant_row = Participant(
+            organisation_id=activity_row.organisation_id,
+            reference=unique_value('RESP-TIMESTAMP').upper(),
+            name='Response Timestamp',
+            email=f"{unique_value('response-timestamp')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=actor.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        old_submitted_at = now() - timedelta(hours=6)
+        response = ActivityResponse(
+            organisation_id=activity_row.organisation_id,
+            study_id=activity_row.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+            value_json='{}',
+            status='submitted',
+            submitted_at=old_submitted_at,
+        )
+        db.add(response)
+        db.flush()
+
+        new_submitted_at = now()
+        apply_response_action(response, {'answer': 'new', 'choices': []}, 'submit', new_submitted_at)
+        assert response.submitted_at == new_submitted_at
+        assert response.submitted_at != old_submitted_at
+
+
+def test_response_service_helpers_do_not_commit():
+    from app.main import now
+    from app.models import Activity, ActivityResponse, Participant
+    from app.participant_services import apply_response_action, resolve_or_create_activity_response
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(select(Activity).order_by(Activity.id.asc()))
+        assert activity_row is not None
+        actor = db.scalar(
+            select(User)
+            .where(User.organisation_id == activity_row.organisation_id)
+            .order_by(User.id.asc())
+        )
+        assert actor is not None
+
+        participant_row = Participant(
+            organisation_id=activity_row.organisation_id,
+            reference=unique_value('RESP-NOCOMMIT').upper(),
+            name='Response No Commit',
+            email=f"{unique_value('response-no-commit')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=actor.id,
+        )
+        db.add(participant_row)
+        db.commit()
+        participant_id = participant_row.id
+        activity_id = activity_row.id
+
+    with SessionLocal() as db:
+        activity_row = db.get(Activity, activity_id)
+        assert activity_row is not None
+        response = resolve_or_create_activity_response(
+            db,
+            organisation_id=activity_row.organisation_id,
+            study_id=activity_row.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_id,
+        )
+        apply_response_action(response, {'answer': 'temp', 'choices': []}, 'submit', now())
+        db.rollback()
+
+    with SessionLocal() as db:
+        response = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == activity_id,
+                ActivityResponse.participant_id == participant_id,
+            )
+        )
+        assert response is None
+
+
+def test_participant_portal_route_preserves_draft_then_submit_response_behavior():
+    from app.models import Activity, ActivityResponse, OutboxEmail
+
+    with client:
+        auth()
+        participant_created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('RESP-ROUTE').upper(),
+                'name': 'Route Response Participant',
+                'email': f"{unique_value('route-response')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant_created.headers['location'].rsplit('/', 1)[-1])
+
+        with SessionLocal() as db:
+            first_activity = db.scalar(select(Activity).order_by(Activity.id.asc()))
+            assert first_activity is not None
+            study_id = first_activity.study_id
+            activity_id = first_activity.id
+
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id})
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}')
+
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient.like('%route-response%@example.org'))
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        client.get(f'/join-study?token={token}')
+        post_with_csrf('/join-study', data={'consent': 'true'})
+
+        draft = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action': 'draft', 'answer': 'draft only'},
+            follow_redirects=False,
+        )
+        assert draft.status_code == 303
+
+        with SessionLocal() as db:
+            response = db.scalar(
+                select(ActivityResponse).where(
+                    ActivityResponse.activity_id == activity_id,
+                    ActivityResponse.participant_id == participant_id,
+                )
+            )
+            assert response is not None
+            assert response.status == 'draft'
+            assert response.submitted_at is None
+
+        submit = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action': 'submit', 'answer': 'final answer'},
+            follow_redirects=False,
+        )
+        assert submit.status_code == 303
+
+        with SessionLocal() as db:
+            response = db.scalar(
+                select(ActivityResponse).where(
+                    ActivityResponse.activity_id == activity_id,
+                    ActivityResponse.participant_id == participant_id,
+                )
+            )
+            assert response is not None
+            assert response.status == 'submitted'
+            assert response.submitted_at is not None
+            assert 'final answer' in response.value_json
+
+
+def test_participant_portal_route_preserves_evidence_upload_response_association():
+    import json
+    from io import BytesIO
+    from app.models import Activity, ActivityResponse, EvidenceFile, OutboxEmail
+
+    with client:
+        auth()
+        participant_created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('RESP-UPLOAD').upper(),
+                'name': 'Upload Response Participant',
+                'email': f"{unique_value('route-upload')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant_created.headers['location'].rsplit('/', 1)[-1])
+
+        with SessionLocal() as db:
+            first_activity = db.scalar(select(Activity).order_by(Activity.id.asc()))
+            assert first_activity is not None
+            study_id = first_activity.study_id
+            activity_id = first_activity.id
+
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id})
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}')
+
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient.like('%route-upload%@example.org'))
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        client.get(f'/join-study?token={token}')
+        post_with_csrf('/join-study', data={'consent': 'true'})
+
+        uploaded = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action': 'submit', 'answer': ''},
+            files={'upload': ('evidence.txt', BytesIO(b'ordinary evidence'), 'text/plain')},
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+
+        with SessionLocal() as db:
+            response = db.scalar(
+                select(ActivityResponse).where(
+                    ActivityResponse.activity_id == activity_id,
+                    ActivityResponse.participant_id == participant_id,
+                )
+            )
+            evidence = db.scalar(
+                select(EvidenceFile).where(
+                    EvidenceFile.activity_id == activity_id,
+                    EvidenceFile.participant_id == participant_id,
+                )
+            )
+            assert response is not None
+            assert evidence is not None
+            assert evidence.response_id == response.id
+            payload = json.loads(response.value_json)
+            assert payload.get('evidence_id') == evidence.id
