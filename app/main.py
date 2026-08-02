@@ -81,13 +81,17 @@ from .participant_api.schemas import (
     ActivityAvailability,
     ActivityListResponse,
     ActivityResponseSummary,
+    ActivityResponseValue,
     ActivitySummary,
     BearerSession,
     InvitationContext,
     LogoutResponse,
     Pagination,
+    ParticipantMessageSummary,
     ParticipantSessionResponse,
     ParticipantSummary,
+    PortalResponseItem,
+    PortalSummaryResponse,
     SessionExchangeRequest,
     SessionExchangeResponse,
     SessionInfo,
@@ -2098,6 +2102,157 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
         try: response_values[activity_id]=json.loads(response.value_json or "{}")
         except json.JSONDecodeError: response_values[activity_id]={}
     msgs = list_participant_visible_messages(db, study_id=s.id, participant_id=p.id); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,activity_windows=activity_windows,responses=responses,response_values=response_values,messages=msgs)
+
+
+@app.get(
+    "/api/v1/participant/portal",
+    response_model=PortalSummaryResponse,
+    response_model_exclude_unset=True,
+)
+def participant_api_portal_summary(
+    request: Request,
+    response: Response,
+    study_id: int | None = Query(default=None, ge=1),
+    db: Session = Depends(get_db),
+):
+    _session_row, inv, participant_row = _resolve_participant_api_context(request, db)
+    if not inv.accepted_at:
+        raise HTTPException(403, "Participant consent has not been accepted.")
+    if participant_row.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(403, "Participant consent is no longer active.")
+    if study_id is not None and study_id != inv.study_id:
+        raise HTTPException(403, "Requested study is outside participant scope.")
+
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_portal_read",
+        ip_limit=settings.rate_limit_portal_write_ip,
+        account_key=f"invitation:{inv.id}",
+        account_limit=settings.rate_limit_portal_write_token,
+    )
+
+    study_row = db.scalar(
+        select(Study).where(
+            Study.id == inv.study_id,
+            Study.organisation_id == inv.organisation_id,
+        )
+    )
+    if not study_row:
+        raise _participant_api_unauthorised()
+
+    enrolled = db.scalar(
+        select(StudyEnrolment.id).where(
+            StudyEnrolment.organisation_id == inv.organisation_id,
+            StudyEnrolment.study_id == inv.study_id,
+            StudyEnrolment.participant_id == participant_row.id,
+        )
+    ) is not None
+    if not enrolled:
+        raise HTTPException(403, "Participant is not enrolled in this study.")
+
+    activity_rows = db.scalars(
+        select(Activity)
+        .where(
+            Activity.organisation_id == inv.organisation_id,
+            Activity.study_id == study_row.id,
+        )
+        .order_by(Activity.position)
+    ).all()
+    response_rows = db.scalars(
+        select(ActivityResponse).where(
+            ActivityResponse.organisation_id == inv.organisation_id,
+            ActivityResponse.study_id == study_row.id,
+            ActivityResponse.participant_id == participant_row.id,
+        )
+    ).all()
+    responses_by_activity = {row.activity_id: row for row in response_rows}
+
+    activity_summaries: list[ActivitySummary] = []
+    response_items: list[PortalResponseItem] = []
+    for activity in activity_rows:
+        availability = activity_window(study_row, activity)
+        response_row = responses_by_activity.get(activity.id)
+        response_summary = None
+        if response_row:
+            response_summary = ActivityResponseSummary(
+                status=response_row.status,
+                submitted_at=response_row.submitted_at,
+                updated_at=response_row.updated_at,
+            )
+
+            raw_value = {}
+            try:
+                raw_value = json.loads(response_row.value_json or "{}")
+            except json.JSONDecodeError:
+                raw_value = {}
+
+            response_items.append(
+                PortalResponseItem(
+                    activity_id=activity.id,
+                    status=response_row.status,
+                    value=ActivityResponseValue(
+                        answer=raw_value.get("answer"),
+                        choices=list(raw_value.get("choices") or []),
+                        evidence_id=raw_value.get("evidence_id"),
+                    ),
+                    submitted_at=response_row.submitted_at,
+                    updated_at=response_row.updated_at,
+                )
+            )
+
+        item = ActivitySummary(
+            activity_id=activity.id,
+            title=activity.title,
+            prompt=activity.prompt,
+            activity_type=activity.activity_type,
+            required=activity.required,
+            position=activity.position,
+            availability=ActivityAvailability(
+                status=availability["status"],
+                release_at=availability["release_at"],
+                due_at=availability["due_at"],
+            ),
+        )
+        if response_summary:
+            item.response = response_summary
+        activity_summaries.append(item)
+
+    messages = [
+        ParticipantMessageSummary(
+            message_id=row.id,
+            sender_type=row.sender_type,
+            body=row.body,
+            created_at=row.created_at,
+        )
+        for row in list_participant_visible_messages(
+            db,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+        )
+    ]
+
+    _cache_control_no_store(response)
+    return PortalSummaryResponse(
+        study=StudySummary(
+            study_id=study_row.id,
+            title=study_row.title,
+            description=study_row.description,
+            status=study_row.status,
+            methodology=study_row.methodology,
+            enrolled=True,
+        ),
+        participant=ParticipantSummary(
+            participant_id=participant_row.id,
+            display_name=participant_row.name,
+            consent_status=participant_row.consent_status,
+        ),
+        activities=activity_summaries,
+        responses=response_items,
+        messages=messages,
+    )
+
+
 @app.post("/participant-portal/activity/{activity_id}")
 async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)

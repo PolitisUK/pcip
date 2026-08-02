@@ -36,14 +36,6 @@ class InvitationContext(BaseModel):
     accepted_at: datetime | None
 
 
-class ParticipantSummary(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    participant_id: int
-    display_name: str
-    consent_status: str
-
-
 class StudySummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -53,6 +45,14 @@ class StudySummary(BaseModel):
     status: str
     methodology: str
     enrolled: bool
+
+
+class ParticipantSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    participant_id: int
+    display_name: str
+    consent_status: str
 
 
 class Pagination(BaseModel):
@@ -135,3 +135,40 @@ class LogoutResponse(BaseModel):
 
     revoked: bool = True
     revoked_at: datetime | None = None
+
+
+class ActivityResponseValue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str | None = None
+    choices: list[str] = Field(default_factory=list)
+    evidence_id: int | None = None
+
+
+class PortalResponseItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    activity_id: int
+    status: str
+    value: ActivityResponseValue | None = None
+    submitted_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ParticipantMessageSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: int
+    sender_type: str
+    body: str
+    created_at: datetime
+
+
+class PortalSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    study: StudySummary
+    participant: ParticipantSummary
+    activities: list[ActivitySummary]
+    responses: list[PortalResponseItem]
+    messages: list[ParticipantMessageSummary]
