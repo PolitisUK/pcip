@@ -2315,6 +2315,8 @@ def participant_api_studies(
     _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
     if not invitation.accepted_at:
         raise HTTPException(403, "Participant consent has not been accepted.")
+    if participant_row.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(403, "Participant consent is no longer active.")
 
     _enforce_rate_limit(
         request,

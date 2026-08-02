@@ -4536,3 +4536,34 @@ def test_participant_api_studies_returns_scoped_contract_shape_and_no_store_head
         }
         assert item.get('participant_id') is None
         assert participant_id > 0
+
+
+def test_participant_api_studies_rejects_withdrawn_consent_even_when_invitation_was_accepted():
+    from app.models import Participant
+
+    token, participant_id, _study_id = _create_participant_invitation_for_api('api-studies-consent-withdrawn')
+
+    with client:
+        consent = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert consent.status_code == 303
+        accepted = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert accepted.status_code == 303
+
+        exchange = _exchange_participant_api_session(token)
+        assert exchange.status_code == 200
+        api_token = exchange.json()['session']['access_token']
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, participant_id)
+        assert participant_row is not None
+        participant_row.consent_status = 'withdrawn'
+        db.commit()
+
+    with client:
+        denied = client.get(
+            '/api/v1/participant/studies',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert denied.status_code == 403
+        assert denied.json() == {'detail': 'Participant consent is no longer active.'}
