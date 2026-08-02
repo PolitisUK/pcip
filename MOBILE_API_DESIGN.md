@@ -132,9 +132,9 @@ Base path: /api/v1/participant
 
 Endpoint list (minimum viable and safety-scoped):
 
-1. POST /invitation/exchange
+1. POST /session/exchange
 2. GET /session
-3. POST /session/logout
+3. DELETE /session
 4. GET /studies
 5. GET /portal
 6. GET /activities
@@ -162,7 +162,7 @@ Routes that should not be exposed directly to mobile participant API:
 
 ## 6. Endpoint-by-endpoint contracts
 
-### 6.1 POST /api/v1/participant/invitation/exchange
+### 6.1 POST /api/v1/participant/session/exchange
 
 - Purpose: exchange invitation token for mobile participant session.
 - Auth: none (public with strict validation and rate limit).
@@ -196,7 +196,7 @@ Routes that should not be exposed directly to mobile participant API:
 - Existing reuse: PublicAuthSession lookup pattern.
 - New service: bearer auth dependency for participant API.
 
-### 6.3 POST /api/v1/participant/session/logout
+### 6.3 DELETE /api/v1/participant/session
 
 - Purpose: revoke current mobile session.
 - Auth: bearer required.
