@@ -2107,13 +2107,11 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
 @app.get("/api/v1/participant/portal", response_model=PortalSummaryResponse)
 def participant_api_portal_summary(
     request: Request,
+    response: Response,
     study_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
-    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = resolve_participant_invitation(db, session_row)
-    if not inv or inv.revoked_at or not unexpired(inv.expires_at):
-        raise HTTPException(401, "Missing or invalid participant credentials.")
+    _session_row, inv, participant_row = _resolve_participant_api_context(request, db)
     if not inv.accepted_at:
         raise HTTPException(403, "Participant consent has not been accepted.")
     if study_id is not None and study_id != inv.study_id:
@@ -2129,9 +2127,8 @@ def participant_api_portal_summary(
     )
 
     study_row = db.get(Study, inv.study_id)
-    participant_row = db.get(Participant, inv.participant_id)
     if not study_row or not participant_row:
-        raise HTTPException(401, "Missing or invalid participant credentials.")
+        raise _participant_api_unauthorised()
 
     activity_rows = db.scalars(
         select(Activity).where(Activity.study_id == study_row.id).order_by(Activity.position)
@@ -2208,6 +2205,7 @@ def participant_api_portal_summary(
         )
     ]
 
+    _cache_control_no_store(response)
     return PortalSummaryResponse(
         study=StudySummary(
             study_id=study_row.id,

@@ -337,51 +337,22 @@ def test_participant_accepts_invitation():
         assert accepted.status_code == 200 and "You're enrolled" in accepted.text
 
 
-def _prepare_participant_portal_session(consent: bool = True, email_suffix: str = 'portal-summary'):
-    from app.models import OutboxEmail
+def _prepare_participant_api_portal_context(consent: bool = True, email_suffix: str = 'portal-summary'):
+    invitation_token, participant_id, study_id = _create_participant_invitation_for_api(email_suffix)
 
-    with client:
-        client.cookies.clear()
-        auth()
-        participant_email = f"{unique_value(email_suffix)}@example.org"
-        created = post_with_csrf(
-            '/participants',
-            data={
-                'reference': unique_value('PORTALAPI').upper(),
-                'name': 'Portal API Participant',
-                'email': participant_email,
-                'phone': '',
-                'status_value': 'prospective',
-                'consent_status': 'pending',
-                'communication_preference': 'email',
-                'tags': '',
-                'notes': '',
-            },
-            follow_redirects=False,
-        )
-        participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
-        studies = client.get('/studies')
-        study_id = int(studies.text.split('/studies/')[1].split('"')[0])
-        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
-        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
-
-        with SessionLocal() as db:
-            email = db.scalar(
-                select(OutboxEmail)
-                .where(OutboxEmail.recipient == participant_email)
-                .order_by(OutboxEmail.id.desc())
-            )
-            assert email is not None
-            token = email.body.split('token=')[1].strip()
-
-        exchanged = client.get(f'/join-study?token={token}', follow_redirects=False)
-        assert exchanged.status_code == 303
-
-        if consent:
+    if consent:
+        with client:
+            landing = client.get(f'/join-study?token={invitation_token}', follow_redirects=False)
+            assert landing.status_code == 303
             accepted = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
             assert accepted.status_code == 303
 
-        return participant_id, study_id
+    with client:
+        exchange = _exchange_participant_api_session(invitation_token)
+        assert exchange.status_code == 200
+        api_token = exchange.json()['session']['access_token']
+
+    return api_token, participant_id, study_id, invitation_token
 
 
 def test_participant_api_portal_summary_requires_participant_session():
@@ -389,20 +360,28 @@ def test_participant_api_portal_summary_requires_participant_session():
         client.cookies.clear()
         response = client.get('/api/v1/participant/portal', follow_redirects=False)
         assert response.status_code == 401
+        assert response.headers.get('www-authenticate') == 'Bearer'
 
 
 def test_participant_api_portal_summary_rejects_unaccepted_invitation_session():
-    _prepare_participant_portal_session(consent=False, email_suffix='portal-summary-unaccepted')
+    api_token, _participant_id, _study_id, _invitation_token = _prepare_participant_api_portal_context(
+        consent=False,
+        email_suffix='portal-summary-unaccepted',
+    )
 
     with client:
-        response = client.get('/api/v1/participant/portal', follow_redirects=False)
+        response = client.get(
+            '/api/v1/participant/portal',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
         assert response.status_code == 403
 
 
 def test_participant_api_portal_summary_returns_contract_shaped_payload_for_accepted_participant():
     from app.models import Activity
 
-    participant_id, study_id = _prepare_participant_portal_session(
+    api_token, participant_id, study_id, invitation_token = _prepare_participant_api_portal_context(
         consent=True,
         email_suffix='portal-summary-accepted',
     )
@@ -417,6 +396,12 @@ def test_participant_api_portal_summary_returns_contract_shaped_payload_for_acce
         activity_id = first_activity.id
 
     with client:
+        # Keep portal cookie session for existing write routes while asserting API bearer auth.
+        landing = client.get(f'/join-study?token={invitation_token}', follow_redirects=False)
+        assert landing.status_code == 303
+        accepted = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert accepted.status_code == 303
+
         draft = post_with_csrf(
             f'/participant-portal/activity/{activity_id}',
             data={'action': 'draft', 'answer': 'draft from portal summary test'},
@@ -431,8 +416,13 @@ def test_participant_api_portal_summary_returns_contract_shaped_payload_for_acce
         )
         assert sent.status_code == 303
 
-        summary = client.get('/api/v1/participant/portal', follow_redirects=False)
+        summary = client.get(
+            '/api/v1/participant/portal',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
         assert summary.status_code == 200
+        assert summary.headers.get('cache-control') == 'no-store'
         body = summary.json()
 
         assert set(body.keys()) == {'study', 'participant', 'activities', 'responses', 'messages'}
@@ -451,10 +441,18 @@ def test_participant_api_portal_summary_returns_contract_shaped_payload_for_acce
         assert body['messages'][-1]['sender_type'] == 'participant'
         assert 'Hello from portal summary test' in body['messages'][-1]['body']
 
-        scoped = client.get(f'/api/v1/participant/portal?study_id={study_id}', follow_redirects=False)
+        scoped = client.get(
+            f'/api/v1/participant/portal?study_id={study_id}',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
         assert scoped.status_code == 200
 
-        out_of_scope = client.get(f'/api/v1/participant/portal?study_id={study_id + 9999}', follow_redirects=False)
+        out_of_scope = client.get(
+            f'/api/v1/participant/portal?study_id={study_id + 9999}',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
         assert out_of_scope.status_code == 403
 
 
