@@ -79,6 +79,8 @@ from .participant_api.auth import (
 )
 from .participant_api.schemas import (
     ActivityAvailability,
+    ActivityDetailResponse,
+    ActivityDetailResponseItem,
     DraftResponseRequest,
     DraftResponseResult,
     ActivityListResponse,
@@ -2629,6 +2631,125 @@ def participant_api_activities(
 
     _cache_control_no_store(response)
     return ActivityListResponse(data=data)
+
+
+def _response_value_from_json(value_json: str | None) -> ActivityResponseValue | None:
+    try:
+        payload = json.loads(value_json or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    value = ActivityResponseValue()
+    if "answer" in payload and isinstance(payload["answer"], str):
+        value.answer = payload["answer"]
+    if "choices" in payload and isinstance(payload["choices"], list):
+        value.choices = [x for x in payload["choices"] if isinstance(x, str)]
+    if "evidence_id" in payload and isinstance(payload["evidence_id"], int) and payload["evidence_id"] > 0:
+        value.evidence_id = payload["evidence_id"]
+    if not value.model_fields_set:
+        return None
+    return value
+
+
+@app.get(
+    "/api/v1/participant/activities/{activity_id}",
+    response_model=ActivityDetailResponse,
+    response_model_exclude_unset=True,
+)
+def participant_api_activity_detail(
+    request: Request,
+    response: Response,
+    activity_id: int = ApiPath(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
+    if not invitation.accepted_at:
+        raise HTTPException(403, "Participant consent has not been accepted.")
+    if participant_row.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(403, "Participant consent is no longer active.")
+
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_portal_read",
+        ip_limit=settings.rate_limit_portal_write_ip,
+        account_key=f"invitation:{invitation.id}",
+        account_limit=settings.rate_limit_portal_write_token,
+    )
+
+    study_row = db.scalar(
+        select(Study).where(
+            Study.id == invitation.study_id,
+            Study.organisation_id == invitation.organisation_id,
+        )
+    )
+    if not study_row:
+        raise _participant_api_unauthorised()
+
+    enrolled = db.scalar(
+        select(StudyEnrolment.id).where(
+            StudyEnrolment.organisation_id == invitation.organisation_id,
+            StudyEnrolment.study_id == invitation.study_id,
+            StudyEnrolment.participant_id == participant_row.id,
+        )
+    ) is not None
+    if not enrolled:
+        raise HTTPException(403, "Participant is not enrolled in this study.")
+
+    activity_row = db.scalar(
+        select(Activity).where(
+            Activity.id == activity_id,
+            Activity.organisation_id == invitation.organisation_id,
+            Activity.study_id == invitation.study_id,
+        )
+    )
+    if not activity_row:
+        raise HTTPException(404, "Activity not found.")
+
+    response_row = db.scalar(
+        select(ActivityResponse).where(
+            ActivityResponse.organisation_id == invitation.organisation_id,
+            ActivityResponse.study_id == invitation.study_id,
+            ActivityResponse.activity_id == activity_row.id,
+            ActivityResponse.participant_id == participant_row.id,
+        )
+    )
+
+    window = activity_window(study_row, activity_row, now())
+    result = ActivityDetailResponse(
+        activity=ActivitySummary(
+            activity_id=activity_row.id,
+            title=activity_row.title,
+            prompt=activity_row.prompt or None,
+            activity_type=activity_row.activity_type,
+            required=bool(activity_row.required),
+            position=activity_row.position,
+            availability=ActivityAvailability(
+                status=str(window.get("status") or "open"),
+                release_at=window.get("release_at"),
+                due_at=window.get("due_at"),
+            ),
+        )
+    )
+
+    if response_row:
+        response_item = ActivityDetailResponseItem(
+            response_id=response_row.id,
+            status=response_row.status,
+        )
+        value = _response_value_from_json(response_row.value_json)
+        if value is not None:
+            response_item.value = value
+        if response_row.submitted_at is not None:
+            response_item.submitted_at = response_row.submitted_at
+        if response_row.updated_at is not None:
+            response_item.updated_at = response_row.updated_at
+        result.response = response_item
+
+    _cache_control_no_store(response)
+    return result
 
 
 def _resolve_participant_api_activity_scope(

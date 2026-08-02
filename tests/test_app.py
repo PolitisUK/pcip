@@ -4970,6 +4970,290 @@ def test_participant_api_activities_rejects_when_participant_not_enrolled_in_inv
         assert denied.json() == {'detail': 'Participant is not enrolled in this study.'}
 
 
+def test_participant_api_activity_detail_requires_bearer_challenge():
+    context = _prepare_participant_api_activity_response_context('api-activity-detail-auth')
+
+    with client:
+        missing = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            follow_redirects=False,
+        )
+        assert missing.status_code == 401
+        assert missing.headers.get('www-authenticate') == 'Bearer'
+
+        invalid = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            headers={'Authorization': 'Bearer invalid-token'},
+            follow_redirects=False,
+        )
+        assert invalid.status_code == 401
+        assert invalid.headers.get('www-authenticate') == 'Bearer'
+
+
+def test_participant_api_activity_detail_cookie_only_does_not_authenticate_and_html_accept_stays_json():
+    context = _prepare_participant_api_activity_response_context('api-activity-detail-cookie-only')
+
+    with client:
+        landing = client.get(f"/join-study?token={context['token']}", follow_redirects=False)
+        assert landing.status_code == 303
+
+        cookie_only = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            follow_redirects=False,
+        )
+        assert cookie_only.status_code == 401
+        assert cookie_only.headers.get('www-authenticate') == 'Bearer'
+
+        html_accept = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            headers={'Accept': 'text/html'},
+            follow_redirects=False,
+        )
+        assert html_accept.status_code == 401
+        assert html_accept.headers.get('www-authenticate') == 'Bearer'
+        assert html_accept.headers.get('content-type', '').startswith('application/json')
+        assert 'csrf_session=' not in (html_accept.headers.get('set-cookie') or '')
+
+
+def test_participant_api_activity_detail_returns_contract_shape_and_read_after_write_projection():
+    from app.models import ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-activity-detail-shape')
+
+    with client:
+        initial = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert initial.status_code == 200
+        assert initial.headers.get('cache-control') == 'no-store'
+        initial_body = initial.json()
+        assert list(initial_body.keys()) == ['activity']
+        assert initial_body['activity']['activity_id'] == context['activity_id']
+        assert initial_body['activity']['title']
+        assert initial_body['activity']['activity_type']
+        assert initial_body['activity']['activity_type'] in {
+            'short_text', 'long_text', 'single_choice', 'multiple_choice', 'rating',
+            'slider', 'photo', 'audio', 'video', 'gps', 'ranking', 'file'
+        }
+        assert isinstance(initial_body['activity']['required'], bool)
+        assert isinstance(initial_body['activity']['position'], int)
+        assert initial_body['activity']['availability']['status'] in {'open', 'upcoming', 'closed'}
+        assert initial_body['activity']['availability']['release_at'] is None or isinstance(initial_body['activity']['availability']['release_at'], str)
+        assert initial_body['activity']['availability']['due_at'] is None or isinstance(initial_body['activity']['availability']['due_at'], str)
+        assert 'response' not in initial_body
+
+        drafted = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft detail answer', 'choices': ['alpha']},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert drafted.status_code == 200
+
+        with_draft = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert with_draft.status_code == 200
+        draft_body = with_draft.json()
+        assert draft_body['response']['status'] == 'draft'
+        assert draft_body['response']['value']['answer'] == 'draft detail answer'
+        assert draft_body['response']['value']['choices'] == ['alpha']
+        assert 'evidence_id' not in draft_body['response']['value']
+        assert 'scan_status' not in draft_body['response']['value']
+        assert draft_body['response'].get('submitted_at') is None
+        assert isinstance(draft_body['response']['updated_at'], str)
+
+        submitted = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'submitted detail answer', 'choices': ['beta']},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert submitted.status_code == 200
+
+        with_submitted = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert with_submitted.status_code == 200
+        submitted_body = with_submitted.json()
+        assert submitted_body['response']['status'] == 'submitted'
+        assert submitted_body['response']['value']['answer'] == 'submitted detail answer'
+        assert submitted_body['response']['value']['choices'] == ['beta']
+        assert isinstance(submitted_body['response']['submitted_at'], str)
+        assert isinstance(submitted_body['response']['updated_at'], str)
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == context['activity_id'],
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert row is not None
+        payload = json.loads(row.value_json or '{}')
+        payload['evidence_id'] = 123
+        row.value_json = json.dumps(payload)
+        db.commit()
+
+    with client:
+        with_evidence_reference = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert with_evidence_reference.status_code == 200
+        evidence_body = with_evidence_reference.json()
+        assert evidence_body['response']['value']['evidence_id'] == 123
+        assert 'scan_status' not in evidence_body['response']['value']
+        assert 'scan_detail' not in evidence_body['response']['value']
+
+
+def test_participant_api_activity_detail_enforces_scope_consent_enrolment_and_path_constraints():
+    from app.models import Activity, Organisation, Participant, Project, Study, StudyEnrolment, User
+
+    context = _prepare_participant_api_activity_response_context('api-activity-detail-scope')
+
+    with SessionLocal() as db:
+        scoped_activity = db.get(Activity, context['activity_id'])
+        assert scoped_activity is not None
+        scoped_study = db.get(Study, context['study_id'])
+        assert scoped_study is not None
+
+        second_study = Study(
+            organisation_id=scoped_study.organisation_id,
+            project_id=scoped_study.project_id,
+            title='Detail out of scope study',
+            code=unique_value('DETAIL-OOS').upper(),
+            description='Out-of-scope study for detail endpoint',
+            methodology=scoped_study.methodology,
+            status=scoped_study.status,
+            created_by_id=scoped_study.created_by_id,
+        )
+        db.add(second_study)
+        db.flush()
+        second_activity = Activity(
+            organisation_id=scoped_activity.organisation_id,
+            study_id=second_study.id,
+            title='Detail out of scope activity',
+            prompt='Should not be visible',
+            activity_type='long_text',
+            required=True,
+            position=1,
+            release_offset_days=0,
+            due_offset_days=None,
+        )
+        db.add(second_activity)
+
+        owner = db.scalar(select(User).where(User.organisation_id == scoped_study.organisation_id).order_by(User.id.asc()))
+        assert owner is not None
+        other_org = Organisation(name=unique_value('Detail Other Org'), slug=unique_value('detail-other-org').lower())
+        db.add(other_org)
+        db.flush()
+        other_project = Project(
+            organisation_id=other_org.id,
+            title='Other org project',
+            code=unique_value('DETOTHPROJ').upper(),
+            description='Other org project',
+            status='active',
+            created_by_id=owner.id,
+        )
+        db.add(other_project)
+        db.flush()
+        other_study = Study(
+            organisation_id=other_org.id,
+            project_id=other_project.id,
+            title='Other org study',
+            code=unique_value('DETOTHSTD').upper(),
+            description='Other org study',
+            methodology='diary',
+            status='active',
+            created_by_id=owner.id,
+        )
+        db.add(other_study)
+        db.flush()
+        other_activity = Activity(
+            organisation_id=other_org.id,
+            study_id=other_study.id,
+            title='Other org activity',
+            prompt='Should not be visible',
+            activity_type='long_text',
+            required=True,
+            position=1,
+            release_offset_days=0,
+            due_offset_days=None,
+        )
+        db.add(other_activity)
+        db.commit()
+        out_of_scope_activity_id = second_activity.id
+        cross_org_activity_id = other_activity.id
+
+    with client:
+        out_of_scope = client.get(
+            f"/api/v1/participant/activities/{out_of_scope_activity_id}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert out_of_scope.status_code == 404
+
+        cross_org = client.get(
+            f"/api/v1/participant/activities/{cross_org_activity_id}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert cross_org.status_code == 404
+
+        invalid_path = client.get(
+            '/api/v1/participant/activities/0',
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert invalid_path.status_code == 422
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
+        participant_row.consent_status = 'withdrawn'
+        db.commit()
+
+    with client:
+        withdrawn = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert withdrawn.status_code == 403
+        assert withdrawn.json() == {'detail': 'Participant consent is no longer active.'}
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
+        participant_row.consent_status = 'granted'
+        enrolment = db.scalar(
+            select(StudyEnrolment).where(
+                StudyEnrolment.study_id == context['study_id'],
+                StudyEnrolment.participant_id == context['participant_id'],
+            )
+        )
+        assert enrolment is not None
+        db.delete(enrolment)
+        db.commit()
+
+    with client:
+        not_enrolled = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert not_enrolled.status_code == 403
+        assert not_enrolled.json() == {'detail': 'Participant is not enrolled in this study.'}
+
+
 def _prepare_participant_api_activity_response_context(email_suffix: str):
     from app.models import Activity
 
