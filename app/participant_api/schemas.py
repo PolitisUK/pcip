@@ -174,6 +174,23 @@ class ActivityResponseValue(BaseModel):
     evidence_id: int | None = None
 
 
+class ActivityDetailResponseItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    response_id: int
+    status: Literal["draft", "submitted"]
+    value: ActivityResponseValue | None = None
+    submitted_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ActivityDetailResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    activity: ActivitySummary
+    response: ActivityDetailResponseItem | None = None
+
+
 class PortalResponseItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
