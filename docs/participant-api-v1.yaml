@@ -1,0 +1,1176 @@
+openapi: 3.1.0
+info:
+  title: Participant API v1 (Proposed)
+  version: 0.1.0-proposed
+  summary: Proposed participant mobile API surface, not yet implemented.
+  description: >-
+    Proposed OpenAPI contract for participant mobile functionality under
+    /api/v1/participant. This specification is documentation-only and does not
+    imply implemented endpoints.
+servers:
+  - url: https://example.invalid
+    description: Placeholder server. Production and staging URLs are environment-specific.
+security:
+  - ParticipantBearerAuth: []
+tags:
+  - name: Session
+  - name: Studies
+  - name: Activities
+  - name: Evidence
+  - name: Messaging
+  - name: Privacy
+paths:
+  /api/v1/participant/session/exchange:
+    post:
+      tags: [Session]
+      summary: Exchange invitation token for participant API session.
+      description: >-
+        Accepts an invitation token only at exchange time. Returns an opaque
+        bearer token backed by a server-side revocable session. Invitation token
+        is never returned.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionExchangeRequest'
+      responses:
+        '200':
+          description: Session created or resumed.
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionExchangeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/session:
+    get:
+      tags: [Session]
+      summary: Get current participant session context.
+      description: >-
+        Returns participant-scoped session and context derived server-side from
+        opaque bearer token. No participant identifiers are accepted from
+        client input.
+      responses:
+        '200':
+          description: Current session state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParticipantSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/session/logout:
+    post:
+      tags: [Session]
+      summary: Revoke current participant API session.
+      description: >-
+        Revokes server-side session associated with presented opaque bearer
+        token.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Session revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/studies:
+    get:
+      tags: [Studies]
+      summary: List participant-visible studies.
+      parameters:
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageLimit'
+      responses:
+        '200':
+          description: Participant studies.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudyListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/portal:
+    get:
+      tags: [Studies]
+      summary: Get participant portal summary.
+      description: >-
+        Returns a projection equivalent to the participant portal view model,
+        with participant-visible messages only.
+      parameters:
+        - in: query
+          name: study_id
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Optional future-compatible study selector.
+      responses:
+        '200':
+          description: Portal summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalSummaryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/activities:
+    get:
+      tags: [Activities]
+      summary: List activities with availability and response summary.
+      parameters:
+        - in: query
+          name: study_id
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Optional future-compatible study selector.
+      responses:
+        '200':
+          description: Activity list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/activities/{activity_id}:
+    get:
+      tags: [Activities]
+      summary: Get activity detail and participant response.
+      parameters:
+        - $ref: '#/components/parameters/ActivityId'
+      responses:
+        '200':
+          description: Activity detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/activities/{activity_id}/draft:
+    put:
+      tags: [Activities]
+      summary: Save draft response.
+      description: >-
+        Stores draft response state. Participant ownership and study context are
+        inferred from server-side session only.
+      parameters:
+        - $ref: '#/components/parameters/ActivityId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DraftResponseRequest'
+      responses:
+        '200':
+          description: Draft saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftResponseResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/activities/{activity_id}/submit:
+    post:
+      tags: [Activities]
+      summary: Submit final response.
+      parameters:
+        - $ref: '#/components/parameters/ActivityId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitResponseRequest'
+      responses:
+        '200':
+          description: Response submitted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmittedResponseResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/evidence:
+    post:
+      tags: [Evidence]
+      summary: Upload evidence for an activity.
+      description: >-
+        Proposed phase-1 multipart upload through API boundary. Storage keys,
+        blob credentials, and internal scanning internals are not exposed.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EvidenceUploadRequest'
+      responses:
+        '201':
+          description: Evidence accepted for scanning.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceUploadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/evidence/{evidence_id}/status:
+    get:
+      tags: [Evidence]
+      summary: Get evidence scan status and downloadability state.
+      parameters:
+        - $ref: '#/components/parameters/EvidenceId'
+      responses:
+        '200':
+          description: Evidence status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/messages:
+    get:
+      tags: [Messaging]
+      summary: List participant-visible messages.
+      parameters:
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageLimit'
+      responses:
+        '200':
+          description: Message list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Messaging]
+      summary: Send participant message.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMessageRequest'
+      responses:
+        '201':
+          description: Message sent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateMessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/privacy/withdrawal-request:
+    post:
+      tags: [Privacy]
+      summary: Submit consent withdrawal request.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawalRequest'
+      responses:
+        '202':
+          description: Withdrawal request accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyRequestAcknowledgement'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/privacy/deletion-request:
+    post:
+      tags: [Privacy]
+      summary: Submit deletion or anonymisation request.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeletionRequest'
+      responses:
+        '202':
+          description: Deletion request accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyRequestAcknowledgement'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    ParticipantBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Opaque
+      description: >-
+        Opaque bearer access token. No JWT claim dependence. Session validity,
+        revocation, ownership and scope are enforced server-side.
+  parameters:
+    ActivityId:
+      name: activity_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    EvidenceId:
+      name: evidence_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >-
+        Recommended for session exchange, logout, draft/save, submit, message,
+        evidence upload and privacy request writes to support safe retries.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    PageCursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+  headers:
+    RateLimit-Limit:
+      schema:
+        type: integer
+      description: Maximum requests in the active window.
+    RateLimit-Remaining:
+      schema:
+        type: integer
+      description: Remaining requests in the active window.
+    RateLimit-Reset:
+      schema:
+        type: integer
+      description: Epoch seconds for active window reset.
+    Retry-After:
+      schema:
+        type: integer
+      description: Seconds until request may be retried.
+  responses:
+    BadRequest:
+      description: Request failed validation or state checks.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Unauthorized:
+      description: Missing or invalid authentication.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Forbidden:
+      description: Authenticated but not authorized for scoped resource.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    NotFound:
+      description: Resource not found within participant scope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Conflict:
+      description: Request conflicts with current server-authoritative state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    PayloadTooLarge:
+      description: Uploaded payload exceeds configured limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    UnsupportedMediaType:
+      description: Unsupported content type or file type.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    ValidationError:
+      description: Structured validation errors.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+    RateLimited:
+      description: Too many requests.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/Retry-After'
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimit-Limit'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimit-Remaining'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimit-Reset'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RateLimitError'
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+  schemas:
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              examples: [bad_request]
+            message:
+              type: string
+            request_id:
+              type: string
+              nullable: true
+    ValidationErrorItem:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+        code:
+          type: string
+          nullable: true
+    ValidationErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code:
+              type: string
+              enum: [validation_error]
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                $ref: '#/components/schemas/ValidationErrorItem'
+            request_id:
+              type: string
+              nullable: true
+    RateLimitError:
+      allOf:
+        - $ref: '#/components/schemas/ApiError'
+        - type: object
+          properties:
+            retry_after_seconds:
+              type: integer
+              minimum: 1
+    DeviceHint:
+      type: object
+      additionalProperties: false
+      properties:
+        platform:
+          type: string
+          enum: [ios, android]
+        app_version:
+          type: string
+          maxLength: 40
+    SessionExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [invitation_token]
+      properties:
+        invitation_token:
+          type: string
+          minLength: 20
+          description: Invitation token accepted only at exchange.
+        device_hint:
+          $ref: '#/components/schemas/DeviceHint'
+    BearerSession:
+      type: object
+      additionalProperties: false
+      required: [access_token, token_type, expires_at, revocable]
+      properties:
+        access_token:
+          type: string
+          minLength: 24
+          description: Opaque token. Not a JWT.
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_at:
+          type: string
+          format: date-time
+        revocable:
+          type: boolean
+          const: true
+    InvitationContext:
+      type: object
+      additionalProperties: false
+      required: [study_id, invitation_status, expires_at, accepted_at]
+      properties:
+        study_id:
+          type: integer
+          minimum: 1
+        invitation_status:
+          type: string
+          enum: [valid, expired, revoked, accepted]
+        expires_at:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+    ParticipantSummary:
+      type: object
+      additionalProperties: false
+      required: [participant_id, display_name, consent_status]
+      properties:
+        participant_id:
+          type: integer
+          minimum: 1
+        display_name:
+          type: string
+        consent_status:
+          type: string
+          enum: [pending, granted, declined, withdrawn]
+    SessionExchangeResponse:
+      type: object
+      additionalProperties: false
+      required: [session, participant, invitation, next_action]
+      properties:
+        session:
+          $ref: '#/components/schemas/BearerSession'
+        participant:
+          $ref: '#/components/schemas/ParticipantSummary'
+        invitation:
+          $ref: '#/components/schemas/InvitationContext'
+        next_action:
+          type: string
+          enum: [consent_required, portal]
+    ParticipantSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [session, participant, study_scope]
+      properties:
+        session:
+          type: object
+          additionalProperties: false
+          required: [expires_at, revocable]
+          properties:
+            expires_at:
+              type: string
+              format: date-time
+            revocable:
+              type: boolean
+              const: true
+        participant:
+          $ref: '#/components/schemas/ParticipantSummary'
+        study_scope:
+          type: array
+          minItems: 1
+          items:
+            type: integer
+            minimum: 1
+    LogoutResponse:
+      type: object
+      additionalProperties: false
+      required: [revoked]
+      properties:
+        revoked:
+          type: boolean
+          const: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+    Pagination:
+      type: object
+      additionalProperties: false
+      required: [limit, has_more]
+      properties:
+        cursor:
+          type: string
+          nullable: true
+        next_cursor:
+          type: string
+          nullable: true
+        limit:
+          type: integer
+          minimum: 1
+        has_more:
+          type: boolean
+    StudySummary:
+      type: object
+      additionalProperties: false
+      required: [study_id, title, status, methodology, enrolled]
+      properties:
+        study_id:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+        methodology:
+          type: string
+        enrolled:
+          type: boolean
+    StudyListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/StudySummary'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    ActivityAvailability:
+      type: object
+      additionalProperties: false
+      required: [status, release_at, due_at]
+      properties:
+        status:
+          type: string
+          enum: [open, upcoming, closed]
+        release_at:
+          type: string
+          format: date-time
+          nullable: true
+        due_at:
+          type: string
+          format: date-time
+          nullable: true
+    ActivityResponseSummary:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [draft, submitted]
+        submitted_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+    ActivitySummary:
+      type: object
+      additionalProperties: false
+      required: [activity_id, title, activity_type, required, position, availability]
+      properties:
+        activity_id:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+        prompt:
+          type: string
+          nullable: true
+        activity_type:
+          type: string
+          enum:
+            - short_text
+            - long_text
+            - single_choice
+            - multiple_choice
+            - rating
+            - slider
+            - photo
+            - audio
+            - video
+            - gps
+            - ranking
+            - file
+        required:
+          type: boolean
+        position:
+          type: integer
+          minimum: 1
+        availability:
+          $ref: '#/components/schemas/ActivityAvailability'
+        response:
+          $ref: '#/components/schemas/ActivityResponseSummary'
+    ActivityListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivitySummary'
+    ActivityResponseValue:
+      type: object
+      additionalProperties: false
+      properties:
+        answer:
+          type: string
+          nullable: true
+        choices:
+          type: array
+          items:
+            type: string
+        evidence_id:
+          type: integer
+          minimum: 1
+          nullable: true
+    ActivityDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [activity, response]
+      properties:
+        activity:
+          $ref: '#/components/schemas/ActivitySummary'
+        response:
+          type: object
+          additionalProperties: false
+          properties:
+            response_id:
+              type: integer
+              minimum: 1
+            status:
+              type: string
+              enum: [draft, submitted]
+            value:
+              $ref: '#/components/schemas/ActivityResponseValue'
+            submitted_at:
+              type: string
+              format: date-time
+              nullable: true
+            updated_at:
+              type: string
+              format: date-time
+              nullable: true
+    DraftResponseRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        answer:
+          type: string
+          nullable: true
+        choices:
+          type: array
+          items:
+            type: string
+        evidence_id:
+          type: integer
+          minimum: 1
+          nullable: true
+    DraftResponseResult:
+      type: object
+      additionalProperties: false
+      required: [response_id, status, updated_at]
+      properties:
+        response_id:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          const: draft
+        updated_at:
+          type: string
+          format: date-time
+    SubmitResponseRequest:
+      allOf:
+        - $ref: '#/components/schemas/DraftResponseRequest'
+    SubmittedResponseResult:
+      type: object
+      additionalProperties: false
+      required: [response_id, status, submitted_at, updated_at]
+      properties:
+        response_id:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          const: submitted
+        submitted_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    EvidenceUploadRequest:
+      type: object
+      required: [activity_id, file]
+      properties:
+        activity_id:
+          type: integer
+          minimum: 1
+        file:
+          type: string
+          format: binary
+        note:
+          type: string
+          maxLength: 2000
+          nullable: true
+    EvidenceScanStatus:
+      type: string
+      enum: [pending, clean, infected, scan_failed]
+    EvidenceMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        [evidence_id, activity_id, original_name, content_type, size_bytes, scan_status, created_at]
+      properties:
+        evidence_id:
+          type: integer
+          minimum: 1
+        activity_id:
+          type: integer
+          minimum: 1
+        original_name:
+          type: string
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+          minimum: 0
+        scan_status:
+          $ref: '#/components/schemas/EvidenceScanStatus'
+        scan_detail:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    EvidenceUploadResponse:
+      type: object
+      additionalProperties: false
+      required: [evidence]
+      properties:
+        evidence:
+          $ref: '#/components/schemas/EvidenceMetadata'
+    EvidenceStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [evidence, downloadable]
+      properties:
+        evidence:
+          $ref: '#/components/schemas/EvidenceMetadata'
+        downloadable:
+          type: boolean
+          description: True only when scan_status equals clean.
+    ParticipantMessage:
+      type: object
+      additionalProperties: false
+      required: [message_id, sender_type, body, created_at]
+      properties:
+        message_id:
+          type: integer
+          minimum: 1
+        sender_type:
+          type: string
+          enum: [participant, researcher]
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    MessageListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParticipantMessage'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    CreateMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+    CreateMessageResponse:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message:
+          $ref: '#/components/schemas/ParticipantMessage'
+    PrivacyRequestAcknowledgement:
+      type: object
+      additionalProperties: false
+      required: [request_id, request_type, status, submitted_at]
+      properties:
+        request_id:
+          type: integer
+          minimum: 1
+        request_type:
+          type: string
+          enum: [withdrawal, deletion]
+        status:
+          type: string
+          enum: [received]
+        submitted_at:
+          type: string
+          format: date-time
+        message:
+          type: string
+          nullable: true
+    WithdrawalRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        scope:
+          type: string
+          enum: [study, all]
+          default: study
+        study_id:
+          type: integer
+          minimum: 1
+          nullable: true
+        reason:
+          type: string
+          maxLength: 2000
+          nullable: true
+        contact_preference:
+          type: string
+          enum: [email, sms, phone, none]
+          nullable: true
+    DeletionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        mode_preference:
+          type: string
+          enum: [auto, delete, anonymise]
+          default: auto
+        reason:
+          type: string
+          maxLength: 2000
+          nullable: true
+        study_id:
+          type: integer
+          minimum: 1
+          nullable: true
+x-contract-notes:
+  implementation_status: proposed_only
+  notes:
+    - This contract is not yet implemented in FastAPI routes.
+    - Participant identity, ownership and scope are inferred exclusively server-side.
+    - Invitation tokens are accepted only at session exchange and never returned.
+    - Evidence download remains blocked unless scan status is exactly clean.

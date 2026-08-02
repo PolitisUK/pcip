@@ -542,3 +542,10 @@ Largest unresolved technical risk:
 - Approval for phased evidence strategy: multipart first, staged resumable SAS session model second.
 - Approval to add participant-facing withdrawal and deletion request intake workflows.
 - Approval of token replay controls for participant invitation exchange.
+
+## OpenAPI contract reference
+
+The proposed OpenAPI 3.1 contract for this design is documented in
+docs/participant-api-v1.yaml.
+
+This specification is proposed only and not yet implemented in application routes.
