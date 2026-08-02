@@ -78,6 +78,10 @@ from .participant_api.auth import (
     resolve_participant_api_session,
 )
 from .participant_api.schemas import (
+    ActivityAvailability,
+    ActivityListResponse,
+    ActivityResponseSummary,
+    ActivitySummary,
     BearerSession,
     InvitationContext,
     LogoutResponse,
@@ -2364,6 +2368,108 @@ def participant_api_studies(
         ),
     )
 
+
+@app.get(
+    "/api/v1/participant/activities",
+    response_model=ActivityListResponse,
+    response_model_exclude_unset=True,
+)
+def participant_api_activities(
+    request: Request,
+    response: Response,
+    study_id: int | None = Query(default=None, ge=1),
+    db: Session = Depends(get_db),
+):
+    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
+    if not invitation.accepted_at:
+        raise HTTPException(403, "Participant consent has not been accepted.")
+    if participant_row.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(403, "Participant consent is no longer active.")
+    if study_id is not None and study_id != invitation.study_id:
+        raise HTTPException(403, "Requested study is outside participant scope.")
+
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_portal_read",
+        ip_limit=settings.rate_limit_portal_write_ip,
+        account_key=f"invitation:{invitation.id}",
+        account_limit=settings.rate_limit_portal_write_token,
+    )
+
+    study_row = db.scalar(
+        select(Study).where(
+            Study.id == invitation.study_id,
+            Study.organisation_id == invitation.organisation_id,
+        )
+    )
+    if not study_row:
+        raise _participant_api_unauthorised()
+
+    enrolled = db.scalar(
+        select(StudyEnrolment.id).where(
+            StudyEnrolment.organisation_id == invitation.organisation_id,
+            StudyEnrolment.study_id == invitation.study_id,
+            StudyEnrolment.participant_id == participant_row.id,
+        )
+    ) is not None
+    if not enrolled:
+        raise HTTPException(403, "Participant is not enrolled in this study.")
+
+    activities = list(
+        db.scalars(
+            select(Activity)
+            .where(
+                Activity.organisation_id == invitation.organisation_id,
+                Activity.study_id == invitation.study_id,
+            )
+            .order_by(Activity.position.asc(), Activity.id.asc())
+        )
+    )
+
+    response_rows = list(
+        db.scalars(
+            select(ActivityResponse).where(
+                ActivityResponse.organisation_id == invitation.organisation_id,
+                ActivityResponse.study_id == invitation.study_id,
+                ActivityResponse.participant_id == participant_row.id,
+            )
+        )
+    )
+    response_by_activity_id = {row.activity_id: row for row in response_rows}
+
+    data: list[ActivitySummary] = []
+    for activity_row in activities:
+        window = activity_window(study_row, activity_row, now())
+        response_row = response_by_activity_id.get(activity_row.id)
+        response_summary = (
+            ActivityResponseSummary(
+                status=response_row.status,
+                submitted_at=response_row.submitted_at,
+                updated_at=response_row.updated_at,
+            )
+            if response_row
+            else None
+        )
+        item = ActivitySummary(
+            activity_id=activity_row.id,
+            title=activity_row.title,
+            prompt=activity_row.prompt or None,
+            activity_type=activity_row.activity_type,
+            required=bool(activity_row.required),
+            position=activity_row.position,
+            availability=ActivityAvailability(
+                status=str(window.get("status") or "open"),
+                release_at=window.get("release_at"),
+                due_at=window.get("due_at"),
+            ),
+        )
+        if response_summary:
+            item.response = response_summary
+        data.append(item)
+
+    _cache_control_no_store(response)
+    return ActivityListResponse(data=data)
 
 @app.delete("/api/v1/participant/session", response_model=LogoutResponse)
 def participant_api_session_logout(

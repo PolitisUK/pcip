@@ -71,6 +71,41 @@ class StudyListResponse(BaseModel):
     pagination: Pagination
 
 
+class ActivityAvailability(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    release_at: datetime | None = None
+    due_at: datetime | None = None
+
+
+class ActivityResponseSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    submitted_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ActivitySummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    activity_id: int
+    title: str
+    prompt: str | None = None
+    activity_type: str
+    required: bool
+    position: int
+    availability: ActivityAvailability
+    response: ActivityResponseSummary | None = None
+
+
+class ActivityListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    data: list[ActivitySummary]
+
+
 class SessionExchangeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
