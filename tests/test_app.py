@@ -4452,3 +4452,118 @@ def test_participant_api_auth_increment_preserves_html_join_study_and_portal_flo
         assert consent.headers['location'] == '/participant-portal'
         portal = client.get('/participant-portal')
         assert portal.status_code == 200
+
+
+def test_participant_api_studies_requires_valid_bearer_and_returns_www_authenticate_header():
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-studies-auth')
+
+    with client:
+        exchange = _exchange_participant_api_session(token)
+        assert exchange.status_code == 200
+
+        missing = client.get('/api/v1/participant/studies', follow_redirects=False)
+        assert missing.status_code == 401
+        assert missing.headers.get('www-authenticate') == 'Bearer'
+
+        malformed = client.get(
+            '/api/v1/participant/studies',
+            headers={'Authorization': 'Bearer'},
+            follow_redirects=False,
+        )
+        assert malformed.status_code == 401
+        assert malformed.headers.get('www-authenticate') == 'Bearer'
+
+        invalid = client.get(
+            '/api/v1/participant/studies',
+            headers={'Authorization': 'Bearer invalid-value'},
+            follow_redirects=False,
+        )
+        assert invalid.status_code == 401
+        assert invalid.headers.get('www-authenticate') == 'Bearer'
+
+
+def test_participant_api_studies_rejects_unaccepted_invitation_with_forbidden():
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-studies-forbidden')
+
+    with client:
+        exchange = _exchange_participant_api_session(token)
+        assert exchange.status_code == 200
+        api_token = exchange.json()['session']['access_token']
+
+        studies = client.get(
+            '/api/v1/participant/studies',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert studies.status_code == 403
+
+
+def test_participant_api_studies_returns_scoped_contract_shape_and_no_store_header():
+    token, participant_id, study_id = _create_participant_invitation_for_api('api-studies-success')
+
+    with client:
+        consent = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert consent.status_code == 303
+        accepted = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert accepted.status_code == 303
+
+        exchange = _exchange_participant_api_session(token)
+        assert exchange.status_code == 200
+        api_token = exchange.json()['session']['access_token']
+
+        studies = client.get(
+            '/api/v1/participant/studies?limit=10',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert studies.status_code == 200
+        assert studies.headers.get('cache-control') == 'no-store'
+        body = studies.json()
+        assert list(body.keys()) == ['data', 'pagination']
+        assert isinstance(body['data'], list)
+        assert len(body['data']) == 1
+        item = body['data'][0]
+        assert item['study_id'] == study_id
+        assert item['enrolled'] is True
+        assert item['title']
+        assert item['status']
+        assert item['methodology']
+        assert body['pagination'] == {
+            'cursor': None,
+            'next_cursor': None,
+            'limit': 10,
+            'has_more': False,
+        }
+        assert item.get('participant_id') is None
+        assert participant_id > 0
+
+
+def test_participant_api_studies_rejects_withdrawn_consent_even_when_invitation_was_accepted():
+    from app.models import Participant
+
+    token, participant_id, _study_id = _create_participant_invitation_for_api('api-studies-consent-withdrawn')
+
+    with client:
+        consent = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert consent.status_code == 303
+        accepted = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert accepted.status_code == 303
+
+        exchange = _exchange_participant_api_session(token)
+        assert exchange.status_code == 200
+        api_token = exchange.json()['session']['access_token']
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, participant_id)
+        assert participant_row is not None
+        participant_row.consent_status = 'withdrawn'
+        db.commit()
+
+    with client:
+        denied = client.get(
+            '/api/v1/participant/studies',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert denied.status_code == 403
+        assert denied.json() == {'detail': 'Participant consent is no longer active.'}

@@ -8,7 +8,7 @@ import csv, io, json, secrets
 from collections import OrderedDict, deque
 from threading import Lock
 from .csrf import get_csrf_token, csrf_protect
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -81,11 +81,14 @@ from .participant_api.schemas import (
     BearerSession,
     InvitationContext,
     LogoutResponse,
+    Pagination,
     ParticipantSessionResponse,
     ParticipantSummary,
     SessionExchangeRequest,
     SessionExchangeResponse,
     SessionInfo,
+    StudyListResponse,
+    StudySummary,
 )
 
 VERSION = "0.6.0"
@@ -2298,6 +2301,67 @@ def participant_api_session(
             consent_status=participant_row.consent_status,
         ),
         study_scope=[invitation.study_id],
+    )
+
+
+@app.get("/api/v1/participant/studies", response_model=StudyListResponse)
+def participant_api_studies(
+    request: Request,
+    response: Response,
+    cursor: str | None = Query(default=None, min_length=1),
+    limit: int = Query(default=25, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
+    if not invitation.accepted_at:
+        raise HTTPException(403, "Participant consent has not been accepted.")
+    if participant_row.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(403, "Participant consent is no longer active.")
+
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_portal_read",
+        ip_limit=settings.rate_limit_portal_write_ip,
+        account_key=f"invitation:{invitation.id}",
+        account_limit=settings.rate_limit_portal_write_token,
+    )
+
+    study_row = db.scalar(
+        select(Study).where(
+            Study.id == invitation.study_id,
+            Study.organisation_id == invitation.organisation_id,
+        )
+    )
+    if not study_row:
+        raise _participant_api_unauthorised()
+
+    enrolled = db.scalar(
+        select(StudyEnrolment.id).where(
+            StudyEnrolment.organisation_id == invitation.organisation_id,
+            StudyEnrolment.study_id == invitation.study_id,
+            StudyEnrolment.participant_id == participant_row.id,
+        )
+    ) is not None
+
+    _cache_control_no_store(response)
+    return StudyListResponse(
+        data=[
+            StudySummary(
+                study_id=study_row.id,
+                title=study_row.title,
+                description=study_row.description,
+                status=study_row.status,
+                methodology=study_row.methodology,
+                enrolled=enrolled,
+            )
+        ],
+        pagination=Pagination(
+            cursor=cursor,
+            next_cursor=None,
+            limit=limit,
+            has_more=False,
+        ),
     )
 
 

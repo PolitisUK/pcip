@@ -44,6 +44,33 @@ class ParticipantSummary(BaseModel):
     consent_status: str
 
 
+class StudySummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    study_id: int
+    title: str
+    description: str | None = None
+    status: str
+    methodology: str
+    enrolled: bool
+
+
+class Pagination(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cursor: str | None = None
+    next_cursor: str | None = None
+    limit: int
+    has_more: bool
+
+
+class StudyListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    data: list[StudySummary]
+    pagination: Pagination
+
+
 class SessionExchangeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
