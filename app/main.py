@@ -8,7 +8,7 @@ import csv, io, json, secrets
 from collections import OrderedDict, deque
 from threading import Lock
 from .csrf import get_csrf_token, csrf_protect
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response, Query
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response, Query, Header, Path as ApiPath
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import select, func, or_, text
+from sqlalchemy import select, func, or_, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .config import settings, validate_runtime_settings
@@ -79,6 +79,8 @@ from .participant_api.auth import (
 )
 from .participant_api.schemas import (
     ActivityAvailability,
+    DraftResponseRequest,
+    DraftResponseResult,
     ActivityListResponse,
     ActivityResponseSummary,
     ActivityResponseValue,
@@ -95,6 +97,8 @@ from .participant_api.schemas import (
     SessionExchangeRequest,
     SessionExchangeResponse,
     SessionInfo,
+    SubmitResponseRequest,
+    SubmittedResponseResult,
     StudyListResponse,
     StudySummary,
 )
@@ -2625,6 +2629,275 @@ def participant_api_activities(
 
     _cache_control_no_store(response)
     return ActivityListResponse(data=data)
+
+
+def _resolve_participant_api_activity_scope(
+    request: Request,
+    db: Session,
+    activity_id: int,
+) -> tuple[ParticipantInvitation, Participant, Study, Activity]:
+    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
+    if not invitation.accepted_at:
+        raise HTTPException(403, "Participant consent has not been accepted.")
+    if participant_row.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(403, "Participant consent is no longer active.")
+
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_portal_write",
+        ip_limit=settings.rate_limit_portal_write_ip,
+        account_key=f"invitation:{invitation.id}",
+        account_limit=settings.rate_limit_portal_write_token,
+    )
+
+    study_row = db.scalar(
+        select(Study).where(
+            Study.id == invitation.study_id,
+            Study.organisation_id == invitation.organisation_id,
+        )
+    )
+    if not study_row:
+        raise _participant_api_unauthorised()
+
+    enrolled = db.scalar(
+        select(StudyEnrolment.id).where(
+            StudyEnrolment.organisation_id == invitation.organisation_id,
+            StudyEnrolment.study_id == invitation.study_id,
+            StudyEnrolment.participant_id == participant_row.id,
+        )
+    ) is not None
+    if not enrolled:
+        raise HTTPException(403, "Participant is not enrolled in this study.")
+
+    activity_row = db.scalar(
+        select(Activity).where(
+            Activity.id == activity_id,
+            Activity.organisation_id == invitation.organisation_id,
+            Activity.study_id == invitation.study_id,
+        )
+    )
+    if not activity_row:
+        raise HTTPException(404, "Activity not found.")
+
+    window = activity_window(study_row, activity_row, now())
+    if window["status"] == "upcoming":
+        raise HTTPException(409, "This activity is not available yet.")
+    if window["status"] == "closed":
+        raise HTTPException(409, "The due date for this activity has passed.")
+
+    return invitation, participant_row, study_row, activity_row
+
+
+def _participant_response_value_from_payload(payload: DraftResponseRequest) -> dict[str, object]:
+    cleaned_choices = [x.strip() for x in payload.choices if isinstance(x, str) and x.strip()]
+    value: dict[str, object] = {
+        "answer": payload.answer or "",
+        "choices": cleaned_choices,
+    }
+    if payload.evidence_id is not None:
+        value["evidence_id"] = payload.evidence_id
+    return value
+
+
+def _update_activity_response_if_not_submitted(
+    db: Session,
+    response_id: int,
+    value: dict[str, object],
+    action: str,
+) -> bool:
+    submitted_at = now() if action == "submit" else None
+    status = "submitted" if action == "submit" else "draft"
+    result = db.execute(
+        update(ActivityResponse)
+        .where(
+            ActivityResponse.id == response_id,
+            ActivityResponse.status != "submitted",
+        )
+        .values(
+            value_json=json.dumps(value),
+            status=status,
+            submitted_at=submitted_at,
+            updated_at=now(),
+        )
+    )
+    return result.rowcount == 1
+
+
+def _require_json_content_type(request: Request) -> None:
+    content_type = (request.headers.get("content-type") or "").strip().lower()
+    if not content_type.startswith("application/json"):
+        raise HTTPException(415, "Unsupported content type.")
+    return None
+
+
+@app.put("/api/v1/participant/activities/{activity_id}/draft", response_model=DraftResponseResult)
+def participant_api_activity_response_draft(
+    payload: DraftResponseRequest,
+    request: Request,
+    response: Response,
+    activity_id: int = ApiPath(..., ge=1),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
+    _content_type_ok: None = Depends(_require_json_content_type),
+    db: Session = Depends(get_db),
+):
+    del idempotency_key
+    invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
+    value = _participant_response_value_from_payload(payload)
+
+    existing = db.scalar(
+        select(ActivityResponse).where(
+            ActivityResponse.organisation_id == invitation.organisation_id,
+            ActivityResponse.study_id == invitation.study_id,
+            ActivityResponse.activity_id == activity_row.id,
+            ActivityResponse.participant_id == participant_row.id,
+        )
+    )
+    if existing and existing.status == "submitted":
+        raise HTTPException(409, "Activity response has already been submitted.")
+
+    if payload.evidence_id is not None:
+        evidence_ok = db.scalar(
+            select(EvidenceFile.id).where(
+                EvidenceFile.id == payload.evidence_id,
+                EvidenceFile.organisation_id == invitation.organisation_id,
+                EvidenceFile.study_id == invitation.study_id,
+                EvidenceFile.activity_id == activity_row.id,
+                EvidenceFile.participant_id == participant_row.id,
+            )
+        ) is not None
+        if not evidence_ok:
+            raise HTTPException(400, "Evidence reference is invalid for this activity.")
+
+    try:
+        response_row = existing or resolve_or_create_activity_response(
+            db,
+            organisation_id=invitation.organisation_id,
+            study_id=invitation.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+        )
+        if existing:
+            if not _update_activity_response_if_not_submitted(db, response_row.id, value, "draft"):
+                raise HTTPException(409, "Activity response has already been submitted.")
+            db.refresh(response_row)
+        else:
+            apply_response_action(response_row, value, "draft", now())
+        audit(
+            db,
+            invitation.organisation_id,
+            None,
+            "activity.draft",
+            "activity_response",
+            response_row.id,
+            str(activity_row.id),
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Activity response state conflict.")
+    except Exception:
+        db.rollback()
+        raise
+
+    _cache_control_no_store(response)
+    return DraftResponseResult(
+        response_id=response_row.id,
+        status="draft",
+        updated_at=response_row.updated_at,
+    )
+
+
+@app.post("/api/v1/participant/activities/{activity_id}/submit", response_model=SubmittedResponseResult)
+def participant_api_activity_response_submit(
+    payload: SubmitResponseRequest,
+    request: Request,
+    response: Response,
+    activity_id: int = ApiPath(..., ge=1),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
+    _content_type_ok: None = Depends(_require_json_content_type),
+    db: Session = Depends(get_db),
+):
+    del idempotency_key
+    invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
+    value = _participant_response_value_from_payload(payload)
+    has_answer = bool((payload.answer or "").strip())
+    has_choices = bool(value.get("choices"))
+    has_evidence = payload.evidence_id is not None
+    if activity_row.required and not has_answer and not has_choices and not has_evidence:
+        raise HTTPException(400, "A response is required.")
+
+    if payload.evidence_id is not None:
+        evidence_ok = db.scalar(
+            select(EvidenceFile.id).where(
+                EvidenceFile.id == payload.evidence_id,
+                EvidenceFile.organisation_id == invitation.organisation_id,
+                EvidenceFile.study_id == invitation.study_id,
+                EvidenceFile.activity_id == activity_row.id,
+                EvidenceFile.participant_id == participant_row.id,
+            )
+        ) is not None
+        if not evidence_ok:
+            raise HTTPException(400, "Evidence reference is invalid for this activity.")
+
+    existing = db.scalar(
+        select(ActivityResponse).where(
+            ActivityResponse.organisation_id == invitation.organisation_id,
+            ActivityResponse.study_id == invitation.study_id,
+            ActivityResponse.activity_id == activity_row.id,
+            ActivityResponse.participant_id == participant_row.id,
+        )
+    )
+    if existing and existing.status == "submitted":
+        existing_value = json.loads(existing.value_json or "{}")
+        if existing_value != value:
+            raise HTTPException(409, "Activity response has already been submitted.")
+        _cache_control_no_store(response)
+        return SubmittedResponseResult(
+            response_id=existing.id,
+            status="submitted",
+            submitted_at=existing.submitted_at or existing.updated_at,
+            updated_at=existing.updated_at,
+        )
+
+    try:
+        response_row = existing or resolve_or_create_activity_response(
+            db,
+            organisation_id=invitation.organisation_id,
+            study_id=invitation.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+        )
+        if existing:
+            if not _update_activity_response_if_not_submitted(db, response_row.id, value, "submit"):
+                raise HTTPException(409, "Activity response has already been submitted.")
+            db.refresh(response_row)
+        else:
+            apply_response_action(response_row, value, "submit", now())
+        audit(
+            db,
+            invitation.organisation_id,
+            None,
+            "activity.submitted",
+            "activity_response",
+            response_row.id,
+            str(activity_row.id),
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Activity response state conflict.")
+    except Exception:
+        db.rollback()
+        raise
+
+    _cache_control_no_store(response)
+    return SubmittedResponseResult(
+        response_id=response_row.id,
+        status="submitted",
+        submitted_at=response_row.submitted_at or response_row.updated_at,
+        updated_at=response_row.updated_at,
+    )
 
 @app.delete("/api/v1/participant/session", response_model=LogoutResponse)
 def participant_api_session_logout(

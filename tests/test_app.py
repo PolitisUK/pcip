@@ -4968,3 +4968,523 @@ def test_participant_api_activities_rejects_when_participant_not_enrolled_in_inv
         )
         assert denied.status_code == 403
         assert denied.json() == {'detail': 'Participant is not enrolled in this study.'}
+
+
+def _prepare_participant_api_activity_response_context(email_suffix: str):
+    from app.models import Activity
+
+    token, participant_id, study_id = _create_participant_invitation_for_api(email_suffix)
+
+    with client:
+        landing = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert landing.status_code == 303
+        consent = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert consent.status_code == 303
+
+        exchange = _exchange_participant_api_session(token)
+        assert exchange.status_code == 200
+        api_token = exchange.json()['session']['access_token']
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(
+            select(Activity)
+            .where(Activity.study_id == study_id)
+            .order_by(Activity.position.asc(), Activity.id.asc())
+        )
+        assert activity_row is not None
+        activity_id = activity_row.id
+
+    return {
+        'token': token,
+        'api_token': api_token,
+        'participant_id': participant_id,
+        'study_id': study_id,
+        'activity_id': activity_id,
+    }
+
+
+def test_participant_api_activity_response_requires_bearer_challenge():
+    context = _prepare_participant_api_activity_response_context('api-activity-response-auth')
+
+    with client:
+        missing = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft one'},
+            follow_redirects=False,
+        )
+        assert missing.status_code == 401
+        assert missing.headers.get('www-authenticate') == 'Bearer'
+
+        invalid = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft one'},
+            headers={'Authorization': 'Bearer invalid-token'},
+            follow_redirects=False,
+        )
+        assert invalid.status_code == 401
+        assert invalid.headers.get('www-authenticate') == 'Bearer'
+
+
+def test_participant_api_activity_response_cookie_only_does_not_authenticate_and_html_accept_stays_json():
+    context = _prepare_participant_api_activity_response_context('api-activity-response-cookie-only')
+
+    with client:
+        landing = client.get(f"/join-study?token={context['token']}", follow_redirects=False)
+        assert landing.status_code == 303
+
+        cookie_only = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft cookie only'},
+            follow_redirects=False,
+        )
+        assert cookie_only.status_code == 401
+        assert cookie_only.headers.get('www-authenticate') == 'Bearer'
+
+        html_accept = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft html accept'},
+            headers={'Accept': 'text/html'},
+            follow_redirects=False,
+        )
+        assert html_accept.status_code == 401
+        assert html_accept.headers.get('www-authenticate') == 'Bearer'
+        assert html_accept.headers.get('content-type', '').startswith('application/json')
+        assert 'csrf_session=' not in (html_accept.headers.get('set-cookie') or '')
+
+
+def test_participant_api_activity_response_draft_create_and_update_return_single_row():
+    from app.models import ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-draft-update')
+
+    with client:
+        created = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft one', 'choices': []},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert created.status_code == 200
+        assert created.headers.get('cache-control') == 'no-store'
+        first_body = created.json()
+        assert first_body['status'] == 'draft'
+        assert first_body['response_id'] > 0
+
+        updated = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft two', 'choices': ['alpha']},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert updated.status_code == 200
+        second_body = updated.json()
+        assert second_body['status'] == 'draft'
+        assert second_body['response_id'] == first_body['response_id']
+
+    with SessionLocal() as db:
+        rows = list(
+            db.scalars(
+                select(ActivityResponse).where(
+                    ActivityResponse.activity_id == context['activity_id'],
+                    ActivityResponse.participant_id == context['participant_id'],
+                )
+            )
+        )
+        assert len(rows) == 1
+        assert rows[0].submitted_at is None
+        assert json.loads(rows[0].value_json)['answer'] == 'draft two'
+
+
+def test_participant_api_activity_response_submit_sets_final_state_and_is_idempotent_for_identical_payload():
+    from app.models import ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-submit')
+
+    with client:
+        submitted = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'final answer', 'choices': []},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert submitted.status_code == 200
+        submitted_body = submitted.json()
+        assert submitted_body['status'] == 'submitted'
+        assert submitted_body['response_id'] > 0
+        assert submitted_body['submitted_at']
+        assert submitted_body['updated_at']
+
+        repeat = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'final answer', 'choices': []},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert repeat.status_code == 200
+        assert repeat.json()['response_id'] == submitted_body['response_id']
+
+        conflict = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'different final answer', 'choices': []},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert conflict.status_code == 409
+
+        draft_after_submit = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'attempted edit after submit'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert draft_after_submit.status_code == 409
+
+        activities = client.get(
+            '/api/v1/participant/activities',
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert activities.status_code == 200
+        by_id = {item['activity_id']: item for item in activities.json()['data']}
+        assert by_id[context['activity_id']]['response']['status'] == 'submitted'
+        assert by_id[context['activity_id']]['response']['submitted_at'] is not None
+
+        portal = client.get(
+            '/api/v1/participant/portal',
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert portal.status_code == 200
+        portal_items = {item['activity_id']: item for item in portal.json()['responses']}
+        assert portal_items[context['activity_id']]['status'] == 'submitted'
+        assert portal_items[context['activity_id']]['submitted_at'] is not None
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == context['activity_id'],
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert row is not None
+        assert row.status == 'submitted'
+        assert row.submitted_at is not None
+
+
+def test_participant_api_activity_response_rejects_out_of_scope_consent_withdrawn_and_missing_enrolment():
+    from app.models import Activity, Participant, Study, StudyEnrolment
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-scope')
+
+    with SessionLocal() as db:
+        scoped_activity = db.get(Activity, context['activity_id'])
+        assert scoped_activity is not None
+        scoped_study = db.get(Study, context['study_id'])
+        assert scoped_study is not None
+        second_study = Study(
+            organisation_id=scoped_study.organisation_id,
+            project_id=scoped_study.project_id,
+            title='Out of scope study',
+            code=unique_value('OUTSCOPE').upper(),
+            description='Used by API scope regression tests.',
+            methodology=scoped_study.methodology,
+            status=scoped_study.status,
+            created_by_id=scoped_study.created_by_id,
+        )
+        db.add(second_study)
+        db.flush()
+        second_activity = Activity(
+            organisation_id=scoped_activity.organisation_id,
+            study_id=second_study.id,
+            title='Out of scope activity',
+            prompt='Should return not found for this participant scope',
+            activity_type='long_text',
+            required=True,
+            position=1,
+            release_offset_days=0,
+            due_offset_days=None,
+        )
+        db.add(second_activity)
+        db.commit()
+        out_of_scope_id = second_activity.id
+
+    with client:
+        wrong_scope = client.put(
+            f'/api/v1/participant/activities/{out_of_scope_id}/draft',
+            json={'answer': 'should not be allowed'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert wrong_scope.status_code == 404
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
+        participant_row.consent_status = 'withdrawn'
+        db.commit()
+
+    with client:
+        withdrawn = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'denied by consent'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert withdrawn.status_code == 403
+        assert withdrawn.json() == {'detail': 'Participant consent is no longer active.'}
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
+        participant_row.consent_status = 'granted'
+        enrolment = db.scalar(
+            select(StudyEnrolment).where(
+                StudyEnrolment.study_id == context['study_id'],
+                StudyEnrolment.participant_id == context['participant_id'],
+            )
+        )
+        assert enrolment is not None
+        db.delete(enrolment)
+        db.commit()
+
+    with client:
+        not_enrolled = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'denied by enrolment'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert not_enrolled.status_code == 403
+        assert not_enrolled.json() == {'detail': 'Participant is not enrolled in this study.'}
+
+
+def test_participant_api_activity_response_rejects_invalid_payload_and_leaves_no_partial_rows():
+    from app.models import ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-invalid-payload')
+
+    with client:
+        invalid = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft', 'evidence_id': 0},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert invalid.status_code == 422
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == context['activity_id'],
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert row is None
+
+
+def test_participant_api_activity_response_submit_required_activity_needs_value_and_has_no_partial_write():
+    from app.models import Activity, ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-required')
+
+    with SessionLocal() as db:
+        activity_row = db.get(Activity, context['activity_id'])
+        assert activity_row is not None
+        activity_row.required = True
+        db.commit()
+
+    with client:
+        empty_submit = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': '', 'choices': []},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert empty_submit.status_code == 400
+        assert empty_submit.json() == {'detail': 'A response is required.'}
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == context['activity_id'],
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert row is None
+
+
+def test_participant_api_activity_response_submit_required_activity_rejects_blank_choices_only():
+    from app.models import Activity, ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-required-blank-choices')
+
+    with SessionLocal() as db:
+        activity_row = db.get(Activity, context['activity_id'])
+        assert activity_row is not None
+        activity_row.required = True
+        db.commit()
+
+    with client:
+        blank_choice_submit = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': '', 'choices': ['   ', '']},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert blank_choice_submit.status_code == 400
+        assert blank_choice_submit.json() == {'detail': 'A response is required.'}
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == context['activity_id'],
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert row is None
+
+
+def test_participant_api_activity_response_rejects_unsupported_content_type():
+    context = _prepare_participant_api_activity_response_context('api-activity-response-content-type')
+
+    with client:
+        response = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            data='answer=text-body',
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Content-Type': 'text/plain',
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 415
+
+
+def test_participant_api_activity_response_idempotency_key_header_bounds_are_enforced():
+    context = _prepare_participant_api_activity_response_context('api-activity-response-idempotency-header')
+
+    with client:
+        too_short = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft with short key'},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'short7!',
+            },
+            follow_redirects=False,
+        )
+        assert too_short.status_code == 422
+
+        too_long = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft with long key'},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'x' * 129,
+            },
+            follow_redirects=False,
+        )
+        assert too_long.status_code == 422
+
+
+def test_participant_api_activity_response_integrity_race_maps_to_conflict(monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+    import app.main as main_module
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-integrity-race')
+
+    def _raise_integrity_error(*_args, **_kwargs):
+        raise IntegrityError('insert', {}, Exception('unique conflict'))
+
+    monkeypatch.setattr(main_module, 'resolve_or_create_activity_response', _raise_integrity_error)
+
+    with client:
+        draft_conflict = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft attempt'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert draft_conflict.status_code == 409
+        assert draft_conflict.json() == {'detail': 'Activity response state conflict.'}
+
+        submit_conflict = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'submit attempt'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert submit_conflict.status_code == 409
+        assert submit_conflict.json() == {'detail': 'Activity response state conflict.'}
+
+
+def test_participant_api_activity_response_status_transition_race_maps_to_conflict(monkeypatch):
+    import app.main as main_module
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-status-race')
+
+    with client:
+        created = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'initial draft'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert created.status_code == 200
+
+    monkeypatch.setattr(main_module, '_update_activity_response_if_not_submitted', lambda *_args, **_kwargs: False)
+
+    with client:
+        draft_conflict = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft lost race'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert draft_conflict.status_code == 409
+        assert draft_conflict.json() == {'detail': 'Activity response has already been submitted.'}
+
+        submit_conflict = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'submit lost race'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert submit_conflict.status_code == 409
+        assert submit_conflict.json() == {'detail': 'Activity response has already been submitted.'}
+
+
+def test_participant_api_activity_response_invalid_evidence_reference_does_not_mutate_existing_draft():
+    from app.models import ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-evidence-rollback')
+
+    with client:
+        first = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'stable draft', 'choices': ['alpha']},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert first.status_code == 200
+
+        invalid_evidence = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'mutating draft', 'choices': ['beta'], 'evidence_id': 999999},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert invalid_evidence.status_code == 400
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == context['activity_id'],
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert row is not None
+        payload = json.loads(row.value_json or '{}')
+        assert payload['answer'] == 'stable draft'
+        assert payload['choices'] == ['alpha']
+        assert row.status == 'draft'

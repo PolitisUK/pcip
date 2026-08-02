@@ -106,6 +106,35 @@ class ActivityListResponse(BaseModel):
     data: list[ActivitySummary]
 
 
+class DraftResponseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str | None = None
+    choices: list[str] = Field(default_factory=list)
+    evidence_id: int | None = Field(default=None, ge=1)
+
+
+class SubmitResponseRequest(DraftResponseRequest):
+    model_config = ConfigDict(extra="forbid")
+
+
+class DraftResponseResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    response_id: int
+    status: Literal["draft"]
+    updated_at: datetime
+
+
+class SubmittedResponseResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    response_id: int
+    status: Literal["submitted"]
+    submitted_at: datetime
+    updated_at: datetime
+
+
 class SessionExchangeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
