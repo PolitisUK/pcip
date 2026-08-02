@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import select, func, or_, text
+from sqlalchemy import select, func, or_, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .config import settings, validate_runtime_settings
@@ -2690,13 +2690,38 @@ def _resolve_participant_api_activity_scope(
 
 
 def _participant_response_value_from_payload(payload: DraftResponseRequest) -> dict[str, object]:
+    cleaned_choices = [x.strip() for x in payload.choices if isinstance(x, str) and x.strip()]
     value: dict[str, object] = {
         "answer": payload.answer or "",
-        "choices": [x for x in payload.choices if isinstance(x, str)],
+        "choices": cleaned_choices,
     }
     if payload.evidence_id is not None:
         value["evidence_id"] = payload.evidence_id
     return value
+
+
+def _update_activity_response_if_not_submitted(
+    db: Session,
+    response_id: int,
+    value: dict[str, object],
+    action: str,
+) -> bool:
+    submitted_at = now() if action == "submit" else None
+    status = "submitted" if action == "submit" else "draft"
+    result = db.execute(
+        update(ActivityResponse)
+        .where(
+            ActivityResponse.id == response_id,
+            ActivityResponse.status != "submitted",
+        )
+        .values(
+            value_json=json.dumps(value),
+            status=status,
+            submitted_at=submitted_at,
+            updated_at=now(),
+        )
+    )
+    return result.rowcount == 1
 
 
 def _require_json_content_type(request: Request) -> None:
@@ -2752,7 +2777,12 @@ def participant_api_activity_response_draft(
             activity_id=activity_row.id,
             participant_id=participant_row.id,
         )
-        apply_response_action(response_row, value, "draft", now())
+        if existing:
+            if not _update_activity_response_if_not_submitted(db, response_row.id, value, "draft"):
+                raise HTTPException(409, "Activity response has already been submitted.")
+            db.refresh(response_row)
+        else:
+            apply_response_action(response_row, value, "draft", now())
         audit(
             db,
             invitation.organisation_id,
@@ -2792,7 +2822,7 @@ def participant_api_activity_response_submit(
     invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
     value = _participant_response_value_from_payload(payload)
     has_answer = bool((payload.answer or "").strip())
-    has_choices = bool(payload.choices)
+    has_choices = bool(value.get("choices"))
     has_evidence = payload.evidence_id is not None
     if activity_row.required and not has_answer and not has_choices and not has_evidence:
         raise HTTPException(400, "A response is required.")
@@ -2838,7 +2868,12 @@ def participant_api_activity_response_submit(
             activity_id=activity_row.id,
             participant_id=participant_row.id,
         )
-        apply_response_action(response_row, value, "submit", now())
+        if existing:
+            if not _update_activity_response_if_not_submitted(db, response_row.id, value, "submit"):
+                raise HTTPException(409, "Activity response has already been submitted.")
+            db.refresh(response_row)
+        else:
+            apply_response_action(response_row, value, "submit", now())
         audit(
             db,
             invitation.organisation_id,

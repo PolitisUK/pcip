@@ -5313,6 +5313,37 @@ def test_participant_api_activity_response_submit_required_activity_needs_value_
         assert row is None
 
 
+def test_participant_api_activity_response_submit_required_activity_rejects_blank_choices_only():
+    from app.models import Activity, ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-required-blank-choices')
+
+    with SessionLocal() as db:
+        activity_row = db.get(Activity, context['activity_id'])
+        assert activity_row is not None
+        activity_row.required = True
+        db.commit()
+
+    with client:
+        blank_choice_submit = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': '', 'choices': ['   ', '']},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert blank_choice_submit.status_code == 400
+        assert blank_choice_submit.json() == {'detail': 'A response is required.'}
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == context['activity_id'],
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert row is None
+
+
 def test_participant_api_activity_response_rejects_unsupported_content_type():
     context = _prepare_participant_api_activity_response_context('api-activity-response-content-type')
 
@@ -5385,6 +5416,42 @@ def test_participant_api_activity_response_integrity_race_maps_to_conflict(monke
         )
         assert submit_conflict.status_code == 409
         assert submit_conflict.json() == {'detail': 'Activity response state conflict.'}
+
+
+def test_participant_api_activity_response_status_transition_race_maps_to_conflict(monkeypatch):
+    import app.main as main_module
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-status-race')
+
+    with client:
+        created = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'initial draft'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert created.status_code == 200
+
+    monkeypatch.setattr(main_module, '_update_activity_response_if_not_submitted', lambda *_args, **_kwargs: False)
+
+    with client:
+        draft_conflict = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft lost race'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert draft_conflict.status_code == 409
+        assert draft_conflict.json() == {'detail': 'Activity response has already been submitted.'}
+
+        submit_conflict = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'submit lost race'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert submit_conflict.status_code == 409
+        assert submit_conflict.json() == {'detail': 'Activity response has already been submitted.'}
 
 
 def test_participant_api_activity_response_invalid_evidence_reference_does_not_mutate_existing_draft():
