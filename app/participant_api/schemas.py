@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -6,8 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 class DeviceHint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    platform: str | None = None
-    app_version: str | None = None
+    platform: Literal["ios", "android"] | None = None
+    app_version: str | None = Field(default=None, max_length=40)
 
 
 class SessionExchangeRequest(BaseModel):

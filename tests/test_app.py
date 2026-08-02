@@ -4045,6 +4045,42 @@ def test_participant_api_session_requires_valid_bearer_and_excludes_internal_fie
         assert 'token_hash' not in body
 
 
+def test_participant_api_session_missing_bearer_with_html_accept_preserves_bearer_challenge_and_no_csrf_cookie():
+    with client:
+        response = client.get(
+            '/api/v1/participant/session',
+            headers={'Accept': 'text/html'},
+            follow_redirects=False,
+        )
+        assert response.status_code == 401
+        assert response.headers.get('www-authenticate') == 'Bearer'
+        assert response.headers.get('content-type', '').startswith('application/json')
+        assert response.json() == {'detail': 'Invalid or expired participant API credentials.'}
+        assert 'csrf_session=' not in (response.headers.get('set-cookie') or '')
+
+
+def test_participant_api_session_invalid_bearer_with_html_accept_preserves_bearer_challenge():
+    with client:
+        response = client.get(
+            '/api/v1/participant/session',
+            headers={
+                'Accept': 'text/html',
+                'Authorization': 'Bearer invalid-token',
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 401
+        assert response.headers.get('www-authenticate') == 'Bearer'
+        assert response.headers.get('content-type', '').startswith('application/json')
+
+
+def test_non_api_html_error_handling_remains_html_when_accept_requests_html():
+    with client:
+        response = client.get('/this-page-does-not-exist', headers={'Accept': 'text/html'}, follow_redirects=False)
+        assert response.status_code == 404
+        assert response.headers.get('content-type', '').startswith('text/html')
+
+
 def test_participant_api_session_rejects_expired_or_revoked_session_rows():
     from app.models import ParticipantInvitation, PublicAuthSession
     from app.participant_api.auth import PARTICIPANT_API_SCOPE
@@ -4236,6 +4272,82 @@ def test_participant_api_exchange_validation_rejects_empty_overlong_and_unexpect
         for response in (empty, overlong, with_extra):
             body_text = response.text
             assert overlong_token not in body_text
+            assert '"input"' not in body_text
+
+
+def test_participant_api_exchange_accepts_ios_android_and_app_version_length_40_device_hint():
+    token_ios, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-device-ios')
+    token_android, _participant_id_2, _study_id_2 = _create_participant_invitation_for_api('api-auth-device-android')
+    token_len40, _participant_id_3, _study_id_3 = _create_participant_invitation_for_api('api-auth-device-len40')
+
+    with client:
+        ios = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': token_ios,
+                'device_hint': {
+                    'platform': 'ios',
+                    'app_version': '1.2.3',
+                },
+            }
+        )
+        assert ios.status_code == 200
+
+        android = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': token_android,
+                'device_hint': {
+                    'platform': 'android',
+                    'app_version': '2.0.0',
+                },
+            }
+        )
+        assert android.status_code == 200
+
+        len_40 = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': token_len40,
+                'device_hint': {
+                    'platform': 'ios',
+                    'app_version': 'v' * 40,
+                },
+            }
+        )
+        assert len_40.status_code == 200
+
+
+def test_participant_api_exchange_rejects_unsupported_platform_and_overlong_device_version_without_echoing_token():
+    invalid_platform_token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-device-invalid-platform')
+    overlong_version_token, _participant_id_2, _study_id_2 = _create_participant_invitation_for_api('api-auth-device-overlong-version')
+
+    with client:
+        invalid_platform = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': invalid_platform_token,
+                'device_hint': {
+                    'platform': 'windows',
+                    'app_version': '1.0.0',
+                },
+            }
+        )
+        assert invalid_platform.status_code == 422
+
+        overlong_version = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': overlong_version_token,
+                'device_hint': {
+                    'platform': 'android',
+                    'app_version': 'v' * 41,
+                },
+            }
+        )
+        assert overlong_version.status_code == 422
+
+        for response, token in (
+            (invalid_platform, invalid_platform_token),
+            (overlong_version, overlong_version_token),
+        ):
+            body_text = response.text
+            assert token not in body_text
             assert '"input"' not in body_text
 
 

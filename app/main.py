@@ -560,6 +560,8 @@ def consume_flash(request: Request) -> tuple[str | None, str | None]:
 
 
 def request_wants_html(request: Request) -> bool:
+    if request.url.path.startswith("/api/"):
+        return False
     accept = request.headers.get("accept", "").lower()
     return "text/html" in accept
 
@@ -607,6 +609,8 @@ def render_error(request: Request, status_code: int, title: str, detail: str):
 
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
+    if not request_wants_html(request):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
     return render_error(request, 404, "Page not found", "The page you requested is not available.")
 
 
@@ -651,6 +655,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("unhandled_exception path=%s", request.url.path)
+    if not request_wants_html(request):
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
     return render_error(request, 500, "Something went wrong", "An unexpected error occurred. Please try again.")
 
 def project(db,i,o):
