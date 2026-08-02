@@ -2104,7 +2104,7 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
     msgs = list_participant_visible_messages(db, study_id=s.id, participant_id=p.id); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,activity_windows=activity_windows,responses=responses,response_values=response_values,messages=msgs)
 
 
-@app.get("/api/v1/participant/portal-summary", response_model=PortalSummaryResponse)
+@app.get("/api/v1/participant/portal", response_model=PortalSummaryResponse)
 def participant_api_portal_summary(
     request: Request,
     study_id: int | None = Query(default=None, ge=1),

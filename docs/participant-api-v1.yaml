@@ -135,7 +135,7 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
-  /api/v1/participant/portal-summary:
+  /api/v1/participant/portal:
     get:
       tags: [Studies]
       summary: Get participant portal summary.
