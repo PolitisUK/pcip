@@ -1630,6 +1630,142 @@ def test_researcher_message_requires_participant_enrolment_in_study():
         assert allowed.status_code == 303
 
 
+def test_researcher_message_route_preserves_sender_audit_and_redirect_semantics():
+    from app.models import AuditEvent, ParticipantMessage
+
+    with client:
+        client.cookies.clear()
+        auth()
+        code = unique_value('MSGROUTE').upper()
+        project = post_with_csrf('/projects', data={'title': f'Message route project {code}', 'code': code, 'description': '', 'status_value': 'live'}, follow_redirects=False)
+        project_id = int(project.headers['location'].split('/')[-1])
+
+        study = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={'title': f'Message route study {code}', 'code': f'{code}A', 'description': '', 'methodology': 'diary', 'status_value': 'recruiting'},
+            follow_redirects=False,
+        )
+        study_id = int(study.headers['location'].split('/')[-1])
+
+        participant_created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': f'{code}P',
+                'name': f'Message Route Participant {code}',
+                'email': f'{code.lower()}@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant_created.headers['location'].split('/')[-1])
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+
+        response = post_with_csrf(
+            f'/participants/{participant_id}/message',
+            data={'study_id': study_id, 'body': '  routed note  ', 'internal_note': 'true'},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers['location'] == f'/participants/{participant_id}#messages'
+
+        with SessionLocal() as db:
+            message = db.scalar(
+                select(ParticipantMessage)
+                .where(ParticipantMessage.participant_id == participant_id)
+                .order_by(ParticipantMessage.id.desc())
+            )
+            assert message is not None
+            assert message.sender_type == 'researcher'
+            assert message.sender_user_id is not None
+            assert message.body == 'routed note'
+            assert message.internal_note is True
+
+            audit_row = db.scalar(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.action == 'message.created',
+                    AuditEvent.entity_type == 'participant',
+                    AuditEvent.entity_id == str(participant_id),
+                )
+                .order_by(AuditEvent.id.desc())
+            )
+            assert audit_row is not None
+            assert audit_row.detail == 'internal'
+
+
+def test_participant_message_route_preserves_validation_and_storage_semantics():
+    from app.models import OutboxEmail, ParticipantMessage
+
+    with client:
+        client.cookies.clear()
+        auth()
+        code = unique_value('MSGPORTAL').upper()
+        project = post_with_csrf('/projects', data={'title': f'Portal message project {code}', 'code': code, 'description': '', 'status_value': 'live'}, follow_redirects=False)
+        project_id = int(project.headers['location'].split('/')[-1])
+        study = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={'title': f'Portal message study {code}', 'code': f'{code}A', 'description': '', 'methodology': 'diary', 'status_value': 'recruiting'},
+            follow_redirects=False,
+        )
+        study_id = int(study.headers['location'].split('/')[-1])
+        participant_created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': f'{code}P',
+                'name': f'Portal Message Participant {code}',
+                'email': f'{code.lower()}@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant_created.headers['location'].split('/')[-1])
+
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
+
+        with SessionLocal() as db:
+            invite_email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient == f'{code.lower()}@example.org')
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert invite_email is not None
+            token = invite_email.body.split('token=')[1].strip()
+
+        client.get(f'/join-study?token={token}')
+        consent = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert consent.status_code == 303
+
+        empty = post_with_csrf('/participant-portal/message', data={'body': '   '}, follow_redirects=False)
+        assert empty.status_code == 400
+
+        created = post_with_csrf('/participant-portal/message', data={'body': '  hello research  '}, follow_redirects=False)
+        assert created.status_code == 303
+        assert created.headers['location'] == '/participant-portal#messages'
+
+        with SessionLocal() as db:
+            message = db.scalar(
+                select(ParticipantMessage)
+                .where(ParticipantMessage.participant_id == participant_id, ParticipantMessage.study_id == study_id)
+                .order_by(ParticipantMessage.id.desc())
+            )
+            assert message is not None
+            assert message.sender_type == 'participant'
+            assert message.sender_user_id is None
+            assert message.internal_note is False
+            assert message.body == 'hello research'
+
+
 def hosted_settings(**overrides):
     data = {
         'environment': 'production',
@@ -3304,6 +3440,167 @@ def test_evidence_service_downloadable_only_for_clean(scan_status):
 
     assert is_evidence_downloadable(scan_status) is False
     assert is_evidence_downloadable('clean') is True
+
+
+def test_messaging_service_builders_preserve_sender_semantics():
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import create_participant_message, create_researcher_message
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id.asc())
+        )
+        assert study_row is not None
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == owner.organisation_id)
+            .order_by(Participant.id.asc())
+        )
+        assert participant_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=owner.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=unique_value('MSG-TOKEN'),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=owner.id,
+        )
+
+        participant_message = create_participant_message(invitation, body='  participant hello  ')
+        assert participant_message.organisation_id == owner.organisation_id
+        assert participant_message.study_id == study_row.id
+        assert participant_message.participant_id == participant_row.id
+        assert participant_message.sender_type == 'participant'
+        assert participant_message.sender_user_id is None
+        assert participant_message.body == 'participant hello'
+
+        researcher_message = create_researcher_message(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            sender_user_id=owner.id,
+            body='  researcher hello  ',
+            internal_note=True,
+        )
+        assert researcher_message.organisation_id == owner.organisation_id
+        assert researcher_message.study_id == study_row.id
+        assert researcher_message.participant_id == participant_row.id
+        assert researcher_message.sender_type == 'researcher'
+        assert researcher_message.sender_user_id == owner.id
+        assert researcher_message.body == 'researcher hello'
+        assert researcher_message.internal_note is True
+
+
+def test_messaging_service_visible_lookup_excludes_internal_notes_and_orders_created_at():
+    from app.models import Participant, ParticipantMessage, Study
+    from app.participant_services import list_participant_visible_messages
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id.asc())
+        )
+        assert study_row is not None
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == owner.organisation_id)
+            .order_by(Participant.id.asc())
+        )
+        assert participant_row is not None
+
+        public_early = ParticipantMessage(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            sender_type='participant',
+            body=unique_value('PUBLIC-EARLY'),
+            created_at=now() - timedelta(minutes=2),
+        )
+        internal = ParticipantMessage(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            sender_type='researcher',
+            sender_user_id=owner.id,
+            body=unique_value('INTERNAL'),
+            internal_note=True,
+            created_at=now() - timedelta(minutes=1),
+        )
+        public_late = ParticipantMessage(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            sender_type='researcher',
+            sender_user_id=owner.id,
+            body=unique_value('PUBLIC-LATE'),
+            internal_note=False,
+            created_at=now(),
+        )
+
+        db.add_all([public_late, internal, public_early])
+        db.flush()
+
+        visible = list_participant_visible_messages(
+            db,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+        )
+
+        visible_ids = [row.id for row in visible]
+        assert public_early.id in visible_ids
+        assert public_late.id in visible_ids
+        assert internal.id not in visible_ids
+
+        public_rows = [row for row in visible if row.id in {public_early.id, public_late.id}]
+        assert [row.id for row in public_rows] == [public_early.id, public_late.id]
+
+        db.rollback()
+
+
+def test_messaging_service_helpers_perform_no_commit_by_themselves():
+    from app.models import Participant, ParticipantMessage, Study
+    from app.participant_services import create_researcher_message
+
+    marker = unique_value('MSG-NOCOMMIT')
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id.asc())
+        )
+        assert study_row is not None
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == owner.organisation_id)
+            .order_by(Participant.id.asc())
+        )
+        assert participant_row is not None
+
+        message = create_researcher_message(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            sender_user_id=owner.id,
+            body=marker,
+            internal_note=False,
+        )
+        db.add(message)
+        db.rollback()
+
+    with SessionLocal() as db:
+        persisted = db.scalar(select(ParticipantMessage).where(ParticipantMessage.body == marker))
+        assert persisted is None
 
 
 def test_evidence_service_helpers_perform_no_commit_and_no_storage_access(monkeypatch):

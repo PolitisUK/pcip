@@ -12,6 +12,11 @@ from .invitations import (
 	resolve_invitation_by_token,
 	resolve_org_scoped_invitation,
 )
+from .messaging import (
+	create_participant_message,
+	create_researcher_message,
+	list_participant_visible_messages,
+)
 from .responses import (
 	apply_response_action,
 	resolve_activity_response,
@@ -30,6 +35,9 @@ __all__ = [
 	"find_live_unaccepted_invitation",
 	"mark_invitation_revoked",
 	"apply_response_action",
+	"create_participant_message",
+	"create_researcher_message",
+	"list_participant_visible_messages",
 	"resolve_activity_response",
 	"resolve_or_create_activity_response",
 	"serialise_response_payload",

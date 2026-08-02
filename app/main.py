@@ -57,9 +57,12 @@ from .participant_services import (
     apply_response_action,
     build_evidence_file,
     create_participant_invitation,
+    create_participant_message,
+    create_researcher_message,
     find_live_unaccepted_invitation,
     grant_participant_consent,
     is_evidence_downloadable,
+    list_participant_visible_messages,
     mark_invitation_revoked,
     resolve_org_scoped_evidence,
     resolve_invitation_by_token,
@@ -2018,7 +2021,7 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
     for activity_id,response in responses.items():
         try: response_values[activity_id]=json.loads(response.value_json or "{}")
         except json.JSONDecodeError: response_values[activity_id]={}
-    msgs=db.scalars(select(ParticipantMessage).where(ParticipantMessage.study_id==s.id,ParticipantMessage.participant_id==p.id,ParticipantMessage.internal_note==False).order_by(ParticipantMessage.created_at)).all(); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,activity_windows=activity_windows,responses=responses,response_values=response_values,messages=msgs)
+    msgs = list_participant_visible_messages(db, study_id=s.id, participant_id=p.id); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,activity_windows=activity_windows,responses=responses,response_values=response_values,messages=msgs)
 @app.post("/participant-portal/activity/{activity_id}")
 async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
@@ -2122,7 +2125,7 @@ def participant_message(request: Request, token:str=Form(""),body:str=Form(...),
     if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
-    db.add(ParticipantMessage(organisation_id=inv.organisation_id,study_id=inv.study_id,participant_id=inv.participant_id,sender_type="participant",body=body.strip())); db.commit(); return RedirectResponse("/participant-portal#messages",303)
+    db.add(create_participant_message(inv, body=body)); db.commit(); return RedirectResponse("/participant-portal#messages",303)
 @app.post("/participants/{participant_id}/message")
 def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(...),internal_note:bool=Form(False),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
@@ -2130,7 +2133,7 @@ def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(.
     if not enrolment:
         raise HTTPException(400,"Participant is not enrolled in this study.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
-    db.add(ParticipantMessage(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id,sender_type="researcher",sender_user_id=u.id,body=body.strip(),internal_note=internal_note)); audit(db,u.organisation_id,u.id,"message.created","participant",p.id,"internal" if internal_note else s.title); db.commit(); return RedirectResponse(f"/participants/{p.id}#messages",303)
+    db.add(create_researcher_message(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id,sender_user_id=u.id,body=body,internal_note=internal_note)); audit(db,u.organisation_id,u.id,"message.created","participant",p.id,"internal" if internal_note else s.title); db.commit(); return RedirectResponse(f"/participants/{p.id}#messages",303)
 @app.get("/evidence/{evidence_id}")
 def evidence(evidence_id:int,u=Depends(current_user),db:Session=Depends(get_db)):
     e = resolve_org_scoped_evidence(db, u.organisation_id, evidence_id)
