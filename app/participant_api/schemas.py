@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DeviceHint(BaseModel):
@@ -13,7 +13,7 @@ class DeviceHint(BaseModel):
 class SessionExchangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    invitation_token: str
+    invitation_token: str = Field(min_length=1, max_length=512)
     device_hint: DeviceHint | None = None
 
 

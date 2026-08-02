@@ -121,7 +121,9 @@ Recommended Universal Link and Android App Link flow:
 
 Replay/leakage controls recommended for mobile exchange:
 
-- Add participant-scope token redemption tracking (same pattern already used for password reset and researcher invitation) to limit replay of raw invitation token exchange.
+- Enforce one active participant API session per invitation at a time.
+- Replay while an active session exists must return generic conflict (HTTP 409) and must not return participant details or bearer token material.
+- If the existing session is revoked or expired, a valid unrevoked invitation may exchange again to mint a replacement session.
 - Keep invitation record itself authoritative for revoked_at, expires_at, accepted_at rules.
 - Return generic invalid/expired responses to avoid token probing signals.
 - Rate-limit exchange by IP and token hash key.
@@ -174,8 +176,8 @@ Routes that should not be exposed directly to mobile participant API:
   - participant: id (opaque external reference preferred), display_name
   - invitation: study_id, accepted_at, expires_at, revoked boolean
   - next_action: consent_required or portal
-- Status codes: 200, 400 invalid_or_expired, 409 revoked_or_ineligible, 429, 500.
-- Idempotency: yes for valid live invitation; returns current live session or rotates by policy.
+- Status codes: 200, 400 invalid_or_expired, 409 active_session_exists, 429, 500.
+- Idempotency: no while active session exists. A second exchange returns conflict and does not expose existing session state.
 - Rate limit: strict per IP and token hash account key.
 - Existing service reuse: resolve_invitation_by_token, resolve_participant_invitation concepts.
 - New service needed: participant mobile token redemption/issue helper.
@@ -191,6 +193,7 @@ Routes that should not be exposed directly to mobile participant API:
   - active invitation/study linkage
   - consent status
 - Status codes: 200, 401, 403, 500.
+- Security semantics: invitation revocation or invitation expiry invalidates existing participant API sessions on next request.
 - Idempotency: yes.
 - Rate limit: moderate per token and IP.
 - Existing reuse: PublicAuthSession lookup pattern.

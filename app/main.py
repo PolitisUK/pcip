@@ -17,6 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import select, func, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .config import settings, validate_runtime_settings
 from .db import Base, engine, get_db, SessionLocal
@@ -641,7 +642,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         else:
             detail = "Please review the submitted information and try again."
         return render_error(request, 422, "Please check your information", detail)
-    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    errors = []
+    for item in exc.errors():
+        errors.append({k: v for k, v in item.items() if k != "input"})
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 @app.exception_handler(Exception)
@@ -961,7 +965,18 @@ def _cache_control_no_store(response: Response):
 
 
 def _participant_api_unauthorised() -> HTTPException:
-    return HTTPException(401, "Invalid or expired participant API credentials.")
+    return HTTPException(
+        401,
+        "Invalid or expired participant API credentials.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _participant_api_exchange_conflict() -> HTTPException:
+    return HTTPException(
+        409,
+        "A participant API session is already active for this invitation.",
+    )
 
 
 def _extract_bearer_token(request: Request) -> str:
@@ -2200,11 +2215,29 @@ def participant_api_session_exchange(
     if not participant_row:
         raise HTTPException(400, "This participant link is invalid or expired.")
 
-    raw_token, session_row = create_participant_api_session(
-        db,
-        participant_invitation_id=invitation.id,
-        ttl_seconds=settings.session_max_age_seconds,
+    existing_sessions = list(
+        db.scalars(
+            select(PublicAuthSession).where(
+                PublicAuthSession.scope == PARTICIPANT_API_SCOPE,
+                PublicAuthSession.participant_invitation_id == invitation.id,
+                PublicAuthSession.revoked_at.is_(None),
+            )
+        )
     )
+    for row in existing_sessions:
+        if unexpired(row.expires_at):
+            raise _participant_api_exchange_conflict()
+        row.revoked_at = now()
+
+    try:
+        raw_token, session_row = create_participant_api_session(
+            db,
+            participant_invitation_id=invitation.id,
+            ttl_seconds=settings.session_max_age_seconds,
+        )
+    except IntegrityError:
+        db.rollback()
+        raise _participant_api_exchange_conflict()
     next_action = "portal" if invitation.accepted_at else "consent_required"
     invitation_status = "accepted" if invitation.accepted_at else "valid"
     audit(
