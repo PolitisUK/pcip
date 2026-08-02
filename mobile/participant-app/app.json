@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "Citizen Centric Participant (Staging)",
+    "slug": "citizen-centric-participant-staging",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "pcip-participant",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "uk.politis.pcip.participant.staging",
+      "deploymentTarget": "15.0",
+      "associatedDomains": [
+        "applinks:participant.staging.politis.co.uk"
+      ]
+    },
+    "android": {
+      "package": "uk.politis.pcip.participant.staging",
+      "minSdkVersion": 26,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "participant.staging.politis.co.uk",
+              "pathPrefix": "/join-study"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
