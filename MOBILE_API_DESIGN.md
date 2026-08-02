@@ -134,7 +134,7 @@ Endpoint list (minimum viable and safety-scoped):
 
 1. POST /invitation/exchange
 2. GET /session
-3. DELETE /session
+3. POST /session/logout
 4. GET /studies
 5. GET /portal
 6. GET /activities
@@ -196,13 +196,13 @@ Routes that should not be exposed directly to mobile participant API:
 - Existing reuse: PublicAuthSession lookup pattern.
 - New service: bearer auth dependency for participant API.
 
-### 6.3 DELETE /api/v1/participant/session
+### 6.3 POST /api/v1/participant/session/logout
 
 - Purpose: revoke current mobile session.
 - Auth: bearer required.
 - Request schema: none.
-- Response schema: empty or { revoked: true }.
-- Status codes: 204, 401.
+- Response schema: { revoked: true }.
+- Status codes: 200, 401.
 - Idempotency: yes.
 - Rate limit: low-to-moderate.
 - Existing reuse: revoke_public_auth_session logic shape.

@@ -20,7 +20,7 @@ tags:
   - name: Messaging
   - name: Privacy
 paths:
-  /api/v1/participant/session/exchange:
+  /api/v1/participant/invitation/exchange:
     post:
       tags: [Session]
       summary: Exchange invitation token for participant API session.
@@ -293,7 +293,7 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
-  /api/v1/participant/evidence:
+  /api/v1/participant/activities/{activity_id}/evidence-uploads:
     post:
       tags: [Evidence]
       summary: Upload evidence for an activity.
@@ -301,6 +301,7 @@ paths:
         Proposed phase-1 multipart upload through API boundary. Storage keys,
         blob credentials, and internal scanning internals are not exposed.
       parameters:
+        - $ref: '#/components/parameters/ActivityId'
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
@@ -412,7 +413,7 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
-  /api/v1/participant/privacy/withdrawal-request:
+  /api/v1/participant/privacy/withdrawal-requests:
     post:
       tags: [Privacy]
       summary: Submit consent withdrawal request.
@@ -445,7 +446,7 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
-  /api/v1/participant/privacy/deletion-request:
+  /api/v1/participant/privacy/deletion-requests:
     post:
       tags: [Privacy]
       summary: Submit deletion or anonymisation request.
@@ -916,6 +917,46 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ActivitySummary'
+    PortalSummaryResponse:
+      type: object
+      additionalProperties: false
+      required: [study, participant, activities, responses, messages]
+      properties:
+        study:
+          $ref: '#/components/schemas/StudySummary'
+        participant:
+          $ref: '#/components/schemas/ParticipantSummary'
+        activities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivitySummary'
+        responses:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [activity_id, status]
+            properties:
+              activity_id:
+                type: integer
+                minimum: 1
+              status:
+                type: string
+                enum: [draft, submitted]
+              value:
+                $ref: '#/components/schemas/ActivityResponseValue'
+              submitted_at:
+                type: string
+                format: date-time
+                nullable: true
+              updated_at:
+                type: string
+                format: date-time
+                nullable: true
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParticipantMessage'
     ActivityResponseValue:
       type: object
       additionalProperties: false
