@@ -1,11 +1,13 @@
 from .auth import (
-    PARTICIPANT_API_SCOPE,
-    create_participant_api_session,
-    resolve_participant_api_session,
+	PARTICIPANT_API_SCOPE,
+	create_participant_api_session,
+	resolve_participant_api_session,
 )
+from .schemas import PortalSummaryResponse
 
 __all__ = [
-    "PARTICIPANT_API_SCOPE",
-    "create_participant_api_session",
-    "resolve_participant_api_session",
+	"PARTICIPANT_API_SCOPE",
+	"create_participant_api_session",
+	"resolve_participant_api_session",
+	"PortalSummaryResponse",
 ]

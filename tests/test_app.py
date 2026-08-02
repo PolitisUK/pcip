@@ -337,6 +337,127 @@ def test_participant_accepts_invitation():
         assert accepted.status_code == 200 and "You're enrolled" in accepted.text
 
 
+def _prepare_participant_portal_session(consent: bool = True, email_suffix: str = 'portal-summary'):
+    from app.models import OutboxEmail
+
+    with client:
+        client.cookies.clear()
+        auth()
+        participant_email = f"{unique_value(email_suffix)}@example.org"
+        created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('PORTALAPI').upper(),
+                'name': 'Portal API Participant',
+                'email': participant_email,
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
+        studies = client.get('/studies')
+        study_id = int(studies.text.split('/studies/')[1].split('"')[0])
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
+
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient == participant_email)
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        exchanged = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert exchanged.status_code == 303
+
+        if consent:
+            accepted = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+            assert accepted.status_code == 303
+
+        return participant_id, study_id
+
+
+def test_participant_api_portal_summary_requires_participant_session():
+    with client:
+        client.cookies.clear()
+        response = client.get('/api/v1/participant/portal-summary', follow_redirects=False)
+        assert response.status_code == 401
+
+
+def test_participant_api_portal_summary_rejects_unaccepted_invitation_session():
+    _prepare_participant_portal_session(consent=False, email_suffix='portal-summary-unaccepted')
+
+    with client:
+        response = client.get('/api/v1/participant/portal-summary', follow_redirects=False)
+        assert response.status_code == 403
+
+
+def test_participant_api_portal_summary_returns_contract_shaped_payload_for_accepted_participant():
+    from app.models import Activity
+
+    participant_id, study_id = _prepare_participant_portal_session(
+        consent=True,
+        email_suffix='portal-summary-accepted',
+    )
+
+    with SessionLocal() as db:
+        first_activity = db.scalar(
+            select(Activity)
+            .where(Activity.study_id == study_id)
+            .order_by(Activity.position.asc(), Activity.id.asc())
+        )
+        assert first_activity is not None
+        activity_id = first_activity.id
+
+    with client:
+        draft = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action': 'draft', 'answer': 'draft from portal summary test'},
+            follow_redirects=False,
+        )
+        assert draft.status_code == 303
+
+        sent = post_with_csrf(
+            '/participant-portal/message',
+            data={'body': 'Hello from portal summary test'},
+            follow_redirects=False,
+        )
+        assert sent.status_code == 303
+
+        summary = client.get('/api/v1/participant/portal-summary', follow_redirects=False)
+        assert summary.status_code == 200
+        body = summary.json()
+
+        assert set(body.keys()) == {'study', 'participant', 'activities', 'responses', 'messages'}
+        assert body['study']['study_id'] == study_id
+        assert body['participant']['participant_id'] == participant_id
+
+        activity_ids = {item['activity_id'] for item in body['activities']}
+        assert activity_id in activity_ids
+
+        response_entries = {item['activity_id']: item for item in body['responses']}
+        assert activity_id in response_entries
+        assert response_entries[activity_id]['status'] == 'draft'
+        assert response_entries[activity_id]['value']['answer'] == 'draft from portal summary test'
+
+        assert body['messages']
+        assert body['messages'][-1]['sender_type'] == 'participant'
+        assert 'Hello from portal summary test' in body['messages'][-1]['body']
+
+        scoped = client.get(f'/api/v1/participant/portal-summary?study_id={study_id}', follow_redirects=False)
+        assert scoped.status_code == 200
+
+        out_of_scope = client.get(f'/api/v1/participant/portal-summary?study_id={study_id + 9999}', follow_redirects=False)
+        assert out_of_scope.status_code == 403
+
+
 def test_password_reset_token_is_exchanged_and_replay_is_blocked():
     from app.models import OutboxEmail
     with client:
