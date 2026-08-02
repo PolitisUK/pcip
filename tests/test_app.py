@@ -5311,3 +5311,113 @@ def test_participant_api_activity_response_submit_required_activity_needs_value_
             )
         )
         assert row is None
+
+
+def test_participant_api_activity_response_rejects_unsupported_content_type():
+    context = _prepare_participant_api_activity_response_context('api-activity-response-content-type')
+
+    with client:
+        response = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            data='answer=text-body',
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Content-Type': 'text/plain',
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 415
+
+
+def test_participant_api_activity_response_idempotency_key_header_bounds_are_enforced():
+    context = _prepare_participant_api_activity_response_context('api-activity-response-idempotency-header')
+
+    with client:
+        too_short = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft with short key'},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'short7!',
+            },
+            follow_redirects=False,
+        )
+        assert too_short.status_code == 422
+
+        too_long = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft with long key'},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'x' * 129,
+            },
+            follow_redirects=False,
+        )
+        assert too_long.status_code == 422
+
+
+def test_participant_api_activity_response_integrity_race_maps_to_conflict(monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+    import app.main as main_module
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-integrity-race')
+
+    def _raise_integrity_error(*_args, **_kwargs):
+        raise IntegrityError('insert', {}, Exception('unique conflict'))
+
+    monkeypatch.setattr(main_module, 'resolve_or_create_activity_response', _raise_integrity_error)
+
+    with client:
+        draft_conflict = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'draft attempt'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert draft_conflict.status_code == 409
+        assert draft_conflict.json() == {'detail': 'Activity response state conflict.'}
+
+        submit_conflict = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'submit attempt'},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert submit_conflict.status_code == 409
+        assert submit_conflict.json() == {'detail': 'Activity response state conflict.'}
+
+
+def test_participant_api_activity_response_invalid_evidence_reference_does_not_mutate_existing_draft():
+    from app.models import ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-activity-response-evidence-rollback')
+
+    with client:
+        first = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'stable draft', 'choices': ['alpha']},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert first.status_code == 200
+
+        invalid_evidence = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'mutating draft', 'choices': ['beta'], 'evidence_id': 999999},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert invalid_evidence.status_code == 400
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == context['activity_id'],
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert row is not None
+        payload = json.loads(row.value_json or '{}')
+        assert payload['answer'] == 'stable draft'
+        assert payload['choices'] == ['alpha']
+        assert row.status == 'draft'

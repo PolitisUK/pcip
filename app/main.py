@@ -8,7 +8,7 @@ import csv, io, json, secrets
 from collections import OrderedDict, deque
 from threading import Lock
 from .csrf import get_csrf_token, csrf_protect
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response, Query, Header
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response, Query, Header, Path as ApiPath
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -2699,13 +2699,21 @@ def _participant_response_value_from_payload(payload: DraftResponseRequest) -> d
     return value
 
 
+def _require_json_content_type(request: Request) -> None:
+    content_type = (request.headers.get("content-type") or "").strip().lower()
+    if not content_type.startswith("application/json"):
+        raise HTTPException(415, "Unsupported content type.")
+    return None
+
+
 @app.put("/api/v1/participant/activities/{activity_id}/draft", response_model=DraftResponseResult)
 def participant_api_activity_response_draft(
-    activity_id: int,
     payload: DraftResponseRequest,
     request: Request,
     response: Response,
+    activity_id: int = ApiPath(..., ge=1),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
+    _content_type_ok: None = Depends(_require_json_content_type),
     db: Session = Depends(get_db),
 ):
     del idempotency_key
@@ -2755,6 +2763,9 @@ def participant_api_activity_response_draft(
             str(activity_row.id),
         )
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Activity response state conflict.")
     except Exception:
         db.rollback()
         raise
@@ -2769,11 +2780,12 @@ def participant_api_activity_response_draft(
 
 @app.post("/api/v1/participant/activities/{activity_id}/submit", response_model=SubmittedResponseResult)
 def participant_api_activity_response_submit(
-    activity_id: int,
     payload: SubmitResponseRequest,
     request: Request,
     response: Response,
+    activity_id: int = ApiPath(..., ge=1),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
+    _content_type_ok: None = Depends(_require_json_content_type),
     db: Session = Depends(get_db),
 ):
     del idempotency_key
@@ -2837,6 +2849,9 @@ def participant_api_activity_response_submit(
             str(activity_row.id),
         )
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Activity response state conflict.")
     except Exception:
         db.rollback()
         raise
