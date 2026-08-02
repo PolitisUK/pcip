@@ -52,6 +52,25 @@ from .storage import storage
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
 from .observability import configure_observability
+from .participant_services import (
+    activity_window,
+    apply_response_action,
+    build_evidence_file,
+    create_participant_invitation,
+    create_participant_message,
+    create_researcher_message,
+    find_live_unaccepted_invitation,
+    grant_participant_consent,
+    is_evidence_downloadable,
+    list_participant_visible_messages,
+    mark_invitation_revoked,
+    resolve_org_scoped_evidence,
+    resolve_invitation_by_token,
+    resolve_or_create_activity_response,
+    resolve_org_scoped_invitation,
+    resolve_participant_invitation,
+    serialise_response_payload,
+)
 
 VERSION = "0.6.0"
 BASE = Path(__file__).resolve().parent
@@ -109,6 +128,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
+
+
+@app.get("/service-worker.js", include_in_schema=False)
+def service_worker():
+    return FileResponse(
+        BASE / "static" / "service-worker.js",
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache",
+            "Service-Worker-Allowed": "/",
+        },
+    )
+
+
 logger = logging.getLogger("pcip.security")
 PUBLIC_AUTH_COOKIE = "public_auth_session"
 PUBLIC_SCOPE_PASSWORD_RESET = "password_reset"
@@ -120,45 +153,6 @@ def now(): return datetime.now(timezone.utc)
 def naive_now(): return now().replace(tzinfo=None)
 def unexpired(v): return bool(v and v.replace(tzinfo=None) > naive_now())
 
-
-def activity_window(
-    study_row: Study,
-    activity_row: Activity,
-    current_time: datetime | None = None,
-) -> dict[str, datetime | str | None]:
-    if not study_row.start_at:
-        return {
-            "status": "open",
-            "release_at": None,
-            "due_at": None,
-        }
-
-    start_at = study_row.start_at
-    if start_at.tzinfo is None:
-        start_at = start_at.replace(tzinfo=timezone.utc)
-    current = current_time or now()
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-
-    release_at = start_at + timedelta(
-        days=max(0, int(activity_row.release_offset_days or 0))
-    )
-    due_at = (
-        start_at + timedelta(days=int(activity_row.due_offset_days))
-        if activity_row.due_offset_days is not None
-        else None
-    )
-    if current < release_at:
-        status = "upcoming"
-    elif due_at and current > due_at:
-        status = "closed"
-    else:
-        status = "open"
-    return {
-        "status": status,
-        "release_at": release_at,
-        "due_at": due_at,
-    }
 
 
 class InMemoryRateLimiter:
@@ -288,7 +282,7 @@ def allow_unscanned_downloads() -> bool:
 
 
 def ensure_clean_scan_for_download(scan_status: str | None):
-    if normalise_scan_status(scan_status) == "clean":
+    if is_evidence_downloadable(scan_status):
         return
     if allow_unscanned_downloads():
         return
@@ -1935,31 +1929,39 @@ def enrol(study_id:int,participant_id:int=Form(...),u=Depends(roles("owner","adm
     return RedirectResponse(f"/studies/{s.id}",303)
 
 def send_participant_invite(db,u,s,p):
-    raw=new_token(); inv=ParticipantInvitation(organisation_id=u.organisation_id,participant_id=p.id,study_id=s.id,token_hash=token_hash(raw),expires_at=now()+timedelta(days=30),invited_by_id=u.id); db.add(inv); db.flush(); queue_email(db,u.organisation_id,p.email,f"Invitation: {s.title}",f"Join the study: {settings.base_url}/join-study?token={raw}"); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title); db.commit()
+    _, raw = create_participant_invitation(
+        db,
+        organisation_id=u.organisation_id,
+        participant_id=p.id,
+        study_id=s.id,
+        invited_by_id=u.id,
+        expires_at=now() + timedelta(days=30),
+    )
+    queue_email(db,u.organisation_id,p.email,f"Invitation: {s.title}",f"Join the study: {settings.base_url}/join-study?token={raw}"); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title); db.commit()
 @app.post("/studies/{study_id}/invite/{participant_id}")
 def invite_participant(study_id:int,participant_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); p=participant(db,participant_id,u.organisation_id)
     if not p.email: raise HTTPException(400,"Participant requires an email address.")
-    active=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.study_id==s.id,ParticipantInvitation.participant_id==p.id,ParticipantInvitation.accepted_at.is_(None),ParticipantInvitation.revoked_at.is_(None),ParticipantInvitation.expires_at>now()))
+    active = find_live_unaccepted_invitation(db, s.id, p.id, now())
     if active: raise HTTPException(400,"A live invitation already exists. Revoke it before resending.")
     send_participant_invite(db,u,s,p); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/participant-invitations/{invitation_id}/revoke")
 def revoke_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.id==invitation_id,ParticipantInvitation.organisation_id==u.organisation_id));
+    inv = resolve_org_scoped_invitation(db, u.organisation_id, invitation_id)
     if not inv: raise HTTPException(404)
     require_study_permission(db,u,study(db,inv.study_id,u.organisation_id),edit=True)
-    inv.revoked_at=now(); db.commit(); return RedirectResponse(f"/studies/{inv.study_id}",303)
+    mark_invitation_revoked(inv, now()); db.commit(); return RedirectResponse(f"/studies/{inv.study_id}",303)
 @app.post("/participant-invitations/{invitation_id}/resend")
 def resend_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.id==invitation_id,ParticipantInvitation.organisation_id==u.organisation_id));
+    inv = resolve_org_scoped_invitation(db, u.organisation_id, invitation_id)
     if not inv: raise HTTPException(404)
     require_study_permission(db,u,study(db,inv.study_id,u.organisation_id),edit=True)
-    inv.revoked_at=now(); send_participant_invite(db,u,study(db,inv.study_id,u.organisation_id),participant(db,inv.participant_id,u.organisation_id)); return RedirectResponse(f"/studies/{inv.study_id}",303)
+    mark_invitation_revoked(inv, now()); send_participant_invite(db,u,study(db,inv.study_id,u.organisation_id),participant(db,inv.participant_id,u.organisation_id)); return RedirectResponse(f"/studies/{inv.study_id}",303)
 
 @app.get("/join-study",response_class=HTMLResponse)
 def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
     if token:
-        inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==token_hash(token)))
+        inv = resolve_invitation_by_token(db, token)
         valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at))
         if not valid:
             return render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
@@ -1990,7 +1992,7 @@ def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
 @app.post("/join-study")
 def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
+    inv = resolve_participant_invitation(db, session_row)
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
@@ -2003,7 +2005,7 @@ def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csr
     if not inv or inv.revoked_at or not unexpired(inv.expires_at):
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not consent: raise HTTPException(400,"Consent is required.")
-    p=db.get(Participant,inv.participant_id); inv.accepted_at=inv.accepted_at or now(); p.status="active"; p.consent_status="granted"; audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse("/participant-portal",303)
+    p=db.get(Participant,inv.participant_id); grant_participant_consent(inv, p, now()); audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse("/participant-portal",303)
 @app.get("/participant-portal",response_class=HTMLResponse)
 def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
     if token:
@@ -2011,7 +2013,7 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
     if not session_row:
         return RedirectResponse("/join-study",303)
-    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id)
+    inv = resolve_participant_invitation(db, session_row)
     if not inv or inv.revoked_at or not unexpired(inv.expires_at):
         return RedirectResponse("/join-study",303)
     if not inv.accepted_at: return RedirectResponse("/join-study",303)
@@ -2019,11 +2021,11 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
     for activity_id,response in responses.items():
         try: response_values[activity_id]=json.loads(response.value_json or "{}")
         except json.JSONDecodeError: response_values[activity_id]={}
-    msgs=db.scalars(select(ParticipantMessage).where(ParticipantMessage.study_id==s.id,ParticipantMessage.participant_id==p.id,ParticipantMessage.internal_note==False).order_by(ParticipantMessage.created_at)).all(); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,activity_windows=activity_windows,responses=responses,response_values=response_values,messages=msgs)
+    msgs = list_participant_visible_messages(db, study_id=s.id, participant_id=p.id); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,activity_windows=activity_windows,responses=responses,response_values=response_values,messages=msgs)
 @app.post("/participant-portal/activity/{activity_id}")
 async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
+    inv = resolve_participant_invitation(db, session_row)
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
@@ -2043,9 +2045,14 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
         raise HTTPException(409,"This activity is not available yet.")
     if window["status"] == "closed":
         raise HTTPException(409,"The due date for this activity has passed.")
-    r=db.scalar(select(ActivityResponse).where(ActivityResponse.activity_id==a.id,ActivityResponse.participant_id==inv.participant_id))
-    if not r: r=ActivityResponse(organisation_id=inv.organisation_id,study_id=inv.study_id,activity_id=a.id,participant_id=inv.participant_id); db.add(r); db.flush()
-    choice_list=[x.strip() for x in choices.split("|") if x.strip()]; value={"answer":answer,"choices":choice_list}
+    r = resolve_or_create_activity_response(
+        db,
+        organisation_id=inv.organisation_id,
+        study_id=inv.study_id,
+        activity_id=a.id,
+        participant_id=inv.participant_id,
+    )
+    value, choice_list = serialise_response_payload(answer, choices)
     stored_key = None
     if upload and upload.filename:
         original=Path(upload.filename).name
@@ -2071,7 +2078,22 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
                     raise HTTPException(400,"The uploaded file failed malware screening.")
             else:
                 scan_status,scan_detail="pending","Awaiting Microsoft Defender for Storage on-upload scan."
-            ev=EvidenceFile(organisation_id=inv.organisation_id,study_id=inv.study_id,activity_id=a.id,participant_id=inv.participant_id,response_id=r.id,original_name=original,stored_name=stored.key,content_type=upload.content_type or "application/octet-stream",size_bytes=stored.size,sha256_hex=stored.sha256_hex,scan_status=scan_status,scan_detail=scan_detail,storage_provider=stored.provider,blob_uri=stored.uri); db.add(ev); db.flush(); value["evidence_id"]=ev.id
+            ev = build_evidence_file(
+                organisation_id=inv.organisation_id,
+                study_id=inv.study_id,
+                activity_id=a.id,
+                participant_id=inv.participant_id,
+                response_id=r.id,
+                original_name=original,
+                stored_name=stored.key,
+                content_type=upload.content_type or "application/octet-stream",
+                size_bytes=stored.size,
+                sha256_hex=stored.sha256_hex,
+                scan_status=scan_status,
+                scan_detail=scan_detail,
+                storage_provider=stored.provider,
+                blob_uri=stored.uri,
+            ); db.add(ev); db.flush(); value["evidence_id"]=ev.id
         except Exception:
             if stored_key:
                 delete_stored_object_safely(stored_key, "upload_processing_failed")
@@ -2080,7 +2102,7 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
             raise
     try:
         if a.required and action=="submit" and not answer.strip() and not choice_list and not upload: raise HTTPException(400,"A response is required.")
-        r.value_json=json.dumps(value); r.status="submitted" if action=="submit" else "draft"; r.submitted_at=now() if action=="submit" else None; audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit()
+        apply_response_action(r, value, action, now()); audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit()
     except Exception:
         db.rollback()
         if stored_key:
@@ -2090,7 +2112,7 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
 @app.post("/participant-portal/message")
 def participant_message(request: Request, token:str=Form(""),body:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
+    inv = resolve_participant_invitation(db, session_row)
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
@@ -2103,7 +2125,7 @@ def participant_message(request: Request, token:str=Form(""),body:str=Form(...),
     if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
-    db.add(ParticipantMessage(organisation_id=inv.organisation_id,study_id=inv.study_id,participant_id=inv.participant_id,sender_type="participant",body=body.strip())); db.commit(); return RedirectResponse("/participant-portal#messages",303)
+    db.add(create_participant_message(inv, body=body)); db.commit(); return RedirectResponse("/participant-portal#messages",303)
 @app.post("/participants/{participant_id}/message")
 def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(...),internal_note:bool=Form(False),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
@@ -2111,10 +2133,10 @@ def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(.
     if not enrolment:
         raise HTTPException(400,"Participant is not enrolled in this study.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
-    db.add(ParticipantMessage(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id,sender_type="researcher",sender_user_id=u.id,body=body.strip(),internal_note=internal_note)); audit(db,u.organisation_id,u.id,"message.created","participant",p.id,"internal" if internal_note else s.title); db.commit(); return RedirectResponse(f"/participants/{p.id}#messages",303)
+    db.add(create_researcher_message(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id,sender_user_id=u.id,body=body,internal_note=internal_note)); audit(db,u.organisation_id,u.id,"message.created","participant",p.id,"internal" if internal_note else s.title); db.commit(); return RedirectResponse(f"/participants/{p.id}#messages",303)
 @app.get("/evidence/{evidence_id}")
 def evidence(evidence_id:int,u=Depends(current_user),db:Session=Depends(get_db)):
-    e=db.scalar(select(EvidenceFile).where(EvidenceFile.id==evidence_id,EvidenceFile.organisation_id==u.organisation_id));
+    e = resolve_org_scoped_evidence(db, u.organisation_id, evidence_id)
     if not e: raise HTTPException(404)
     require_study_permission(db,u,study(db,e.study_id,u.organisation_id))
     if e.storage_provider == "azure_blob":

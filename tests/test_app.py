@@ -1630,6 +1630,142 @@ def test_researcher_message_requires_participant_enrolment_in_study():
         assert allowed.status_code == 303
 
 
+def test_researcher_message_route_preserves_sender_audit_and_redirect_semantics():
+    from app.models import AuditEvent, ParticipantMessage
+
+    with client:
+        client.cookies.clear()
+        auth()
+        code = unique_value('MSGROUTE').upper()
+        project = post_with_csrf('/projects', data={'title': f'Message route project {code}', 'code': code, 'description': '', 'status_value': 'live'}, follow_redirects=False)
+        project_id = int(project.headers['location'].split('/')[-1])
+
+        study = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={'title': f'Message route study {code}', 'code': f'{code}A', 'description': '', 'methodology': 'diary', 'status_value': 'recruiting'},
+            follow_redirects=False,
+        )
+        study_id = int(study.headers['location'].split('/')[-1])
+
+        participant_created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': f'{code}P',
+                'name': f'Message Route Participant {code}',
+                'email': f'{code.lower()}@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant_created.headers['location'].split('/')[-1])
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+
+        response = post_with_csrf(
+            f'/participants/{participant_id}/message',
+            data={'study_id': study_id, 'body': '  routed note  ', 'internal_note': 'true'},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers['location'] == f'/participants/{participant_id}#messages'
+
+        with SessionLocal() as db:
+            message = db.scalar(
+                select(ParticipantMessage)
+                .where(ParticipantMessage.participant_id == participant_id)
+                .order_by(ParticipantMessage.id.desc())
+            )
+            assert message is not None
+            assert message.sender_type == 'researcher'
+            assert message.sender_user_id is not None
+            assert message.body == 'routed note'
+            assert message.internal_note is True
+
+            audit_row = db.scalar(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.action == 'message.created',
+                    AuditEvent.entity_type == 'participant',
+                    AuditEvent.entity_id == str(participant_id),
+                )
+                .order_by(AuditEvent.id.desc())
+            )
+            assert audit_row is not None
+            assert audit_row.detail == 'internal'
+
+
+def test_participant_message_route_preserves_validation_and_storage_semantics():
+    from app.models import OutboxEmail, ParticipantMessage
+
+    with client:
+        client.cookies.clear()
+        auth()
+        code = unique_value('MSGPORTAL').upper()
+        project = post_with_csrf('/projects', data={'title': f'Portal message project {code}', 'code': code, 'description': '', 'status_value': 'live'}, follow_redirects=False)
+        project_id = int(project.headers['location'].split('/')[-1])
+        study = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={'title': f'Portal message study {code}', 'code': f'{code}A', 'description': '', 'methodology': 'diary', 'status_value': 'recruiting'},
+            follow_redirects=False,
+        )
+        study_id = int(study.headers['location'].split('/')[-1])
+        participant_created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': f'{code}P',
+                'name': f'Portal Message Participant {code}',
+                'email': f'{code.lower()}@example.org',
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant_created.headers['location'].split('/')[-1])
+
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
+
+        with SessionLocal() as db:
+            invite_email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient == f'{code.lower()}@example.org')
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert invite_email is not None
+            token = invite_email.body.split('token=')[1].strip()
+
+        client.get(f'/join-study?token={token}')
+        consent = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert consent.status_code == 303
+
+        empty = post_with_csrf('/participant-portal/message', data={'body': '   '}, follow_redirects=False)
+        assert empty.status_code == 400
+
+        created = post_with_csrf('/participant-portal/message', data={'body': '  hello research  '}, follow_redirects=False)
+        assert created.status_code == 303
+        assert created.headers['location'] == '/participant-portal#messages'
+
+        with SessionLocal() as db:
+            message = db.scalar(
+                select(ParticipantMessage)
+                .where(ParticipantMessage.participant_id == participant_id, ParticipantMessage.study_id == study_id)
+                .order_by(ParticipantMessage.id.desc())
+            )
+            assert message is not None
+            assert message.sender_type == 'participant'
+            assert message.sender_user_id is None
+            assert message.internal_note is False
+            assert message.body == 'hello research'
+
+
 def hosted_settings(**overrides):
     data = {
         'environment': 'production',
@@ -1971,3 +2107,1706 @@ def test_password_reset_invalidates_existing_session_cookie():
         denied = client.get('/', follow_redirects=False)
         assert denied.status_code == 303
         assert denied.headers['location'] == '/login'
+
+
+def test_pwa_manifest_is_valid_and_participant_focused():
+    import json
+
+    response = client.get('/static/manifest.webmanifest')
+
+    assert response.status_code == 200
+    manifest = json.loads(response.text)
+    assert manifest['name'] == 'Citizen Centric Participant'
+    assert manifest['start_url'] == '/participant-portal'
+    assert manifest['scope'] == '/'
+    assert manifest['display'] == 'standalone'
+    assert manifest['icons'] == []
+
+
+def test_service_worker_is_root_scoped_and_not_cached():
+    response = client.get('/service-worker.js')
+
+    assert response.status_code == 200
+    assert response.headers['cache-control'] == 'no-cache'
+    assert response.headers['service-worker-allowed'] == '/'
+    assert 'application/javascript' in response.headers['content-type']
+
+
+def test_service_worker_caches_only_explicit_public_assets():
+    response = client.get('/service-worker.js')
+
+    assert response.status_code == 200
+    script = response.text
+
+    assert 'PUBLIC_STATIC_ASSETS' in script
+    assert '/static/offline.html' in script
+    assert '/static/politis_symbol_colour.png' in script
+    assert 'request.mode === "navigate"' in script
+
+    sensitive_paths = [
+        '/participant-portal',
+        '/join-study',
+        '/evidence/',
+        '/api/',
+        '/participants/',
+        '/messages/',
+    ]
+    for path in sensitive_paths:
+        assert path not in script
+
+
+def test_offline_page_contains_no_participant_information():
+    response = client.get('/static/offline.html')
+
+    assert response.status_code == 200
+    assert "You’re offline" in response.text
+    assert 'No participant page, response, message or evidence' in response.text
+    assert 'csrf_token' not in response.text
+    assert 'invitation' not in response.text.lower()
+    assert 'participant.name' not in response.text
+
+
+def test_base_template_links_to_manifest():
+    template = Path('app/templates/base.html').read_text()
+
+    assert (
+        '<link rel="manifest" href="/static/manifest.webmanifest">'
+        in template
+    )
+    assert '<meta name="theme-color" content="#215bb3">' in template
+
+
+def test_participant_templates_register_pwa_once():
+    join_template = Path('app/templates/join_study.html').read_text()
+    portal_template = Path('app/templates/participant_portal.html').read_text()
+
+    script_reference = 'src="/static/participant_pwa.js"'
+
+    assert join_template.count(script_reference) == 1
+    assert portal_template.count(script_reference) == 1
+    assert 'id="main-content"' in portal_template
+
+
+def test_pwa_registration_uses_root_service_worker_scope():
+    script = Path('app/static/participant_pwa.js').read_text()
+
+    assert '.register("/service-worker.js", { scope: "/" })' in script
+    assert 'localStorage' not in script
+    assert 'sessionStorage' not in script
+
+
+def test_resolve_participant_invitation_success():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Project, PublicAuthSession, Study
+    from app.participant_services import resolve_participant_invitation
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        project = db.scalar(
+            select(Project)
+            .where(Project.organisation_id == user.organisation_id)
+            .order_by(Project.id)
+        )
+        if not project:
+            project = Project(
+                organisation_id=user.organisation_id,
+                title=unique_value('Resolver project'),
+                code=unique_value('resolver-project').upper(),
+                description='Resolver test project',
+                status='draft',
+                created_by_id=user.id,
+            )
+            db.add(project)
+            db.flush()
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        if not study_row:
+            study_row = Study(
+                organisation_id=user.organisation_id,
+                project_id=project.id,
+                title=unique_value('Resolver study'),
+                code=unique_value('resolver-study').upper(),
+                description='Resolver test study',
+                methodology='diary',
+                status='draft',
+                created_by_id=user.id,
+            )
+            db.add(study_row)
+            db.flush()
+
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == user.organisation_id)
+            .order_by(Participant.id)
+        )
+        if not participant_row:
+            participant_row = Participant(
+                organisation_id=user.organisation_id,
+                reference=unique_value('resolver-participant').upper(),
+                name='Resolver Participant',
+                email=f"{unique_value('resolver')}@example.org",
+                status='invited',
+                consent_status='pending',
+                communication_preference='email',
+                created_by_id=user.id,
+            )
+            db.add(participant_row)
+            db.flush()
+
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+        )
+        db.add(invitation)
+        db.flush()
+
+        session_row = PublicAuthSession(
+            scope='participant_portal',
+            session_hash=token_hash(new_token()),
+            participant_invitation_id=invitation.id,
+            expires_at=now() + timedelta(hours=1),
+        )
+        db.add(session_row)
+        db.flush()
+
+        resolved = resolve_participant_invitation(db, session_row)
+        assert resolved is not None
+        assert resolved.id == invitation.id
+
+
+def test_resolve_participant_invitation_missing_participant_invitation_id():
+    from app.main import now
+    from app.models import PublicAuthSession
+    from app.participant_services import resolve_participant_invitation
+
+    with SessionLocal() as db:
+        session_row = PublicAuthSession(
+            scope='participant_portal',
+            session_hash='resolver-missing-id',
+            participant_invitation_id=None,
+            expires_at=now() + timedelta(hours=1),
+        )
+        assert resolve_participant_invitation(db, session_row) is None
+
+
+def test_resolve_participant_invitation_missing_invitation_record():
+    from app.main import now
+    from app.models import PublicAuthSession
+    from app.participant_services import resolve_participant_invitation
+
+    with SessionLocal() as db:
+        session_row = PublicAuthSession(
+            scope='participant_portal',
+            session_hash='resolver-missing-invitation',
+            participant_invitation_id=999999999,
+            expires_at=now() + timedelta(hours=1),
+        )
+        assert resolve_participant_invitation(db, session_row) is None
+
+
+def test_resolve_participant_invitation_does_not_validate_auth_or_scope():
+    from app.main import now
+    from app.models import ParticipantInvitation, PublicAuthSession
+    from app.participant_services import resolve_participant_invitation
+
+    with SessionLocal() as db:
+        invitation = db.scalar(
+            select(ParticipantInvitation).order_by(ParticipantInvitation.id.desc())
+        )
+        assert invitation is not None
+
+        session_row = PublicAuthSession(
+            scope='unrelated_scope',
+            session_hash='resolver-no-auth-check',
+            participant_invitation_id=invitation.id,
+            expires_at=now() - timedelta(hours=1),
+            revoked_at=now(),
+        )
+
+        resolved = resolve_participant_invitation(db, session_row)
+        assert resolved is not None
+        assert resolved.id == invitation.id
+
+
+def test_invitation_service_token_hash_lookup_success_and_no_match():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import resolve_invitation_by_token
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == user.organisation_id)
+            .order_by(Participant.id)
+        )
+        assert participant_row is not None
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        raw_token = new_token()
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(raw_token),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+        )
+        db.add(invitation)
+        db.flush()
+
+        resolved = resolve_invitation_by_token(db, raw_token)
+        assert resolved is not None
+        assert resolved.id == invitation.id
+
+        assert resolve_invitation_by_token(db, new_token()) is None
+
+
+def test_invitation_service_live_lookup_excludes_accepted_revoked_and_expired():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import find_live_unaccepted_invitation
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        def make_participant(suffix: str) -> Participant:
+            participant_row = Participant(
+                organisation_id=user.organisation_id,
+                reference=unique_value(f'INV-{suffix}').upper(),
+                name=f'Invitation {suffix}',
+                email=f"{unique_value(f'inv-{suffix}')}@example.org",
+                status='prospective',
+                consent_status='pending',
+                communication_preference='email',
+                created_by_id=user.id,
+            )
+            db.add(participant_row)
+            db.flush()
+            return participant_row
+
+        live_participant = make_participant('live')
+        live_invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=live_participant.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=2),
+            invited_by_id=user.id,
+        )
+        db.add(live_invitation)
+        db.flush()
+
+        accepted_participant = make_participant('accepted')
+        db.add(
+            ParticipantInvitation(
+                organisation_id=user.organisation_id,
+                participant_id=accepted_participant.id,
+                study_id=study_row.id,
+                token_hash=token_hash(new_token()),
+                expires_at=now() + timedelta(days=2),
+                accepted_at=now(),
+                invited_by_id=user.id,
+            )
+        )
+
+        revoked_participant = make_participant('revoked')
+        db.add(
+            ParticipantInvitation(
+                organisation_id=user.organisation_id,
+                participant_id=revoked_participant.id,
+                study_id=study_row.id,
+                token_hash=token_hash(new_token()),
+                expires_at=now() + timedelta(days=2),
+                revoked_at=now(),
+                invited_by_id=user.id,
+            )
+        )
+
+        expired_participant = make_participant('expired')
+        db.add(
+            ParticipantInvitation(
+                organisation_id=user.organisation_id,
+                participant_id=expired_participant.id,
+                study_id=study_row.id,
+                token_hash=token_hash(new_token()),
+                expires_at=now() - timedelta(minutes=1),
+                invited_by_id=user.id,
+            )
+        )
+        db.flush()
+
+        assert (
+            find_live_unaccepted_invitation(db, study_row.id, live_participant.id, now()).id
+            == live_invitation.id
+        )
+        assert (
+            find_live_unaccepted_invitation(db, study_row.id, accepted_participant.id, now())
+            is None
+        )
+        assert (
+            find_live_unaccepted_invitation(db, study_row.id, revoked_participant.id, now())
+            is None
+        )
+        assert (
+            find_live_unaccepted_invitation(db, study_row.id, expired_participant.id, now())
+            is None
+        )
+
+
+def test_invitation_service_org_scoped_lookup_blocks_other_organisation():
+    from app.main import now
+    from app.models import Organisation, Participant, ParticipantInvitation, Study
+    from app.participant_services import resolve_org_scoped_invitation
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id)
+        )
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == owner.organisation_id)
+            .order_by(Participant.id)
+        )
+        assert study_row is not None
+        assert participant_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=owner.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=owner.id,
+        )
+        db.add(invitation)
+        db.flush()
+
+        other_org = Organisation(
+            name=unique_value('Invitation scope org'),
+            slug=unique_value('invitation-scope-org').lower(),
+        )
+        db.add(other_org)
+        db.flush()
+
+        assert resolve_org_scoped_invitation(db, owner.organisation_id, invitation.id) is not None
+        assert resolve_org_scoped_invitation(db, other_org.id, invitation.id) is None
+
+
+def test_invitation_service_mark_revoked_sets_timestamp():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import mark_invitation_revoked
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == user.organisation_id)
+            .order_by(Participant.id)
+        )
+        assert study_row is not None
+        assert participant_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+        )
+        db.add(invitation)
+        db.flush()
+
+        revoked_at = now()
+        mark_invitation_revoked(invitation, revoked_at)
+        assert invitation.revoked_at == revoked_at
+
+
+def test_invitation_routes_preserve_invite_revoke_resend_behaviour():
+    from app.models import ParticipantInvitation
+
+    with client:
+        auth()
+        participant_response = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('ROUTE-P').upper(),
+                'name': 'Route Behaviour Participant',
+                'email': f"{unique_value('route-behaviour')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        assert participant_response.status_code == 303
+        participant_id = int(participant_response.headers['location'].rsplit('/', 1)[-1])
+
+        studies_page = client.get('/studies')
+        study_id = int(studies_page.text.split('/studies/')[1].split('"')[0])
+
+        enrol = post_with_csrf(
+            f'/studies/{study_id}/enrol',
+            data={'participant_id': participant_id},
+            follow_redirects=False,
+        )
+        assert enrol.status_code == 303
+
+        first_invite = post_with_csrf(
+            f'/studies/{study_id}/invite/{participant_id}',
+            follow_redirects=False,
+        )
+        assert first_invite.status_code == 303
+
+        duplicate_invite = post_with_csrf(
+            f'/studies/{study_id}/invite/{participant_id}',
+            follow_redirects=False,
+        )
+        assert duplicate_invite.status_code == 400
+        assert 'A live invitation already exists' in duplicate_invite.text
+
+        with SessionLocal() as db:
+            active_invitation = db.scalar(
+                select(ParticipantInvitation)
+                .where(
+                    ParticipantInvitation.study_id == study_id,
+                    ParticipantInvitation.participant_id == participant_id,
+                    ParticipantInvitation.revoked_at.is_(None),
+                )
+                .order_by(ParticipantInvitation.id.desc())
+            )
+            assert active_invitation is not None
+            invitation_id = active_invitation.id
+
+        revoke = post_with_csrf(
+            f'/participant-invitations/{invitation_id}/revoke',
+            follow_redirects=False,
+        )
+        assert revoke.status_code == 303
+
+        resend = post_with_csrf(
+            f'/participant-invitations/{invitation_id}/resend',
+            follow_redirects=False,
+        )
+        assert resend.status_code == 303
+
+        with SessionLocal() as db:
+            invitations = db.scalars(
+                select(ParticipantInvitation)
+                .where(
+                    ParticipantInvitation.study_id == study_id,
+                    ParticipantInvitation.participant_id == participant_id,
+                )
+                .order_by(ParticipantInvitation.id.asc())
+            ).all()
+            assert len(invitations) >= 2
+            assert invitations[-1].id != invitation_id
+            assert invitations[-1].revoked_at is None
+
+
+def test_grant_participant_consent_sets_accepted_at_when_absent():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import grant_participant_consent
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        participant_row = Participant(
+            organisation_id=user.organisation_id,
+            reference=unique_value('CONSENT-SET').upper(),
+            name='Consent Set',
+            email=f"{unique_value('consent-set')}@example.org",
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            created_by_id=user.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+            accepted_at=None,
+        )
+        db.add(invitation)
+        db.flush()
+
+        accepted_at = now()
+        grant_participant_consent(invitation, participant_row, accepted_at)
+
+        assert invitation.accepted_at == accepted_at
+
+
+def test_grant_participant_consent_preserves_existing_accepted_at():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import grant_participant_consent
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        participant_row = Participant(
+            organisation_id=user.organisation_id,
+            reference=unique_value('CONSENT-PRESERVE').upper(),
+            name='Consent Preserve',
+            email=f"{unique_value('consent-preserve')}@example.org",
+            status='invited',
+            consent_status='pending',
+            communication_preference='email',
+            created_by_id=user.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        existing_accepted_at = now() - timedelta(hours=2)
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+            accepted_at=existing_accepted_at,
+        )
+        db.add(invitation)
+        db.flush()
+
+        grant_participant_consent(invitation, participant_row, now())
+
+        assert invitation.accepted_at == existing_accepted_at
+
+
+def test_grant_participant_consent_sets_active_and_granted_statuses():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import grant_participant_consent
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        participant_row = Participant(
+            organisation_id=user.organisation_id,
+            reference=unique_value('CONSENT-STATUS').upper(),
+            name='Consent Status',
+            email=f"{unique_value('consent-status')}@example.org",
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            created_by_id=user.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+        )
+        db.add(invitation)
+        db.flush()
+
+        grant_participant_consent(invitation, participant_row, now())
+
+        assert participant_row.status == 'active'
+        assert participant_row.consent_status == 'granted'
+
+
+def test_grant_participant_consent_performs_no_commit_by_itself():
+    from app.main import now
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import grant_participant_consent
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).order_by(User.id))
+        assert user is not None
+
+        participant_row = Participant(
+            organisation_id=user.organisation_id,
+            reference=unique_value('CONSENT-NOCOMMIT').upper(),
+            name='Consent No Commit',
+            email=f"{unique_value('consent-nocommit')}@example.org",
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            created_by_id=user.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == user.organisation_id)
+            .order_by(Study.id)
+        )
+        assert study_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=user.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(new_token()),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=user.id,
+        )
+        db.add(invitation)
+        db.commit()
+        participant_id = participant_row.id
+        invitation_id = invitation.id
+
+    with SessionLocal() as db:
+        invitation = db.get(ParticipantInvitation, invitation_id)
+        participant_row = db.get(Participant, participant_id)
+        assert invitation is not None
+        assert participant_row is not None
+        grant_participant_consent(invitation, participant_row, now())
+        db.rollback()
+
+    with SessionLocal() as db:
+        invitation = db.get(ParticipantInvitation, invitation_id)
+        participant_row = db.get(Participant, participant_id)
+        assert invitation is not None
+        assert participant_row is not None
+        assert invitation.accepted_at is None
+        assert participant_row.status == 'prospective'
+        assert participant_row.consent_status == 'pending'
+
+
+def test_join_study_post_preserves_consent_rejection_and_acceptance_flow():
+    from app.models import AuditEvent, OutboxEmail, Participant, ParticipantInvitation
+    from app.security import token_hash
+
+    with client:
+        auth()
+        p = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('CONSENT-ROUTE').upper(),
+                'name': 'Consent Route Participant',
+                'email': f"{unique_value('consent-route')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        assert p.status_code == 303
+        participant_id = int(p.headers['location'].rsplit('/', 1)[-1])
+
+        studies_page = client.get('/studies')
+        study_id = int(studies_page.text.split('/studies/')[1].split('"')[0])
+
+        post_with_csrf(
+            f'/studies/{study_id}/enrol',
+            data={'participant_id': participant_id},
+            follow_redirects=False,
+        )
+        post_with_csrf(
+            f'/studies/{study_id}/invite/{participant_id}',
+            follow_redirects=False,
+        )
+
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient.like('%consent-route%@example.org'))
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        exchange = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert exchange.status_code == 303
+
+        rejected = post_with_csrf('/join-study', data={'consent': ''}, follow_redirects=False)
+        assert rejected.status_code == 400
+        assert 'Consent is required.' in rejected.text
+
+        accepted = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert accepted.status_code == 303
+        assert accepted.headers['location'] == '/participant-portal'
+
+        with SessionLocal() as db:
+            invitation = db.scalar(
+                select(ParticipantInvitation)
+                .where(ParticipantInvitation.token_hash == token_hash(token))
+            )
+            participant_row = db.get(Participant, participant_id)
+            assert invitation is not None
+            assert participant_row is not None
+            assert invitation.accepted_at is not None
+            assert participant_row.status == 'active'
+            assert participant_row.consent_status == 'granted'
+            audit_event = db.scalar(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.action == 'participant.invitation_accepted',
+                    AuditEvent.organisation_id == invitation.organisation_id,
+                    AuditEvent.actor_user_id.is_(None),
+                    AuditEvent.entity_type == 'participant',
+                    AuditEvent.entity_id == str(participant_id),
+                )
+                .order_by(AuditEvent.id.desc())
+            )
+            assert audit_event is not None
+
+
+def test_response_service_lookup_success_and_no_match():
+    from app.models import Activity, ActivityResponse, Participant
+    from app.participant_services import resolve_activity_response
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(select(Activity).order_by(Activity.id.asc()))
+        assert activity_row is not None
+        actor = db.scalar(
+            select(User)
+            .where(User.organisation_id == activity_row.organisation_id)
+            .order_by(User.id.asc())
+        )
+        assert actor is not None
+
+        participant_row = Participant(
+            organisation_id=activity_row.organisation_id,
+            reference=unique_value('RESP-LOOKUP').upper(),
+            name='Response Lookup',
+            email=f"{unique_value('response-lookup')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=actor.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        response = ActivityResponse(
+            organisation_id=activity_row.organisation_id,
+            study_id=activity_row.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+            value_json='{}',
+            status='draft',
+        )
+        db.add(response)
+        db.flush()
+
+        found = resolve_activity_response(db, activity_row.id, participant_row.id)
+        assert found is not None
+        assert found.id == response.id
+
+        assert resolve_activity_response(db, activity_row.id, participant_row.id + 999999) is None
+
+
+def test_response_service_create_sets_foreign_keys():
+    from app.models import Activity, Participant
+    from app.participant_services import resolve_or_create_activity_response
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(select(Activity).order_by(Activity.id.asc()))
+        assert activity_row is not None
+        actor = db.scalar(
+            select(User)
+            .where(User.organisation_id == activity_row.organisation_id)
+            .order_by(User.id.asc())
+        )
+        assert actor is not None
+
+        participant_row = Participant(
+            organisation_id=activity_row.organisation_id,
+            reference=unique_value('RESP-CREATE').upper(),
+            name='Response Create',
+            email=f"{unique_value('response-create')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=actor.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        response = resolve_or_create_activity_response(
+            db,
+            organisation_id=activity_row.organisation_id,
+            study_id=activity_row.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+        )
+
+        assert response.organisation_id == activity_row.organisation_id
+        assert response.study_id == activity_row.study_id
+        assert response.activity_id == activity_row.id
+        assert response.participant_id == participant_row.id
+
+
+def test_response_service_payload_serialization_shape_is_unchanged():
+    from app.participant_services import serialise_response_payload
+
+    value, choice_list = serialise_response_payload('final answer', '  one |two| | three  ')
+
+    assert choice_list == ['one', 'two', 'three']
+    assert value == {'answer': 'final answer', 'choices': ['one', 'two', 'three']}
+
+
+def test_response_service_apply_action_draft_and_submit_status_and_submitted_at():
+    from app.main import now
+    from app.models import Activity, ActivityResponse, Participant
+    from app.participant_services import apply_response_action
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(select(Activity).order_by(Activity.id.asc()))
+        assert activity_row is not None
+        actor = db.scalar(
+            select(User)
+            .where(User.organisation_id == activity_row.organisation_id)
+            .order_by(User.id.asc())
+        )
+        assert actor is not None
+
+        participant_row = Participant(
+            organisation_id=activity_row.organisation_id,
+            reference=unique_value('RESP-ACTION').upper(),
+            name='Response Action',
+            email=f"{unique_value('response-action')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=actor.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        response = ActivityResponse(
+            organisation_id=activity_row.organisation_id,
+            study_id=activity_row.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+            value_json='{}',
+            status='draft',
+        )
+        db.add(response)
+        db.flush()
+
+        apply_response_action(response, {'answer': 'draft', 'choices': []}, 'draft', now())
+        assert response.status == 'draft'
+        assert response.submitted_at is None
+
+        submitted_at = now()
+        apply_response_action(response, {'answer': 'submit', 'choices': ['a']}, 'submit', submitted_at)
+        assert response.status == 'submitted'
+        assert response.submitted_at == submitted_at
+
+
+def test_response_service_submit_overwrites_existing_submitted_at_current_behavior():
+    from app.main import now
+    from app.models import Activity, ActivityResponse, Participant
+    from app.participant_services import apply_response_action
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(select(Activity).order_by(Activity.id.asc()))
+        assert activity_row is not None
+        actor = db.scalar(
+            select(User)
+            .where(User.organisation_id == activity_row.organisation_id)
+            .order_by(User.id.asc())
+        )
+        assert actor is not None
+
+        participant_row = Participant(
+            organisation_id=activity_row.organisation_id,
+            reference=unique_value('RESP-TIMESTAMP').upper(),
+            name='Response Timestamp',
+            email=f"{unique_value('response-timestamp')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=actor.id,
+        )
+        db.add(participant_row)
+        db.flush()
+
+        old_submitted_at = now() - timedelta(hours=6)
+        response = ActivityResponse(
+            organisation_id=activity_row.organisation_id,
+            study_id=activity_row.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+            value_json='{}',
+            status='submitted',
+            submitted_at=old_submitted_at,
+        )
+        db.add(response)
+        db.flush()
+
+        new_submitted_at = now()
+        apply_response_action(response, {'answer': 'new', 'choices': []}, 'submit', new_submitted_at)
+        assert response.submitted_at == new_submitted_at
+        assert response.submitted_at != old_submitted_at
+
+
+def test_response_service_helpers_do_not_commit():
+    from app.main import now
+    from app.models import Activity, ActivityResponse, Participant
+    from app.participant_services import apply_response_action, resolve_or_create_activity_response
+
+    with SessionLocal() as db:
+        activity_row = db.scalar(select(Activity).order_by(Activity.id.asc()))
+        assert activity_row is not None
+        actor = db.scalar(
+            select(User)
+            .where(User.organisation_id == activity_row.organisation_id)
+            .order_by(User.id.asc())
+        )
+        assert actor is not None
+
+        participant_row = Participant(
+            organisation_id=activity_row.organisation_id,
+            reference=unique_value('RESP-NOCOMMIT').upper(),
+            name='Response No Commit',
+            email=f"{unique_value('response-no-commit')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=actor.id,
+        )
+        db.add(participant_row)
+        db.commit()
+        participant_id = participant_row.id
+        activity_id = activity_row.id
+
+    with SessionLocal() as db:
+        activity_row = db.get(Activity, activity_id)
+        assert activity_row is not None
+        response = resolve_or_create_activity_response(
+            db,
+            organisation_id=activity_row.organisation_id,
+            study_id=activity_row.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_id,
+        )
+        apply_response_action(response, {'answer': 'temp', 'choices': []}, 'submit', now())
+        db.rollback()
+
+    with SessionLocal() as db:
+        response = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == activity_id,
+                ActivityResponse.participant_id == participant_id,
+            )
+        )
+        assert response is None
+
+
+def test_participant_portal_route_preserves_draft_then_submit_response_behavior():
+    from app.models import Activity, ActivityResponse, OutboxEmail
+
+    with client:
+        auth()
+        participant_created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('RESP-ROUTE').upper(),
+                'name': 'Route Response Participant',
+                'email': f"{unique_value('route-response')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant_created.headers['location'].rsplit('/', 1)[-1])
+
+        with SessionLocal() as db:
+            first_activity = db.scalar(select(Activity).order_by(Activity.id.asc()))
+            assert first_activity is not None
+            study_id = first_activity.study_id
+            activity_id = first_activity.id
+
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id})
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}')
+
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient.like('%route-response%@example.org'))
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        client.get(f'/join-study?token={token}')
+        post_with_csrf('/join-study', data={'consent': 'true'})
+
+        draft = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action': 'draft', 'answer': 'draft only'},
+            follow_redirects=False,
+        )
+        assert draft.status_code == 303
+
+        with SessionLocal() as db:
+            response = db.scalar(
+                select(ActivityResponse).where(
+                    ActivityResponse.activity_id == activity_id,
+                    ActivityResponse.participant_id == participant_id,
+                )
+            )
+            assert response is not None
+            assert response.status == 'draft'
+            assert response.submitted_at is None
+
+        submit = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action': 'submit', 'answer': 'final answer'},
+            follow_redirects=False,
+        )
+        assert submit.status_code == 303
+
+        with SessionLocal() as db:
+            response = db.scalar(
+                select(ActivityResponse).where(
+                    ActivityResponse.activity_id == activity_id,
+                    ActivityResponse.participant_id == participant_id,
+                )
+            )
+            assert response is not None
+            assert response.status == 'submitted'
+            assert response.submitted_at is not None
+            assert 'final answer' in response.value_json
+
+
+def test_participant_portal_route_preserves_evidence_upload_response_association():
+    import json
+    from io import BytesIO
+    from app.models import Activity, ActivityResponse, EvidenceFile, OutboxEmail
+
+    with client:
+        auth()
+        participant_created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('RESP-UPLOAD').upper(),
+                'name': 'Upload Response Participant',
+                'email': f"{unique_value('route-upload')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(participant_created.headers['location'].rsplit('/', 1)[-1])
+
+        with SessionLocal() as db:
+            first_activity = db.scalar(select(Activity).order_by(Activity.id.asc()))
+            assert first_activity is not None
+            study_id = first_activity.study_id
+            activity_id = first_activity.id
+
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id})
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}')
+
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient.like('%route-upload%@example.org'))
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        client.get(f'/join-study?token={token}')
+        post_with_csrf('/join-study', data={'consent': 'true'})
+
+        uploaded = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action': 'submit', 'answer': ''},
+            files={'upload': ('evidence.txt', BytesIO(b'ordinary evidence'), 'text/plain')},
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+
+        with SessionLocal() as db:
+            response = db.scalar(
+                select(ActivityResponse).where(
+                    ActivityResponse.activity_id == activity_id,
+                    ActivityResponse.participant_id == participant_id,
+                )
+            )
+            evidence = db.scalar(
+                select(EvidenceFile).where(
+                    EvidenceFile.activity_id == activity_id,
+                    EvidenceFile.participant_id == participant_id,
+                )
+            )
+            assert response is not None
+            assert evidence is not None
+            assert evidence.response_id == response.id
+            payload = json.loads(response.value_json)
+            assert payload.get('evidence_id') == evidence.id
+
+
+def test_evidence_service_build_record_preserves_all_fields():
+    from app.participant_services import build_evidence_file
+
+    evidence = build_evidence_file(
+        organisation_id=10,
+        study_id=20,
+        activity_id=30,
+        participant_id=40,
+        response_id=50,
+        original_name='proof.txt',
+        stored_name='abc123.txt',
+        content_type='text/plain',
+        size_bytes=123,
+        sha256_hex='f' * 64,
+        scan_status='pending',
+        scan_detail='Awaiting Microsoft Defender for Storage on-upload scan.',
+        storage_provider='local',
+        blob_uri='https://example.invalid/blob',
+    )
+
+    assert evidence.organisation_id == 10
+    assert evidence.study_id == 20
+    assert evidence.activity_id == 30
+    assert evidence.participant_id == 40
+    assert evidence.response_id == 50
+    assert evidence.original_name == 'proof.txt'
+    assert evidence.stored_name == 'abc123.txt'
+    assert evidence.content_type == 'text/plain'
+    assert evidence.size_bytes == 123
+    assert evidence.sha256_hex == 'f' * 64
+    assert evidence.scan_status == 'pending'
+    assert evidence.scan_detail == 'Awaiting Microsoft Defender for Storage on-upload scan.'
+    assert evidence.storage_provider == 'local'
+    assert evidence.blob_uri == 'https://example.invalid/blob'
+
+
+def test_evidence_service_org_scoped_lookup_returns_none_for_other_org():
+    from app.models import Activity, EvidenceFile, Organisation, Participant, Study
+    from app.participant_services import resolve_org_scoped_evidence
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id.asc())
+        )
+        activity_row = db.scalar(
+            select(Activity)
+            .where(Activity.study_id == study_row.id)
+            .order_by(Activity.id.asc())
+        )
+        participant_row = Participant(
+            organisation_id=owner.organisation_id,
+            reference=unique_value('EVID-SCOPE').upper(),
+            name='Evidence Scope Participant',
+            email=None,
+            phone=None,
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            tags='',
+            demographics_json='{}',
+            notes='',
+            created_by_id=owner.id,
+        )
+        db.add(participant_row)
+        db.flush()
+        evidence = EvidenceFile(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+            response_id=None,
+            original_name='scope.txt',
+            stored_name=f"{unique_value('scope-file')}.txt",
+            content_type='text/plain',
+            size_bytes=1,
+            sha256_hex='0' * 64,
+            scan_status='pending',
+            scan_detail='',
+            storage_provider='local',
+            blob_uri='',
+        )
+        db.add(evidence)
+        db.flush()
+        other_org = Organisation(
+            name=unique_value('Evidence Org'),
+            slug=unique_value('evidence-org').lower(),
+        )
+        db.add(other_org)
+        db.flush()
+
+        assert resolve_org_scoped_evidence(db, owner.organisation_id, evidence.id) is not None
+        assert resolve_org_scoped_evidence(db, other_org.id, evidence.id) is None
+
+
+@pytest.mark.parametrize('scan_status', ['pending', 'infected', 'failed', 'unknown', 'not_scanned', 'scan_failed'])
+def test_evidence_service_downloadable_only_for_clean(scan_status):
+    from app.participant_services import is_evidence_downloadable
+
+    assert is_evidence_downloadable(scan_status) is False
+    assert is_evidence_downloadable('clean') is True
+
+
+def test_messaging_service_builders_preserve_sender_semantics():
+    from app.models import Participant, ParticipantInvitation, Study
+    from app.participant_services import create_participant_message, create_researcher_message
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id.asc())
+        )
+        assert study_row is not None
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == owner.organisation_id)
+            .order_by(Participant.id.asc())
+        )
+        assert participant_row is not None
+
+        invitation = ParticipantInvitation(
+            organisation_id=owner.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=unique_value('MSG-TOKEN'),
+            expires_at=now() + timedelta(days=1),
+            invited_by_id=owner.id,
+        )
+
+        participant_message = create_participant_message(invitation, body='  participant hello  ')
+        assert participant_message.organisation_id == owner.organisation_id
+        assert participant_message.study_id == study_row.id
+        assert participant_message.participant_id == participant_row.id
+        assert participant_message.sender_type == 'participant'
+        assert participant_message.sender_user_id is None
+        assert participant_message.body == 'participant hello'
+
+        researcher_message = create_researcher_message(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            sender_user_id=owner.id,
+            body='  researcher hello  ',
+            internal_note=True,
+        )
+        assert researcher_message.organisation_id == owner.organisation_id
+        assert researcher_message.study_id == study_row.id
+        assert researcher_message.participant_id == participant_row.id
+        assert researcher_message.sender_type == 'researcher'
+        assert researcher_message.sender_user_id == owner.id
+        assert researcher_message.body == 'researcher hello'
+        assert researcher_message.internal_note is True
+
+
+def test_messaging_service_visible_lookup_excludes_internal_notes_and_orders_created_at():
+    from app.models import Participant, ParticipantMessage, Study
+    from app.participant_services import list_participant_visible_messages
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id.asc())
+        )
+        assert study_row is not None
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == owner.organisation_id)
+            .order_by(Participant.id.asc())
+        )
+        assert participant_row is not None
+
+        public_early = ParticipantMessage(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            sender_type='participant',
+            body=unique_value('PUBLIC-EARLY'),
+            created_at=now() - timedelta(minutes=2),
+        )
+        internal = ParticipantMessage(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            sender_type='researcher',
+            sender_user_id=owner.id,
+            body=unique_value('INTERNAL'),
+            internal_note=True,
+            created_at=now() - timedelta(minutes=1),
+        )
+        public_late = ParticipantMessage(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            sender_type='researcher',
+            sender_user_id=owner.id,
+            body=unique_value('PUBLIC-LATE'),
+            internal_note=False,
+            created_at=now(),
+        )
+
+        db.add_all([public_late, internal, public_early])
+        db.flush()
+
+        visible = list_participant_visible_messages(
+            db,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+        )
+
+        visible_ids = [row.id for row in visible]
+        assert public_early.id in visible_ids
+        assert public_late.id in visible_ids
+        assert internal.id not in visible_ids
+
+        public_rows = [row for row in visible if row.id in {public_early.id, public_late.id}]
+        assert [row.id for row in public_rows] == [public_early.id, public_late.id]
+
+        db.rollback()
+
+
+def test_messaging_service_helpers_perform_no_commit_by_themselves():
+    from app.models import Participant, ParticipantMessage, Study
+    from app.participant_services import create_researcher_message
+
+    marker = unique_value('MSG-NOCOMMIT')
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id.asc())
+        )
+        assert study_row is not None
+        participant_row = db.scalar(
+            select(Participant)
+            .where(Participant.organisation_id == owner.organisation_id)
+            .order_by(Participant.id.asc())
+        )
+        assert participant_row is not None
+
+        message = create_researcher_message(
+            organisation_id=owner.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            sender_user_id=owner.id,
+            body=marker,
+            internal_note=False,
+        )
+        db.add(message)
+        db.rollback()
+
+    with SessionLocal() as db:
+        persisted = db.scalar(select(ParticipantMessage).where(ParticipantMessage.body == marker))
+        assert persisted is None
+
+
+def test_evidence_service_helpers_perform_no_commit_and_no_storage_access(monkeypatch):
+    from app.models import Activity, EvidenceFile, Participant, Study
+    from app.participant_services import build_evidence_file
+
+    def fail_storage_access(*_args, **_kwargs):
+        raise AssertionError('storage access should not occur')
+
+    monkeypatch.setattr('app.storage.storage.path', fail_storage_access)
+    monkeypatch.setattr('app.storage.storage.save_stream', fail_storage_access)
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        study_row = db.scalar(
+            select(Study)
+            .where(Study.organisation_id == owner.organisation_id)
+            .order_by(Study.id.asc())
+        )
+        activity_row = db.scalar(
+            select(Activity)
+            .where(Activity.study_id == study_row.id)
+            .order_by(Activity.id.asc())
+        )
+        participant_row = Participant(
+            organisation_id=owner.organisation_id,
+            reference=unique_value('EVID-NOCOMMIT').upper(),
+            name='Evidence No Commit',
+            email=None,
+            phone=None,
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            tags='',
+            demographics_json='{}',
+            notes='',
+            created_by_id=owner.id,
+        )
+        db.add(participant_row)
+        db.commit()
+        organisation_id = owner.organisation_id
+        participant_id = participant_row.id
+        activity_id = activity_row.id
+        study_id = study_row.id
+
+    with SessionLocal() as db:
+        evidence = build_evidence_file(
+            organisation_id=organisation_id,
+            study_id=study_id,
+            activity_id=activity_id,
+            participant_id=participant_id,
+            response_id=None,
+            original_name='no-commit.txt',
+            stored_name='no-commit-key.txt',
+            content_type='text/plain',
+            size_bytes=10,
+            sha256_hex='1' * 64,
+            scan_status='pending',
+            scan_detail='',
+            storage_provider='local',
+            blob_uri='',
+        )
+        db.add(evidence)
+        db.rollback()
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(EvidenceFile).where(EvidenceFile.stored_name == 'no-commit-key.txt')
+        )
+        assert row is None
+
+
+def test_participant_upload_route_still_creates_identical_evidence_metadata():
+    from io import BytesIO
+    from app.models import Activity, ActivityResponse, EvidenceFile, OutboxEmail
+
+    with client:
+        auth()
+        created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('EVID-UPLOAD').upper(),
+                'name': 'Evidence Upload Participant',
+                'email': f"{unique_value('evidence-upload')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
+
+        with SessionLocal() as db:
+            first_activity = db.scalar(select(Activity).order_by(Activity.id.asc()))
+            assert first_activity is not None
+            study_id = first_activity.study_id
+            activity_id = first_activity.id
+
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id})
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}')
+
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient.like('%evidence-upload%@example.org'))
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+
+        client.get(f'/join-study?token={token}')
+        post_with_csrf('/join-study', data={'consent': 'true'})
+
+        uploaded = post_with_csrf(
+            f'/participant-portal/activity/{activity_id}',
+            data={'action': 'submit', 'answer': ''},
+            files={'upload': ('metadata.txt', BytesIO(b'ordinary evidence'), 'text/plain')},
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+
+        with SessionLocal() as db:
+            response = db.scalar(
+                select(ActivityResponse).where(
+                    ActivityResponse.activity_id == activity_id,
+                    ActivityResponse.participant_id == participant_id,
+                )
+            )
+            evidence = db.scalar(
+                select(EvidenceFile).where(
+                    EvidenceFile.activity_id == activity_id,
+                    EvidenceFile.participant_id == participant_id,
+                )
+            )
+            assert response is not None
+            assert evidence is not None
+            assert evidence.organisation_id == response.organisation_id
+            assert evidence.study_id == response.study_id
+            assert evidence.activity_id == response.activity_id
+            assert evidence.participant_id == response.participant_id
+            assert evidence.response_id == response.id
+            assert evidence.original_name == 'metadata.txt'
+            assert evidence.content_type == 'text/plain'
+            assert evidence.size_bytes == len(b'ordinary evidence')
+            assert evidence.scan_status == 'not_configured'
+
+
+def test_clean_evidence_download_remains_authorised_and_downloadable(tmp_path):
+    import io
+    from app.models import Activity, EvidenceFile, Participant, Study, User
+    from app.storage import storage
+
+    original_storage_path = settings.local_storage_path
+    try:
+        settings.local_storage_path = str(tmp_path)
+        with client:
+            client.cookies.clear()
+            auth()
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+                study = db.scalar(select(Study).where(Study.organisation_id == owner.organisation_id).order_by(Study.id.asc()))
+                activity = db.scalar(select(Activity).where(Activity.study_id == study.id).order_by(Activity.id.asc()))
+                participant = Participant(
+                    organisation_id=owner.organisation_id,
+                    reference=unique_value('EVID-CLEAN').upper(),
+                    name='Evidence Clean Participant',
+                    email=None,
+                    phone=None,
+                    status='prospective',
+                    consent_status='pending',
+                    communication_preference='email',
+                    tags='',
+                    demographics_json='{}',
+                    notes='',
+                    created_by_id=owner.id,
+                )
+                db.add(participant)
+                db.flush()
+                stored = storage.save_stream(io.BytesIO(b'clean evidence'), 'clean.txt', 1024)
+                evidence = EvidenceFile(
+                    organisation_id=owner.organisation_id,
+                    study_id=study.id,
+                    activity_id=activity.id,
+                    participant_id=participant.id,
+                    response_id=None,
+                    original_name='clean.txt',
+                    stored_name=stored.key,
+                    content_type='text/plain',
+                    size_bytes=stored.size,
+                    sha256_hex=stored.sha256_hex,
+                    scan_status='clean',
+                    scan_detail='',
+                    storage_provider=stored.provider,
+                    blob_uri=stored.uri,
+                )
+                db.add(evidence)
+                db.commit()
+                evidence_id = evidence.id
+
+            response = client.get(f'/evidence/{evidence_id}')
+            assert response.status_code == 200
+            assert response.content == b'clean evidence'
+            assert response.headers['content-type'].startswith('text/plain')
+    finally:
+        settings.local_storage_path = original_storage_path
