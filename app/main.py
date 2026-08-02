@@ -8,11 +8,7 @@ import csv, io, json, secrets
 from collections import OrderedDict, deque
 from threading import Lock
 from .csrf import get_csrf_token, csrf_protect
-<<<<<<< HEAD
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response, Query
-=======
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Query, Response
->>>>>>> 446d199 (Implement participant activities list API endpoint)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
