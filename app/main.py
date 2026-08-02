@@ -2104,7 +2104,11 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
     msgs = list_participant_visible_messages(db, study_id=s.id, participant_id=p.id); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,activity_windows=activity_windows,responses=responses,response_values=response_values,messages=msgs)
 
 
-@app.get("/api/v1/participant/portal", response_model=PortalSummaryResponse)
+@app.get(
+    "/api/v1/participant/portal",
+    response_model=PortalSummaryResponse,
+    response_model_exclude_unset=True,
+)
 def participant_api_portal_summary(
     request: Request,
     response: Response,
@@ -2114,6 +2118,8 @@ def participant_api_portal_summary(
     _session_row, inv, participant_row = _resolve_participant_api_context(request, db)
     if not inv.accepted_at:
         raise HTTPException(403, "Participant consent has not been accepted.")
+    if participant_row.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(403, "Participant consent is no longer active.")
     if study_id is not None and study_id != inv.study_id:
         raise HTTPException(403, "Requested study is outside participant scope.")
 
@@ -2126,15 +2132,36 @@ def participant_api_portal_summary(
         account_limit=settings.rate_limit_portal_write_token,
     )
 
-    study_row = db.get(Study, inv.study_id)
-    if not study_row or not participant_row:
+    study_row = db.scalar(
+        select(Study).where(
+            Study.id == inv.study_id,
+            Study.organisation_id == inv.organisation_id,
+        )
+    )
+    if not study_row:
         raise _participant_api_unauthorised()
 
+    enrolled = db.scalar(
+        select(StudyEnrolment.id).where(
+            StudyEnrolment.organisation_id == inv.organisation_id,
+            StudyEnrolment.study_id == inv.study_id,
+            StudyEnrolment.participant_id == participant_row.id,
+        )
+    ) is not None
+    if not enrolled:
+        raise HTTPException(403, "Participant is not enrolled in this study.")
+
     activity_rows = db.scalars(
-        select(Activity).where(Activity.study_id == study_row.id).order_by(Activity.position)
+        select(Activity)
+        .where(
+            Activity.organisation_id == inv.organisation_id,
+            Activity.study_id == study_row.id,
+        )
+        .order_by(Activity.position)
     ).all()
     response_rows = db.scalars(
         select(ActivityResponse).where(
+            ActivityResponse.organisation_id == inv.organisation_id,
             ActivityResponse.study_id == study_row.id,
             ActivityResponse.participant_id == participant_row.id,
         )
@@ -2174,22 +2201,22 @@ def participant_api_portal_summary(
                 )
             )
 
-        activity_summaries.append(
-            ActivitySummary(
-                activity_id=activity.id,
-                title=activity.title,
-                prompt=activity.prompt,
-                activity_type=activity.activity_type,
-                required=activity.required,
-                position=activity.position,
-                availability=ActivityAvailability(
-                    status=availability["status"],
-                    release_at=availability["release_at"],
-                    due_at=availability["due_at"],
-                ),
-                response=response_summary,
-            )
+        item = ActivitySummary(
+            activity_id=activity.id,
+            title=activity.title,
+            prompt=activity.prompt,
+            activity_type=activity.activity_type,
+            required=activity.required,
+            position=activity.position,
+            availability=ActivityAvailability(
+                status=availability["status"],
+                release_at=availability["release_at"],
+                due_at=availability["due_at"],
+            ),
         )
+        if response_summary:
+            item.response = response_summary
+        activity_summaries.append(item)
 
     messages = [
         ParticipantMessageSummary(

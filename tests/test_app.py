@@ -363,6 +363,35 @@ def test_participant_api_portal_summary_requires_participant_session():
         assert response.headers.get('www-authenticate') == 'Bearer'
 
 
+def test_participant_api_portal_summary_cookie_only_session_does_not_authenticate_mobile_api():
+    _api_token, _participant_id, _study_id, invitation_token = _prepare_participant_api_portal_context(
+        consent=True,
+        email_suffix='portal-summary-cookie-only',
+    )
+
+    with client:
+        landing = client.get(f'/join-study?token={invitation_token}', follow_redirects=False)
+        assert landing.status_code == 303
+
+        cookie_only = client.get('/api/v1/participant/portal', follow_redirects=False)
+        assert cookie_only.status_code == 401
+        assert cookie_only.headers.get('www-authenticate') == 'Bearer'
+
+
+def test_participant_api_portal_summary_missing_bearer_with_html_accept_returns_json_challenge_without_csrf_cookie():
+    with client:
+        response = client.get(
+            '/api/v1/participant/portal',
+            headers={'Accept': 'text/html'},
+            follow_redirects=False,
+        )
+        assert response.status_code == 401
+        assert response.headers.get('www-authenticate') == 'Bearer'
+        assert response.headers.get('content-type', '').startswith('application/json')
+        assert response.json() == {'detail': 'Invalid or expired participant API credentials.'}
+        assert 'csrf_session=' not in (response.headers.get('set-cookie') or '')
+
+
 def test_participant_api_portal_summary_rejects_unaccepted_invitation_session():
     api_token, _participant_id, _study_id, _invitation_token = _prepare_participant_api_portal_context(
         consent=False,
@@ -394,6 +423,20 @@ def test_participant_api_portal_summary_returns_contract_shaped_payload_for_acce
         )
         assert first_activity is not None
         activity_id = first_activity.id
+        unanswered_activity = Activity(
+            organisation_id=first_activity.organisation_id,
+            study_id=study_id,
+            title='Unanswered portal activity',
+            prompt='Please answer later',
+            activity_type='long_text',
+            required=True,
+            position=(first_activity.position or 1) + 100,
+            release_offset_days=0,
+            due_offset_days=None,
+        )
+        db.add(unanswered_activity)
+        db.commit()
+        unanswered_activity_id = unanswered_activity.id
 
     with client:
         # Keep portal cookie session for existing write routes while asserting API bearer auth.
@@ -431,9 +474,16 @@ def test_participant_api_portal_summary_returns_contract_shaped_payload_for_acce
 
         activity_ids = {item['activity_id'] for item in body['activities']}
         assert activity_id in activity_ids
+        assert unanswered_activity_id in activity_ids
+
+        by_activity_id = {item['activity_id']: item for item in body['activities']}
+        assert 'response' in by_activity_id[activity_id]
+        assert by_activity_id[activity_id]['response']['status'] == 'draft'
+        assert 'response' not in by_activity_id[unanswered_activity_id]
 
         response_entries = {item['activity_id']: item for item in body['responses']}
         assert activity_id in response_entries
+        assert unanswered_activity_id not in response_entries
         assert response_entries[activity_id]['status'] == 'draft'
         assert response_entries[activity_id]['value']['answer'] == 'draft from portal summary test'
 
@@ -454,6 +504,62 @@ def test_participant_api_portal_summary_returns_contract_shaped_payload_for_acce
             follow_redirects=False,
         )
         assert out_of_scope.status_code == 403
+
+
+def test_participant_api_portal_summary_rejects_withdrawn_consent_after_historical_acceptance():
+    from app.models import Participant
+
+    api_token, participant_id, _study_id, _invitation_token = _prepare_participant_api_portal_context(
+        consent=True,
+        email_suffix='portal-summary-consent-withdrawn',
+    )
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, participant_id)
+        assert participant_row is not None
+        participant_row.consent_status = 'withdrawn'
+        db.commit()
+
+    with client:
+        denied = client.get(
+            '/api/v1/participant/portal',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert denied.status_code == 403
+        assert denied.headers.get('cache-control') != 'no-store'
+        assert denied.json() == {'detail': 'Participant consent is no longer active.'}
+        assert set(denied.json().keys()) == {'detail'}
+
+
+def test_participant_api_portal_summary_rejects_missing_enrolment_after_session_issued():
+    from app.models import StudyEnrolment
+
+    api_token, participant_id, study_id, _invitation_token = _prepare_participant_api_portal_context(
+        consent=True,
+        email_suffix='portal-summary-no-enrolment',
+    )
+
+    with SessionLocal() as db:
+        enrolment = db.scalar(
+            select(StudyEnrolment).where(
+                StudyEnrolment.study_id == study_id,
+                StudyEnrolment.participant_id == participant_id,
+            )
+        )
+        assert enrolment is not None
+        db.delete(enrolment)
+        db.commit()
+
+    with client:
+        denied = client.get(
+            '/api/v1/participant/portal',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert denied.status_code == 403
+        assert denied.json() == {'detail': 'Participant is not enrolled in this study.'}
+        assert set(denied.json().keys()) == {'detail'}
 
 
 def test_password_reset_token_is_exchanged_and_replay_is_blocked():
