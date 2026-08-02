@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 from tempfile import gettempdir
 from uuid import uuid4
@@ -15,7 +16,7 @@ from contextlib import contextmanager
 from fastapi.testclient import TestClient
 from app.main import app
 from datetime import timedelta
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.config import settings
 from app.db import SessionLocal
@@ -3810,3 +3811,644 @@ def test_clean_evidence_download_remains_authorised_and_downloadable(tmp_path):
             assert response.headers['content-type'].startswith('text/plain')
     finally:
         settings.local_storage_path = original_storage_path
+
+
+def _create_participant_invitation_for_api(email_suffix: str = 'api-auth') -> tuple[str, int, int]:
+    from app.models import Activity, OutboxEmail
+
+    with client:
+        client.cookies.clear()
+        auth()
+        recipient = f"{unique_value(email_suffix)}@example.org"
+        created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('APIAUTH').upper(),
+                'name': 'Participant API Auth',
+            'email': recipient,
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
+
+        with SessionLocal() as db:
+            first_activity = db.scalar(select(Activity).order_by(Activity.id.asc()))
+            assert first_activity is not None
+            study_id = first_activity.study_id
+
+        post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id})
+        post_with_csrf(f'/studies/{study_id}/invite/{participant_id}')
+
+        with SessionLocal() as db:
+            email = db.scalar(
+                select(OutboxEmail)
+                .where(OutboxEmail.recipient == recipient)
+                .order_by(OutboxEmail.id.desc())
+            )
+            assert email is not None
+            token = email.body.split('token=')[1].strip()
+        return token, participant_id, study_id
+
+
+def _exchange_participant_api_session(invitation_token: str):
+    return client.post(
+        '/api/v1/participant/session/exchange',
+        json={'invitation_token': invitation_token},
+        follow_redirects=False,
+    )
+
+
+def _exchange_participant_api_session_with_payload(payload: dict):
+    return client.post(
+        '/api/v1/participant/session/exchange',
+        json=payload,
+        follow_redirects=False,
+    )
+
+
+def test_participant_api_exchange_creates_hashed_bearer_session_without_cookie_and_no_store():
+    from app.models import AuditEvent, PublicAuthSession
+    from app.participant_api.auth import PARTICIPANT_API_SCOPE
+    from app.security import token_hash
+
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-hash')
+
+    with client:
+        response = _exchange_participant_api_session(token)
+        assert response.status_code == 200
+        assert response.headers.get('cache-control') == 'no-store'
+        assert 'public_auth_session=' not in (response.headers.get('set-cookie') or '')
+
+        payload = response.json()
+        raw_api_token = payload['session']['access_token']
+        assert payload['session']['token_type'] == 'Bearer'
+        assert payload['next_action'] == 'consent_required'
+
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(PublicAuthSession)
+            .where(PublicAuthSession.scope == PARTICIPANT_API_SCOPE)
+            .order_by(PublicAuthSession.id.desc())
+        )
+        assert row is not None
+        assert row.session_hash == token_hash(raw_api_token)
+        assert row.session_hash != raw_api_token
+        event = db.scalar(
+            select(AuditEvent)
+            .where(AuditEvent.action == 'participant.api_session_exchanged')
+            .order_by(AuditEvent.id.desc())
+        )
+        assert event is not None
+        assert raw_api_token not in (event.detail or '')
+
+
+def test_participant_api_exchange_rejects_unknown_expired_and_revoked_invitation_tokens():
+    from app.models import ParticipantInvitation
+    from app.security import token_hash
+
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-invalid')
+
+    with client:
+        unknown = _exchange_participant_api_session('unknown-token-value')
+        assert unknown.status_code == 400
+
+    with SessionLocal() as db:
+        invitation = db.scalar(
+            select(ParticipantInvitation)
+            .where(ParticipantInvitation.token_hash == token_hash(token))
+        )
+        assert invitation is not None
+        invitation.expires_at = now() - timedelta(minutes=1)
+        db.commit()
+
+    with client:
+        expired = _exchange_participant_api_session(token)
+        assert expired.status_code == 400
+
+    token_2, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-revoked')
+    with SessionLocal() as db:
+        invitation_2 = db.scalar(
+            select(ParticipantInvitation)
+            .where(ParticipantInvitation.token_hash == token_hash(token_2))
+        )
+        assert invitation_2 is not None
+        invitation_2.revoked_at = now()
+        db.commit()
+
+    with client:
+        revoked = _exchange_participant_api_session(token_2)
+        assert revoked.status_code == 400
+
+
+def test_participant_api_exchange_replay_returns_conflict_and_does_not_mint_second_token():
+    from app.models import ParticipantInvitation, PublicAuthSession
+    from app.participant_api.auth import PARTICIPANT_API_SCOPE
+    from app.security import token_hash
+
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-reuse')
+    with client:
+        first = _exchange_participant_api_session(token)
+        second = _exchange_participant_api_session(token)
+        assert first.status_code == 200
+        assert second.status_code == 409
+        assert second.json() == {'detail': 'A participant API session is already active for this invitation.'}
+
+    with SessionLocal() as db:
+        invitation = db.scalar(
+            select(ParticipantInvitation)
+            .where(ParticipantInvitation.token_hash == token_hash(token))
+        )
+        assert invitation is not None
+        active_count = db.scalar(
+            select(func.count(PublicAuthSession.id)).where(
+                PublicAuthSession.scope == PARTICIPANT_API_SCOPE,
+                PublicAuthSession.participant_invitation_id == invitation.id,
+                PublicAuthSession.revoked_at.is_(None),
+                PublicAuthSession.expires_at > now(),
+            )
+        )
+        assert int(active_count or 0) == 1
+
+
+def test_participant_api_exchange_replay_response_exposes_no_participant_or_token_data():
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-replay-safe')
+    with client:
+        first = _exchange_participant_api_session(token)
+        assert first.status_code == 200
+        replay = _exchange_participant_api_session(token)
+        assert replay.status_code == 409
+        body = replay.json()
+        assert 'participant' not in body
+        assert 'session' not in body
+        assert 'access_token' not in json.dumps(body)
+
+
+def test_participant_api_exchange_rate_limit_is_enforced():
+    with with_rate_limit_settings(
+        rate_limit_enabled=True,
+        rate_limit_window_seconds=60,
+        rate_limit_invitation_accept_ip=1,
+        rate_limit_invitation_accept_token=1,
+    ):
+        with client:
+            first = _exchange_participant_api_session('invalid-token')
+            assert first.status_code == 400
+            blocked = _exchange_participant_api_session('invalid-token')
+            assert blocked.status_code == 429
+
+
+def test_participant_api_session_requires_valid_bearer_and_excludes_internal_fields():
+    token, participant_id, study_id = _create_participant_invitation_for_api('api-auth-session')
+
+    with client:
+        exchange = _exchange_participant_api_session(token)
+        assert exchange.status_code == 200
+        api_token = exchange.json()['session']['access_token']
+
+        missing = client.get('/api/v1/participant/session', follow_redirects=False)
+        assert missing.status_code == 401
+        assert missing.headers.get('www-authenticate') == 'Bearer'
+
+        malformed = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': 'Bearer'},
+            follow_redirects=False,
+        )
+        assert malformed.status_code == 401
+        assert malformed.headers.get('www-authenticate') == 'Bearer'
+
+        invalid = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': 'Bearer invalid-value'},
+            follow_redirects=False,
+        )
+        assert invalid.status_code == 401
+        assert invalid.headers.get('www-authenticate') == 'Bearer'
+
+        valid = client.get(
+            '/api/v1/participant/session?participant_id=9999',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert valid.status_code == 200
+        assert valid.headers.get('cache-control') == 'no-store'
+        body = valid.json()
+        assert body['participant']['participant_id'] == participant_id
+        assert body['study_scope'] == [study_id]
+        assert 'session_hash' not in body
+        assert 'token_hash' not in body
+
+
+def test_participant_api_session_missing_bearer_with_html_accept_preserves_bearer_challenge_and_no_csrf_cookie():
+    with client:
+        response = client.get(
+            '/api/v1/participant/session',
+            headers={'Accept': 'text/html'},
+            follow_redirects=False,
+        )
+        assert response.status_code == 401
+        assert response.headers.get('www-authenticate') == 'Bearer'
+        assert response.headers.get('content-type', '').startswith('application/json')
+        assert response.json() == {'detail': 'Invalid or expired participant API credentials.'}
+        assert 'csrf_session=' not in (response.headers.get('set-cookie') or '')
+
+
+def test_participant_api_session_invalid_bearer_with_html_accept_preserves_bearer_challenge():
+    with client:
+        response = client.get(
+            '/api/v1/participant/session',
+            headers={
+                'Accept': 'text/html',
+                'Authorization': 'Bearer invalid-token',
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 401
+        assert response.headers.get('www-authenticate') == 'Bearer'
+        assert response.headers.get('content-type', '').startswith('application/json')
+
+
+def test_non_api_html_error_handling_remains_html_when_accept_requests_html():
+    with client:
+        response = client.get('/this-page-does-not-exist', headers={'Accept': 'text/html'}, follow_redirects=False)
+        assert response.status_code == 404
+        assert response.headers.get('content-type', '').startswith('text/html')
+
+
+def test_participant_api_session_rejects_expired_or_revoked_session_rows():
+    from app.models import ParticipantInvitation, PublicAuthSession
+    from app.participant_api.auth import PARTICIPANT_API_SCOPE
+    from app.security import new_token, token_hash
+
+    invitation_token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-expired')
+    with client:
+        exchange = _exchange_participant_api_session(invitation_token)
+        assert exchange.status_code == 200
+
+    with SessionLocal() as db:
+        invitation = db.scalar(
+            select(ParticipantInvitation).where(ParticipantInvitation.token_hash == token_hash(invitation_token))
+        )
+        assert invitation is not None
+        active_session = db.scalar(
+            select(PublicAuthSession).where(
+                PublicAuthSession.scope == PARTICIPANT_API_SCOPE,
+                PublicAuthSession.participant_invitation_id == invitation.id,
+                PublicAuthSession.revoked_at.is_(None),
+            )
+        )
+        assert active_session is not None
+        active_session.revoked_at = now()
+        expired_raw = new_token()
+        db.add(
+            PublicAuthSession(
+                scope=PARTICIPANT_API_SCOPE,
+                session_hash=token_hash(expired_raw),
+                participant_invitation_id=invitation.id,
+                expires_at=now() - timedelta(minutes=1),
+            )
+        )
+        revoked_raw = new_token()
+        db.add(
+            PublicAuthSession(
+                scope=PARTICIPANT_API_SCOPE,
+                session_hash=token_hash(revoked_raw),
+                participant_invitation_id=invitation.id,
+                expires_at=now() + timedelta(hours=1),
+                revoked_at=now(),
+            )
+        )
+        db.commit()
+
+    with client:
+        expired = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {expired_raw}'},
+            follow_redirects=False,
+        )
+        assert expired.status_code == 401
+        assert expired.headers.get('www-authenticate') == 'Bearer'
+        revoked = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {revoked_raw}'},
+            follow_redirects=False,
+        )
+        assert revoked.status_code == 401
+        assert revoked.headers.get('www-authenticate') == 'Bearer'
+
+
+def test_participant_api_logout_requires_valid_bearer_and_sets_www_authenticate_header():
+    with client:
+        missing = client.delete('/api/v1/participant/session', follow_redirects=False)
+        assert missing.status_code == 401
+        assert missing.headers.get('www-authenticate') == 'Bearer'
+
+        malformed = client.delete(
+            '/api/v1/participant/session',
+            headers={'Authorization': 'Bearer'},
+            follow_redirects=False,
+        )
+        assert malformed.status_code == 401
+        assert malformed.headers.get('www-authenticate') == 'Bearer'
+
+        invalid = client.delete(
+            '/api/v1/participant/session',
+            headers={'Authorization': 'Bearer invalid-value'},
+            follow_redirects=False,
+        )
+        assert invalid.status_code == 401
+        assert invalid.headers.get('www-authenticate') == 'Bearer'
+
+
+def test_participant_api_logout_revokes_current_session_and_allows_replacement_exchange():
+    from app.models import AuditEvent
+
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-logout')
+    with client:
+        session_one = _exchange_participant_api_session(token)
+        assert session_one.status_code == 200
+        token_one = session_one.json()['session']['access_token']
+
+        logout = client.delete(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {token_one}'},
+            follow_redirects=False,
+        )
+        assert logout.status_code == 200
+        assert logout.headers.get('cache-control') == 'no-store'
+        assert logout.json()['revoked'] is True
+
+        revoked_use = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {token_one}'},
+            follow_redirects=False,
+        )
+        assert revoked_use.status_code == 401
+        assert revoked_use.headers.get('www-authenticate') == 'Bearer'
+
+        replacement = _exchange_participant_api_session(token)
+        assert replacement.status_code == 200
+        assert replacement.json()['session']['access_token'] != token_one
+
+    with SessionLocal() as db:
+        event = db.scalar(
+            select(AuditEvent)
+            .where(AuditEvent.action == 'participant.api_session_revoked')
+            .order_by(AuditEvent.id.desc())
+        )
+        assert event is not None
+        assert token_one not in (event.detail or '')
+
+
+def test_participant_api_exchange_allows_replacement_after_expired_session():
+    from app.models import ParticipantInvitation, PublicAuthSession
+    from app.participant_api.auth import PARTICIPANT_API_SCOPE
+    from app.security import token_hash
+
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-expire-replace')
+    with client:
+        first = _exchange_participant_api_session(token)
+        assert first.status_code == 200
+
+    with SessionLocal() as db:
+        invitation = db.scalar(
+            select(ParticipantInvitation).where(ParticipantInvitation.token_hash == token_hash(token))
+        )
+        assert invitation is not None
+        session_row = db.scalar(
+            select(PublicAuthSession).where(
+                PublicAuthSession.scope == PARTICIPANT_API_SCOPE,
+                PublicAuthSession.participant_invitation_id == invitation.id,
+                PublicAuthSession.revoked_at.is_(None),
+            )
+        )
+        assert session_row is not None
+        session_row.expires_at = now() - timedelta(minutes=1)
+        db.commit()
+
+    with client:
+        replacement = _exchange_participant_api_session(token)
+        assert replacement.status_code == 200
+
+    with SessionLocal() as db:
+        invitation = db.scalar(
+            select(ParticipantInvitation).where(ParticipantInvitation.token_hash == token_hash(token))
+        )
+        active_count = db.scalar(
+            select(func.count(PublicAuthSession.id)).where(
+                PublicAuthSession.scope == PARTICIPANT_API_SCOPE,
+                PublicAuthSession.participant_invitation_id == invitation.id,
+                PublicAuthSession.revoked_at.is_(None),
+                PublicAuthSession.expires_at > now(),
+            )
+        )
+        assert int(active_count or 0) == 1
+
+
+def test_participant_api_exchange_validation_rejects_empty_overlong_and_unexpected_fields_without_echoing_token_value():
+    overlong_token = 't' * 513
+
+    with client:
+        empty = _exchange_participant_api_session_with_payload({'invitation_token': ''})
+        assert empty.status_code == 422
+
+        overlong = _exchange_participant_api_session_with_payload({'invitation_token': overlong_token})
+        assert overlong.status_code == 422
+
+        with_extra = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': 'abc',
+                'unexpected': 'value',
+            }
+        )
+        assert with_extra.status_code == 422
+
+        for response in (empty, overlong, with_extra):
+            body_text = response.text
+            assert overlong_token not in body_text
+            assert '"input"' not in body_text
+
+
+def test_participant_api_exchange_accepts_ios_android_and_app_version_length_40_device_hint():
+    token_ios, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-device-ios')
+    token_android, _participant_id_2, _study_id_2 = _create_participant_invitation_for_api('api-auth-device-android')
+    token_len40, _participant_id_3, _study_id_3 = _create_participant_invitation_for_api('api-auth-device-len40')
+
+    with client:
+        ios = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': token_ios,
+                'device_hint': {
+                    'platform': 'ios',
+                    'app_version': '1.2.3',
+                },
+            }
+        )
+        assert ios.status_code == 200
+
+        android = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': token_android,
+                'device_hint': {
+                    'platform': 'android',
+                    'app_version': '2.0.0',
+                },
+            }
+        )
+        assert android.status_code == 200
+
+        len_40 = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': token_len40,
+                'device_hint': {
+                    'platform': 'ios',
+                    'app_version': 'v' * 40,
+                },
+            }
+        )
+        assert len_40.status_code == 200
+
+
+def test_participant_api_exchange_rejects_unsupported_platform_and_overlong_device_version_without_echoing_token():
+    invalid_platform_token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-device-invalid-platform')
+    overlong_version_token, _participant_id_2, _study_id_2 = _create_participant_invitation_for_api('api-auth-device-overlong-version')
+
+    with client:
+        invalid_platform = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': invalid_platform_token,
+                'device_hint': {
+                    'platform': 'windows',
+                    'app_version': '1.0.0',
+                },
+            }
+        )
+        assert invalid_platform.status_code == 422
+
+        overlong_version = _exchange_participant_api_session_with_payload(
+            {
+                'invitation_token': overlong_version_token,
+                'device_hint': {
+                    'platform': 'android',
+                    'app_version': 'v' * 41,
+                },
+            }
+        )
+        assert overlong_version.status_code == 422
+
+        for response, token in (
+            (invalid_platform, invalid_platform_token),
+            (overlong_version, overlong_version_token),
+        ):
+            body_text = response.text
+            assert token not in body_text
+            assert '"input"' not in body_text
+
+
+def test_participant_api_session_immediately_invalid_when_invitation_is_revoked_or_expired():
+    from app.models import ParticipantInvitation
+    from app.security import token_hash
+
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-invite-revoked')
+    with client:
+        exchange = _exchange_participant_api_session(token)
+        assert exchange.status_code == 200
+        api_token = exchange.json()['session']['access_token']
+
+    with SessionLocal() as db:
+        invitation = db.scalar(
+            select(ParticipantInvitation).where(ParticipantInvitation.token_hash == token_hash(token))
+        )
+        assert invitation is not None
+        invitation.revoked_at = now()
+        db.commit()
+
+    with client:
+        revoked = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert revoked.status_code == 401
+        assert revoked.headers.get('www-authenticate') == 'Bearer'
+
+    token_2, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-invite-expired')
+    with client:
+        exchange_2 = _exchange_participant_api_session(token_2)
+        assert exchange_2.status_code == 200
+        api_token_2 = exchange_2.json()['session']['access_token']
+
+    with SessionLocal() as db:
+        invitation_2 = db.scalar(
+            select(ParticipantInvitation).where(ParticipantInvitation.token_hash == token_hash(token_2))
+        )
+        assert invitation_2 is not None
+        invitation_2.expires_at = now() - timedelta(minutes=1)
+        db.commit()
+
+    with client:
+        expired = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {api_token_2}'},
+            follow_redirects=False,
+        )
+        assert expired.status_code == 401
+        assert expired.headers.get('www-authenticate') == 'Bearer'
+
+
+def test_participant_api_active_session_uniqueness_is_enforced_by_database_constraint():
+    from sqlalchemy.exc import IntegrityError
+    from app.models import ParticipantInvitation, PublicAuthSession
+    from app.participant_api.auth import PARTICIPANT_API_SCOPE
+    from app.security import new_token, token_hash
+
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-db-unique')
+
+    with SessionLocal() as db:
+        invitation = db.scalar(
+            select(ParticipantInvitation).where(ParticipantInvitation.token_hash == token_hash(token))
+        )
+        assert invitation is not None
+
+        first_raw = new_token()
+        db.add(
+            PublicAuthSession(
+                scope=PARTICIPANT_API_SCOPE,
+                session_hash=token_hash(first_raw),
+                participant_invitation_id=invitation.id,
+                expires_at=now() + timedelta(hours=1),
+            )
+        )
+        db.flush()
+
+        second_raw = new_token()
+        db.add(
+            PublicAuthSession(
+                scope=PARTICIPANT_API_SCOPE,
+                session_hash=token_hash(second_raw),
+                participant_invitation_id=invitation.id,
+                expires_at=now() + timedelta(hours=1),
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.flush()
+        db.rollback()
+
+
+def test_participant_api_auth_increment_preserves_html_join_study_and_portal_flow():
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('api-auth-regression')
+
+    with client:
+        landing = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert landing.status_code == 303
+        consent = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert consent.status_code == 303
+        assert consent.headers['location'] == '/participant-portal'
+        portal = client.get('/participant-portal')
+        assert portal.status_code == 200

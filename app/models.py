@@ -318,6 +318,23 @@ class PublicAuthSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+Index(
+    "ux_public_auth_sessions_participant_api_active_invitation",
+    PublicAuthSession.participant_invitation_id,
+    unique=True,
+    postgresql_where=(
+        (PublicAuthSession.scope == "participant_api")
+        & (PublicAuthSession.revoked_at.is_(None))
+        & (PublicAuthSession.participant_invitation_id.is_not(None))
+    ),
+    sqlite_where=(
+        (PublicAuthSession.scope == "participant_api")
+        & (PublicAuthSession.revoked_at.is_(None))
+        & (PublicAuthSession.participant_invitation_id.is_not(None))
+    ),
+)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(primary_key=True)

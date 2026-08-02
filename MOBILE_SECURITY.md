@@ -52,6 +52,13 @@ The preferred mobile session is an opaque random credential with only a hash sto
 - activity availability;
 - resource ownership.
 
+Participant API invitation exchange policy:
+
+- a valid invitation may have at most one active participant API session at a time;
+- replay exchange while an active session exists returns generic conflict and does not return existing bearer material;
+- if that session is revoked or expired, the same still-valid invitation may exchange again for a replacement session;
+- invitation revocation or invitation expiry invalidates an existing API session on the next authenticated request.
+
 Long-lived self-contained participant JWTs are not currently recommended.
 
 ## Device permissions

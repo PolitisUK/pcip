@@ -20,14 +20,16 @@ tags:
   - name: Messaging
   - name: Privacy
 paths:
-  /api/v1/participant/invitation/exchange:
+  /api/v1/participant/session/exchange:
     post:
       tags: [Session]
       summary: Exchange invitation token for participant API session.
       description: >-
         Accepts an invitation token only at exchange time. Returns an opaque
         bearer token backed by a server-side revocable session. Invitation token
-        is never returned.
+        is never returned. If an active participant API session already exists
+        for the invitation, exchange returns a generic conflict and does not
+        return participant context or bearer data.
       security: []
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -39,7 +41,7 @@ paths:
               $ref: '#/components/schemas/SessionExchangeRequest'
       responses:
         '200':
-          description: Session created or resumed.
+          description: Session created.
           headers:
             RateLimit-Limit:
               $ref: '#/components/headers/RateLimit-Limit'
@@ -88,8 +90,7 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
-  /api/v1/participant/session/logout:
-    post:
+    delete:
       tags: [Session]
       summary: Revoke current participant API session.
       description: >-
@@ -556,6 +557,12 @@ components:
             $ref: '#/components/schemas/ApiError'
     Unauthorized:
       description: Missing or invalid authentication.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            enum: [Bearer]
+          description: Bearer challenge for missing, malformed, invalid, expired or revoked credentials.
       content:
         application/json:
           schema:
@@ -690,7 +697,8 @@ components:
       properties:
         invitation_token:
           type: string
-          minLength: 20
+          minLength: 1
+          maxLength: 512
           description: Invitation token accepted only at exchange.
         device_hint:
           $ref: '#/components/schemas/DeviceHint'

@@ -8,7 +8,7 @@ import csv, io, json, secrets
 from collections import OrderedDict, deque
 from threading import Lock
 from .csrf import get_csrf_token, csrf_protect
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -17,6 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import select, func, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .config import settings, validate_runtime_settings
 from .db import Base, engine, get_db, SessionLocal
@@ -70,6 +71,21 @@ from .participant_services import (
     resolve_org_scoped_invitation,
     resolve_participant_invitation,
     serialise_response_payload,
+)
+from .participant_api.auth import (
+    PARTICIPANT_API_SCOPE,
+    create_participant_api_session,
+    resolve_participant_api_session,
+)
+from .participant_api.schemas import (
+    BearerSession,
+    InvitationContext,
+    LogoutResponse,
+    ParticipantSessionResponse,
+    ParticipantSummary,
+    SessionExchangeRequest,
+    SessionExchangeResponse,
+    SessionInfo,
 )
 
 VERSION = "0.6.0"
@@ -544,6 +560,8 @@ def consume_flash(request: Request) -> tuple[str | None, str | None]:
 
 
 def request_wants_html(request: Request) -> bool:
+    if request.url.path.startswith("/api/"):
+        return False
     accept = request.headers.get("accept", "").lower()
     return "text/html" in accept
 
@@ -591,6 +609,8 @@ def render_error(request: Request, status_code: int, title: str, detail: str):
 
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
+    if not request_wants_html(request):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
     return render_error(request, 404, "Page not found", "The page you requested is not available.")
 
 
@@ -626,12 +646,17 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         else:
             detail = "Please review the submitted information and try again."
         return render_error(request, 422, "Please check your information", detail)
-    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    errors = []
+    for item in exc.errors():
+        errors.append({k: v for k, v in item.items() if k != "input"})
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("unhandled_exception path=%s", request.url.path)
+    if not request_wants_html(request):
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
     return render_error(request, 500, "Something went wrong", "An unexpected error occurred. Please try again.")
 
 def project(db,i,o):
@@ -939,6 +964,50 @@ def paginate(stmt, db, page, per=25):
     page=max(1,page); total=db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows=db.scalars(stmt.offset((page-1)*per).limit(per)).all()
     return rows,total,max(1,(total+per-1)//per)
+
+
+def _cache_control_no_store(response: Response):
+    response.headers["Cache-Control"] = "no-store"
+
+
+def _participant_api_unauthorised() -> HTTPException:
+    return HTTPException(
+        401,
+        "Invalid or expired participant API credentials.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _participant_api_exchange_conflict() -> HTTPException:
+    return HTTPException(
+        409,
+        "A participant API session is already active for this invitation.",
+    )
+
+
+def _extract_bearer_token(request: Request) -> str:
+    header = (request.headers.get("authorization") or "").strip()
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise _participant_api_unauthorised()
+    return token.strip()
+
+
+def _resolve_participant_api_context(
+    request: Request,
+    db: Session,
+) -> tuple[PublicAuthSession, ParticipantInvitation, Participant]:
+    raw_token = _extract_bearer_token(request)
+    session_row = resolve_participant_api_session(db, raw_token=raw_token)
+    if not session_row:
+        raise _participant_api_unauthorised()
+    invitation = db.get(ParticipantInvitation, session_row.participant_invitation_id)
+    if not invitation or invitation.revoked_at or not unexpired(invitation.expires_at):
+        raise _participant_api_unauthorised()
+    participant_row = db.get(Participant, invitation.participant_id)
+    if not participant_row:
+        raise _participant_api_unauthorised()
+    return session_row, invitation, participant_row
 
 
 def create_pilot_sample_data(db: Session, user: User) -> dict[str, int]:
@@ -2126,6 +2195,134 @@ def participant_message(request: Request, token:str=Form(""),body:str=Form(...),
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
     db.add(create_participant_message(inv, body=body)); db.commit(); return RedirectResponse("/participant-portal#messages",303)
+
+
+@app.post("/api/v1/participant/session/exchange", response_model=SessionExchangeResponse)
+def participant_api_session_exchange(
+    payload: SessionExchangeRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    account_key = token_hash(payload.invitation_token) if payload.invitation_token else "missing"
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_api_session_exchange",
+        ip_limit=settings.rate_limit_invitation_accept_ip,
+        account_key=account_key,
+        account_limit=settings.rate_limit_invitation_accept_token,
+    )
+
+    invitation = resolve_invitation_by_token(db, payload.invitation_token)
+    if not invitation or invitation.revoked_at or not unexpired(invitation.expires_at):
+        raise HTTPException(400, "This participant link is invalid or expired.")
+    participant_row = db.get(Participant, invitation.participant_id)
+    if not participant_row:
+        raise HTTPException(400, "This participant link is invalid or expired.")
+
+    existing_sessions = list(
+        db.scalars(
+            select(PublicAuthSession).where(
+                PublicAuthSession.scope == PARTICIPANT_API_SCOPE,
+                PublicAuthSession.participant_invitation_id == invitation.id,
+                PublicAuthSession.revoked_at.is_(None),
+            )
+        )
+    )
+    for row in existing_sessions:
+        if unexpired(row.expires_at):
+            raise _participant_api_exchange_conflict()
+        row.revoked_at = now()
+
+    try:
+        raw_token, session_row = create_participant_api_session(
+            db,
+            participant_invitation_id=invitation.id,
+            ttl_seconds=settings.session_max_age_seconds,
+        )
+    except IntegrityError:
+        db.rollback()
+        raise _participant_api_exchange_conflict()
+    next_action = "portal" if invitation.accepted_at else "consent_required"
+    invitation_status = "accepted" if invitation.accepted_at else "valid"
+    audit(
+        db,
+        invitation.organisation_id,
+        None,
+        "participant.api_session_exchanged",
+        "participant_invitation",
+        invitation.id,
+        next_action,
+    )
+    db.commit()
+    _cache_control_no_store(response)
+    return SessionExchangeResponse(
+        session=BearerSession(
+            access_token=raw_token,
+            token_type="Bearer",
+            expires_at=session_row.expires_at,
+            revocable=True,
+        ),
+        participant=ParticipantSummary(
+            participant_id=participant_row.id,
+            display_name=participant_row.name,
+            consent_status=participant_row.consent_status,
+        ),
+        invitation=InvitationContext(
+            study_id=invitation.study_id,
+            invitation_status=invitation_status,
+            expires_at=invitation.expires_at,
+            accepted_at=invitation.accepted_at,
+        ),
+        next_action=next_action,
+    )
+
+
+@app.get("/api/v1/participant/session", response_model=ParticipantSessionResponse)
+def participant_api_session(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
+    _cache_control_no_store(response)
+    return ParticipantSessionResponse(
+        session=SessionInfo(
+            expires_at=session_row.expires_at,
+            revocable=True,
+        ),
+        participant=ParticipantSummary(
+            participant_id=participant_row.id,
+            display_name=participant_row.name,
+            consent_status=participant_row.consent_status,
+        ),
+        study_scope=[invitation.study_id],
+    )
+
+
+@app.delete("/api/v1/participant/session", response_model=LogoutResponse)
+def participant_api_session_logout(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    session_row, invitation, _participant_row = _resolve_participant_api_context(request, db)
+    session_row.revoked_at = now()
+    audit(
+        db,
+        invitation.organisation_id,
+        None,
+        "participant.api_session_revoked",
+        "public_auth_session",
+        session_row.id,
+        PARTICIPANT_API_SCOPE,
+    )
+    db.commit()
+    _cache_control_no_store(response)
+    return LogoutResponse(revoked=True, revoked_at=session_row.revoked_at)
+
+
 @app.post("/participants/{participant_id}/message")
 def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(...),internal_note:bool=Form(False),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
