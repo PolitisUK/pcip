@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { ApiRequestError } from "../api/client";
 import {
   getCurrentSession,
   getParticipantActivityDetail,
+  saveParticipantActivityDraft,
+  submitParticipantActivityResponse,
   type ActivityDetailResponse,
+  type DraftResponseRequest,
 } from "../api/participantApi";
 import { CitizenCentricLogo } from "../components/CitizenCentricLogo";
 import { loadSessionMaterial } from "../services/sessionStore";
@@ -18,10 +21,29 @@ type HomeScreenProps = {
   onSessionExpired: () => void;
 };
 
+type EditableResponseDraft = {
+  answer: string;
+  choices: string[];
+  evidenceId: number | null;
+};
+
+type EditorMessage = {
+  tone: "success" | "error";
+  text: string;
+};
+
+type ActivityEditorState = {
+  draft: EditableResponseDraft;
+  persisted: EditableResponseDraft;
+  actionStatus: "idle" | "saving" | "submitting";
+  confirmingSubmit: boolean;
+  message: EditorMessage | null;
+};
+
 type ActivityDetailViewState =
   | { status: "idle" }
   | { status: "loading"; activityId: number }
-  | { status: "ready"; activityId: number; detail: ActivityDetailResponse }
+  | { status: "ready"; activityId: number; detail: ActivityDetailResponse; editor: ActivityEditorState }
   | { status: "error"; activityId: number; message: string };
 
 const dateLabel = new Intl.DateTimeFormat("en-GB", {
@@ -39,6 +61,8 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
   const [detailState, setDetailState] = useState<ActivityDetailViewState>({ status: "idle" });
   const detailRequestVersion = useRef(0);
   const detailAbortController = useRef<AbortController | null>(null);
+  const writeRequestVersion = useRef(0);
+  const writeAbortController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const unsubscribe = controller.subscribe((state) => {
@@ -114,6 +138,8 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
       controller.destroy();
       detailAbortController.current?.abort();
       detailAbortController.current = null;
+      writeAbortController.current?.abort();
+      writeAbortController.current = null;
     };
   }, [controller, onSessionExpired, participantDisplayName]);
 
@@ -124,6 +150,12 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
   }, [homeState, onSessionExpired]);
 
   const participantName = resolveParticipantName(homeState, participantDisplayName);
+
+  const updateReadyDetail = (
+    updater: (state: Extract<ActivityDetailViewState, { status: "ready" }>) => Extract<ActivityDetailViewState, { status: "ready" }>,
+  ) => {
+    setDetailState((current) => (current.status === "ready" ? updater(current) : current));
+  };
 
   const openActivityDetail = async (activityId: number) => {
     const accessToken = accessTokenRef.current;
@@ -149,7 +181,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
         return;
       }
 
-      setDetailState({ status: "ready", activityId, detail });
+      setDetailState({ status: "ready", activityId, detail, editor: createActivityEditorState(detail) });
     } catch (error) {
       if (requestVersion !== detailRequestVersion.current) {
         return;
@@ -177,11 +209,191 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
     }
   };
 
+  const updateDraft = (updater: (draft: EditableResponseDraft, detail: ActivityDetailResponse) => EditableResponseDraft) => {
+    updateReadyDetail((current) => {
+      if (isSubmittedResponse(current.detail.response?.status)) {
+        return current;
+      }
+
+      const nextDraft = normalizeEditableResponseDraft(updater(current.editor.draft, current.detail), current.detail.activity);
+      return {
+        ...current,
+        editor: {
+          ...current.editor,
+          draft: nextDraft,
+          confirmingSubmit: false,
+          message: current.editor.message?.tone === "error" ? current.editor.message : null,
+        },
+      };
+    });
+  };
+
+  const beginWriteRequest = () => {
+    writeRequestVersion.current += 1;
+    const requestVersion = writeRequestVersion.current;
+    writeAbortController.current?.abort();
+    const requestController = new AbortController();
+    writeAbortController.current = requestController;
+
+    return { requestVersion, signal: requestController.signal };
+  };
+
+  const handleDetailActionError = async (error: unknown, activityId: number, action: "save" | "submit") => {
+    if (error instanceof ApiRequestError && error.status === 401) {
+      onSessionExpired();
+      return;
+    }
+
+    if (error instanceof ApiRequestError && error.status === 409) {
+      await openActivityDetail(activityId);
+      return;
+    }
+
+    const message = mapDetailActionError(error, action);
+    setDetailState((current) => {
+      if (current.status !== "ready" || current.activityId !== activityId) {
+        return current;
+      }
+
+      return {
+        ...current,
+        editor: {
+          ...current.editor,
+          actionStatus: "idle",
+          message: { tone: "error", text: message },
+        },
+      };
+    });
+  };
+
+  const persistDraft = async () => {
+    const accessToken = accessTokenRef.current;
+    if (!accessToken || detailState.status !== "ready" || isSubmittedResponse(detailState.detail.response?.status)) {
+      return;
+    }
+
+    const payload = buildDraftRequest(detailState.detail, detailState.editor.draft);
+    const { requestVersion, signal } = beginWriteRequest();
+
+    updateReadyDetail((current) => ({
+      ...current,
+      editor: {
+        ...current.editor,
+        actionStatus: "saving",
+        confirmingSubmit: false,
+        message: null,
+      },
+    }));
+
+    try {
+      const result = await saveParticipantActivityDraft(accessToken, detailState.activityId, payload, {
+        signal,
+        idempotencyKey: createIdempotencyKey("draft", detailState.activityId),
+      });
+
+      if (requestVersion !== writeRequestVersion.current) {
+        return;
+      }
+
+      updateReadyDetail((current) => {
+        const persisted = normalizeEditableResponseDraft(current.editor.draft, current.detail.activity);
+
+        return {
+          ...current,
+          detail: {
+            ...current.detail,
+            response: {
+              response_id: result.response_id,
+              status: "draft",
+              updated_at: result.updated_at,
+              value: toResponseValue(persisted),
+            },
+          },
+          editor: {
+            ...current.editor,
+            draft: persisted,
+            persisted,
+            actionStatus: "idle",
+            message: { tone: "success", text: "Draft saved." },
+          },
+        };
+      });
+    } catch (error) {
+      if (requestVersion !== writeRequestVersion.current) {
+        return;
+      }
+
+      await handleDetailActionError(error, detailState.activityId, "save");
+    }
+  };
+
+  const submitResponse = async () => {
+    const accessToken = accessTokenRef.current;
+    if (!accessToken || detailState.status !== "ready" || isSubmittedResponse(detailState.detail.response?.status)) {
+      return;
+    }
+
+    const payload = buildDraftRequest(detailState.detail, detailState.editor.draft);
+    const { requestVersion, signal } = beginWriteRequest();
+
+    updateReadyDetail((current) => ({
+      ...current,
+      editor: {
+        ...current.editor,
+        actionStatus: "submitting",
+        confirmingSubmit: false,
+        message: null,
+      },
+    }));
+
+    try {
+      const result = await submitParticipantActivityResponse(accessToken, detailState.activityId, payload, {
+        signal,
+        idempotencyKey: createIdempotencyKey("submit", detailState.activityId),
+      });
+
+      if (requestVersion !== writeRequestVersion.current) {
+        return;
+      }
+
+      updateReadyDetail((current) => {
+        const persisted = normalizeEditableResponseDraft(current.editor.draft, current.detail.activity);
+
+        return {
+          ...current,
+          detail: {
+            ...current.detail,
+            response: {
+              response_id: result.response_id,
+              status: "submitted",
+              submitted_at: result.submitted_at,
+              updated_at: result.updated_at,
+              value: toResponseValue(persisted),
+            },
+          },
+          editor: {
+            ...current.editor,
+            draft: persisted,
+            persisted,
+            actionStatus: "idle",
+            message: { tone: "success", text: "Response submitted." },
+          },
+        };
+      });
+    } catch (error) {
+      if (requestVersion !== writeRequestVersion.current) {
+        return;
+      }
+
+      await handleDetailActionError(error, detailState.activityId, "submit");
+    }
+  };
+
   const showDetail = detailState.status !== "idle";
 
   if (showDetail) {
     return (
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.topBar}>
           <CitizenCentricLogo variant="compact" />
           <Pressable
@@ -235,18 +447,56 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
             {detailState.detail.activity.availability.due_at ? (
               <Text style={styles.metaLine}>Due: {formatDateTime(detailState.detail.activity.availability.due_at)}</Text>
             ) : null}
-            <Text style={styles.metaLine}>
-              Response: {readableResponseStatus(detailState.detail.response.status || undefined)}
-            </Text>
-            {detailState.detail.response.updated_at ? (
+            <Text style={styles.metaLine}>Response: {readableResponseStatus(detailState.detail.response?.status)}</Text>
+            {detailState.detail.response?.updated_at ? (
               <Text style={styles.metaLine}>Last updated: {formatDateTime(detailState.detail.response.updated_at)}</Text>
             ) : null}
-            {detailState.detail.response.submitted_at ? (
+            {detailState.detail.response?.submitted_at ? (
               <Text style={styles.metaLine}>Submitted: {formatDateTime(detailState.detail.response.submitted_at)}</Text>
             ) : null}
-            {typeof detailState.detail.response.value?.evidence_id === "number" ? (
+            {typeof detailState.detail.response?.value?.evidence_id === "number" ? (
               <Text style={styles.metaLine}>Evidence reference: #{detailState.detail.response.value.evidence_id}</Text>
             ) : null}
+
+            <ActivityResponseEditor
+              detail={detailState.detail}
+              editor={detailState.editor}
+              onChangeAnswer={(answer) => updateDraft((draft) => ({ ...draft, answer }))}
+              onSelectSingleChoice={(choice) =>
+                updateDraft((draft) => ({
+                  ...draft,
+                  choices: draft.choices[0] === choice ? [] : [choice],
+                }))
+              }
+              onToggleMultipleChoice={(choice) =>
+                updateDraft((draft, detail) => ({
+                  ...draft,
+                  choices: draft.choices.includes(choice)
+                    ? draft.choices.filter((item) => item !== choice)
+                    : orderedChoices([...draft.choices, choice], detail.activity.options || []),
+                }))
+              }
+              onSaveDraft={() => void persistDraft()}
+              onReviewSubmit={() =>
+                updateReadyDetail((current) => ({
+                  ...current,
+                  editor: {
+                    ...current.editor,
+                    confirmingSubmit: true,
+                  },
+                }))
+              }
+              onCancelSubmit={() =>
+                updateReadyDetail((current) => ({
+                  ...current,
+                  editor: {
+                    ...current.editor,
+                    confirmingSubmit: false,
+                  },
+                }))
+              }
+              onConfirmSubmit={() => void submitResponse()}
+            />
           </View>
         )}
       </ScrollView>
@@ -254,7 +504,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       <View style={styles.topBar}>
         <CitizenCentricLogo variant="compact" />
         <Pressable accessibilityRole="button" accessibilityLabel="Sign out" style={styles.button} onPress={onSignOut}>
@@ -328,9 +578,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
                   );
                 })}
               </View>
-              {homeState.requiresStudySelection ? (
-                <Text style={styles.body}>Choose a study to view its activities.</Text>
-              ) : null}
+              {homeState.requiresStudySelection ? <Text style={styles.body}>Choose a study to view its activities.</Text> : null}
             </View>
           )}
 
@@ -357,6 +605,192 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
       )}
     </ScrollView>
   );
+}
+
+function ActivityResponseEditor({
+  detail,
+  editor,
+  onChangeAnswer,
+  onSelectSingleChoice,
+  onToggleMultipleChoice,
+  onSaveDraft,
+  onReviewSubmit,
+  onCancelSubmit,
+  onConfirmSubmit,
+}: {
+  detail: ActivityDetailResponse;
+  editor: ActivityEditorState;
+  onChangeAnswer: (answer: string) => void;
+  onSelectSingleChoice: (choice: string) => void;
+  onToggleMultipleChoice: (choice: string) => void;
+  onSaveDraft: () => void;
+  onReviewSubmit: () => void;
+  onCancelSubmit: () => void;
+  onConfirmSubmit: () => void;
+}) {
+  const isSubmitted = isSubmittedResponse(detail.response?.status);
+  const supported = isSupportedResponseEntryType(detail.activity.activity_type);
+  const dirty = isEditorDirty(editor);
+  const choices = detail.activity.options || [];
+  const actionBusy = editor.actionStatus !== "idle";
+  const missingChoiceOptions = isChoiceActivity(detail.activity.activity_type) && choices.length === 0;
+
+  if (isSubmitted) {
+    return (
+      <View style={styles.editorBlock}>
+        <Text style={styles.sectionTitle}>Submitted response</Text>
+        <ReadOnlyResponseValue draft={editor.persisted} />
+        {editor.message ? <InlineMessage message={editor.message} /> : null}
+      </View>
+    );
+  }
+
+  if (!supported) {
+    return (
+      <View style={styles.editorBlock}>
+        <Text style={styles.body}>Response entry for this activity type is not available in the app yet.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.editorBlock}>
+      <Text style={styles.sectionTitle}>Your response</Text>
+      {dirty ? <Text style={styles.unsavedText}>Unsaved changes</Text> : <Text style={styles.metaLine}>No unsaved changes</Text>}
+
+      {(detail.activity.activity_type === "short_text" || detail.activity.activity_type === "long_text") && (
+        <TextInput
+          accessibilityLabel={`Response for ${detail.activity.title}`}
+          multiline
+          numberOfLines={detail.activity.activity_type === "long_text" ? 6 : 3}
+          onChangeText={onChangeAnswer}
+          placeholder="Write your response"
+          style={[styles.input, detail.activity.activity_type === "long_text" ? styles.multilineInput : null]}
+          textAlignVertical="top"
+          value={editor.draft.answer}
+        />
+      )}
+
+      {detail.activity.activity_type === "single_choice" && (
+        <ChoiceOptions
+          options={choices}
+          selectedChoices={editor.draft.choices}
+          accessibilityPrefix="Select option"
+          role="radio"
+          onToggle={onSelectSingleChoice}
+        />
+      )}
+
+      {detail.activity.activity_type === "multiple_choice" && (
+        <ChoiceOptions
+          options={choices}
+          selectedChoices={editor.draft.choices}
+          accessibilityPrefix="Toggle option"
+          role="checkbox"
+          onToggle={onToggleMultipleChoice}
+        />
+      )}
+
+      {missingChoiceOptions ? <InlineMessage message={{ tone: "error", text: "Response options are unavailable right now." }} /> : null}
+      {editor.message ? <InlineMessage message={editor.message} /> : null}
+
+      <View style={styles.actionRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Save draft response"
+          accessibilityState={{ disabled: !dirty || actionBusy || missingChoiceOptions }}
+          disabled={!dirty || actionBusy || missingChoiceOptions}
+          onPress={onSaveDraft}
+          style={[styles.secondaryButton, (!dirty || actionBusy || missingChoiceOptions) ? styles.disabledButton : null]}
+        >
+          <Text style={styles.secondaryButtonText}>{editor.actionStatus === "saving" ? "Saving draft" : "Save draft"}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Review response before submitting"
+          accessibilityState={{ disabled: actionBusy || missingChoiceOptions }}
+          disabled={actionBusy || missingChoiceOptions}
+          onPress={onReviewSubmit}
+          style={[styles.button, (actionBusy || missingChoiceOptions) ? styles.disabledPrimaryButton : null]}
+        >
+          <Text style={styles.buttonText}>{editor.actionStatus === "submitting" ? "Submitting" : "Submit response"}</Text>
+        </Pressable>
+      </View>
+
+      {editor.confirmingSubmit ? (
+        <View style={styles.confirmPanel}>
+          <Text style={styles.body}>You will not be able to edit this response after submission.</Text>
+          <View style={styles.actionRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Cancel submit response"
+              onPress={onCancelSubmit}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Confirm submit response"
+              onPress={onConfirmSubmit}
+              style={styles.button}
+            >
+              <Text style={styles.buttonText}>Confirm submit</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function ChoiceOptions({
+  options,
+  selectedChoices,
+  accessibilityPrefix,
+  role,
+  onToggle,
+}: {
+  options: string[];
+  selectedChoices: string[];
+  accessibilityPrefix: string;
+  role: "radio" | "checkbox";
+  onToggle: (choice: string) => void;
+}) {
+  return (
+    <View style={styles.choiceList}>
+      {options.map((choice) => {
+        const selected = selectedChoices.includes(choice);
+
+        return (
+          <Pressable
+            key={choice}
+            accessibilityRole={role}
+            accessibilityLabel={`${accessibilityPrefix} ${choice}`}
+            accessibilityState={{ checked: selected }}
+            onPress={() => onToggle(choice)}
+            style={[styles.choiceOption, selected ? styles.choiceOptionSelected : null]}
+          >
+            <Text style={[styles.choiceOptionText, selected ? styles.choiceOptionTextSelected : null]}>{choice}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function ReadOnlyResponseValue({ draft }: { draft: EditableResponseDraft }) {
+  return (
+    <View style={styles.readOnlyBlock}>
+      {draft.answer ? <Text style={styles.body}>{draft.answer}</Text> : null}
+      {draft.choices.length > 0 ? <Text style={styles.body}>Selected: {draft.choices.join(", ")}</Text> : null}
+      {!draft.answer && draft.choices.length === 0 ? <Text style={styles.body}>No response content available.</Text> : null}
+    </View>
+  );
+}
+
+function InlineMessage({ message }: { message: EditorMessage }) {
+  return <Text style={message.tone === "error" ? styles.errorText : styles.successText}>{message.text}</Text>;
 }
 
 function hasJourneyData(
@@ -461,6 +895,18 @@ function readableResponseStatus(status?: "draft" | "submitted"): string {
   return "Not started";
 }
 
+function isSubmittedResponse(status?: "draft" | "submitted"): boolean {
+  return status === "submitted";
+}
+
+function isSupportedResponseEntryType(activityType: ActivitySummary["activity_type"]): boolean {
+  return ["short_text", "long_text", "single_choice", "multiple_choice"].includes(activityType);
+}
+
+function isChoiceActivity(activityType: ActivitySummary["activity_type"]): boolean {
+  return activityType === "single_choice" || activityType === "multiple_choice";
+}
+
 function requiredLabel(required: boolean): string {
   return required ? "Required" : "Optional";
 }
@@ -476,6 +922,119 @@ function readableSchedule(activity: ActivitySummary): string {
     return `Closed after ${formatDateTime(activity.availability.due_at)}`;
   }
   return "No date available";
+}
+
+function createActivityEditorState(detail: ActivityDetailResponse): ActivityEditorState {
+  const persisted = normalizeEditableResponseDraft(buildEditableResponseDraft(detail), detail.activity);
+
+  return {
+    draft: persisted,
+    persisted,
+    actionStatus: "idle",
+    confirmingSubmit: false,
+    message: null,
+  };
+}
+
+function buildEditableResponseDraft(detail: ActivityDetailResponse): EditableResponseDraft {
+  return {
+    answer: detail.response?.value?.answer || "",
+    choices: detail.response?.value?.choices || [],
+    evidenceId: detail.response?.value?.evidence_id ?? null,
+  };
+}
+
+function normalizeEditableResponseDraft(draft: EditableResponseDraft, activity: ActivityDetailResponse["activity"]): EditableResponseDraft {
+  const filteredChoices = Array.isArray(draft.choices)
+    ? draft.choices.filter((choice) => typeof choice === "string" && choice.trim())
+    : [];
+
+  if (activity.activity_type === "single_choice") {
+    return {
+      answer: draft.answer,
+      choices: filteredChoices.slice(0, 1),
+      evidenceId: draft.evidenceId,
+    };
+  }
+
+  if (activity.activity_type === "multiple_choice") {
+    return {
+      answer: draft.answer,
+      choices: orderedChoices(filteredChoices, activity.options || []),
+      evidenceId: draft.evidenceId,
+    };
+  }
+
+  return {
+    answer: draft.answer,
+    choices: [],
+    evidenceId: draft.evidenceId,
+  };
+}
+
+function orderedChoices(choices: string[], options: string[]): string[] {
+  if (options.length === 0) {
+    return [...new Set(choices)];
+  }
+
+  return options.filter((option) => choices.includes(option));
+}
+
+function buildDraftRequest(detail: ActivityDetailResponse, draft: EditableResponseDraft): DraftResponseRequest {
+  const normalized = normalizeEditableResponseDraft(draft, detail.activity);
+
+  return {
+    answer: normalized.answer,
+    choices: normalized.choices,
+    evidence_id: normalized.evidenceId || undefined,
+  };
+}
+
+function toResponseValue(draft: EditableResponseDraft): NonNullable<NonNullable<ActivityDetailResponse["response"]>["value"]> {
+  return {
+    answer: draft.answer,
+    choices: draft.choices,
+    evidence_id: draft.evidenceId || undefined,
+  };
+}
+
+function isEditorDirty(editor: ActivityEditorState): boolean {
+  return (
+    editor.draft.answer !== editor.persisted.answer ||
+    editor.draft.evidenceId !== editor.persisted.evidenceId ||
+    editor.draft.choices.length !== editor.persisted.choices.length ||
+    editor.draft.choices.some((choice, index) => choice !== editor.persisted.choices[index])
+  );
+}
+
+function mapDetailActionError(error: unknown, action: "save" | "submit"): string {
+  if (error instanceof ApiRequestError) {
+    if (error.kind === "network" || error.kind === "timeout") {
+      return "You appear to be offline. Check your connection and try again.";
+    }
+
+    if (error.status === 403 || error.status === 404) {
+      return "This activity is no longer available for editing.";
+    }
+
+    if (error.status === 429) {
+      return "Please wait a moment and try again.";
+    }
+
+    if (error.status === 400 || error.status === 422) {
+      return action === "submit"
+        ? "Your response is incomplete. Review it and try again."
+        : "We could not save this draft. Review your response and try again.";
+    }
+  }
+
+  return action === "submit"
+    ? "We could not submit your response right now. Please try again."
+    : "We could not save your draft right now. Please try again.";
+}
+
+function createIdempotencyKey(action: "draft" | "submit", activityId: number): string {
+  return `mob-${action}-${activityId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function readableActivityType(activityType: ActivitySummary["activity_type"]): string {
@@ -573,6 +1132,80 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "700",
   },
+  editorBlock: {
+    gap: 12,
+    marginTop: 8,
+  },
+  input: {
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#b8cfc4",
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    color: "#0d3a2d",
+    fontSize: 16,
+  },
+  multilineInput: {
+    minHeight: 132,
+  },
+  choiceList: {
+    gap: 8,
+  },
+  choiceOption: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#b8cfc4",
+    backgroundColor: "#ffffff",
+    minHeight: 44,
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  choiceOptionSelected: {
+    borderColor: "#00573d",
+    backgroundColor: "#d8eee4",
+  },
+  choiceOptionText: {
+    color: "#1e4438",
+    fontSize: 15,
+  },
+  choiceOptionTextSelected: {
+    color: "#0d3a2d",
+    fontWeight: "700",
+  },
+  actionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  confirmPanel: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#d1e2db",
+    backgroundColor: "#f1f7f4",
+    padding: 12,
+    gap: 10,
+  },
+  readOnlyBlock: {
+    gap: 8,
+  },
+  unsavedText: {
+    color: "#8c5300",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  errorText: {
+    color: "#8a1f17",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  successText: {
+    color: "#16653a",
+    fontSize: 14,
+    lineHeight: 20,
+  },
   contentBlock: {
     gap: 16,
   },
@@ -645,5 +1278,11 @@ const styles = StyleSheet.create({
     color: "#35574c",
     fontSize: 14,
     lineHeight: 20,
+  },
+  disabledButton: {
+    opacity: 0.55,
+  },
+  disabledPrimaryButton: {
+    opacity: 0.55,
   },
 });
