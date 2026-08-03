@@ -1,4 +1,8 @@
 export type RootStackParamList = {
-  Home: undefined;
-  Invitation: { token: string };
+  SignedOut: undefined;
+  ProcessingInvitation: undefined;
+  AuthenticatedHome: undefined;
+  ConsentRequired: undefined;
+  RecoverableError: undefined;
+  TerminalError: undefined;
 };

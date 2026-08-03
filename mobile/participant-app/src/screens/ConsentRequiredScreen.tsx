@@ -1,25 +1,27 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-type HomeScreenProps = {
+type ConsentRequiredScreenProps = {
   participantDisplayName?: string;
   onSignOut: () => void;
 };
 
-export function HomeScreen({ participantDisplayName, onSignOut }: HomeScreenProps) {
+export function ConsentRequiredScreen({ participantDisplayName, onSignOut }: ConsentRequiredScreenProps) {
   return (
     <View style={styles.container}>
       <Text accessibilityRole="header" style={styles.title}>
-        Citizen Centric
+        Citizen Centric consent needed
       </Text>
       <Text style={styles.body}>
-        {participantDisplayName ? `Welcome ${participantDisplayName}.` : "Welcome."} Your participant session is active.
+        {participantDisplayName
+          ? `Hello ${participantDisplayName}.`
+          : "You are signed in."} We still need consent confirmation before entering your participant space.
       </Text>
-      <Text style={styles.body}>Your studies and activities will appear here in the next journey increment.</Text>
+      <Text style={styles.body}>Please complete consent with your research team using your invitation guidance.</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Sign out"
-        style={styles.button}
         onPress={onSignOut}
+        style={styles.button}
       >
         <Text style={styles.buttonText}>Sign out</Text>
       </Pressable>
@@ -37,7 +39,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: "#0c2f24",
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: "700",
   },
   body: {
