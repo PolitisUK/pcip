@@ -17,10 +17,21 @@ import {
   type ParticipantSessionResponse,
 } from "../api/participantApi";
 import { loadSessionMaterial } from "../services/sessionStore";
+import {
+  disablePushNotificationsLocally,
+  loadNotificationPreferences,
+  registerForPushNotifications,
+} from "../services/pushNotifications";
 import { HomeScreen } from "./HomeScreen";
 
 jest.mock("../services/sessionStore", () => ({
   loadSessionMaterial: jest.fn(),
+}));
+
+jest.mock("../services/pushNotifications", () => ({
+  loadNotificationPreferences: jest.fn(),
+  registerForPushNotifications: jest.fn(),
+  disablePushNotificationsLocally: jest.fn(),
 }));
 
 jest.mock("../api/participantApi", () => ({
@@ -62,6 +73,9 @@ jest.mock("expo-image-picker", () => ({
 }));
 
 const mockedLoadSessionMaterial = jest.mocked(loadSessionMaterial);
+const mockedLoadNotificationPreferences = jest.mocked(loadNotificationPreferences);
+const mockedRegisterForPushNotifications = jest.mocked(registerForPushNotifications);
+const mockedDisablePushNotificationsLocally = jest.mocked(disablePushNotificationsLocally);
 const mockedGetCurrentSession = jest.mocked(getCurrentSession);
 const mockedGetParticipantStudies = jest.mocked(getParticipantStudies);
 const mockedGetParticipantActivities = jest.mocked(getParticipantActivities);
@@ -135,6 +149,12 @@ describe("HomeScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedLoadSessionMaterial.mockResolvedValue(sessionMaterial);
+    mockedLoadNotificationPreferences.mockResolvedValue(null);
+    mockedRegisterForPushNotifications.mockResolvedValue({
+      status: "enabled",
+      token: "ExponentPushToken[sample]",
+    });
+    mockedDisablePushNotificationsLocally.mockResolvedValue(undefined);
     mockedGetCurrentSession.mockResolvedValue(session);
     mockedSaveParticipantActivityDraft.mockResolvedValue({
       response_id: 44,
@@ -1190,6 +1210,37 @@ describe("HomeScreen", () => {
         expect.objectContaining({ idempotencyKey: expect.any(String) }),
       );
       expect(onSessionExpired).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("enables and disables device notifications from account panel", async () => {
+    mockedGetParticipantStudies.mockResolvedValue({
+      data: [
+        { study_id: 11, title: "Study One", description: null, status: "active", methodology: "survey", enrolled: true },
+      ],
+      pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
+    });
+    mockedGetParticipantActivities.mockResolvedValue({ data: [] });
+
+    const { getByLabelText, getByText } = await renderHome();
+
+    await waitFor(() => {
+      expect(getByLabelText("Open account and privacy panel")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Open account and privacy panel"));
+    fireEvent.press(getByLabelText("Enable notifications"));
+
+    await waitFor(() => {
+      expect(mockedRegisterForPushNotifications).toHaveBeenCalledTimes(1);
+      expect(getByText("Notifications enabled for this device.")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Disable notifications"));
+
+    await waitFor(() => {
+      expect(mockedDisablePushNotificationsLocally).toHaveBeenCalledTimes(1);
+      expect(getByText("Notifications disabled on this device.")).toBeTruthy();
     });
   });
 

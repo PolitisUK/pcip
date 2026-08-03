@@ -1,0 +1,31 @@
+{
+  "cli": {
+    "version": ">= 16.4.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "development"
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview"
+    },
+    "staging": {
+      "distribution": "internal",
+      "channel": "staging",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://staging.example.invalid"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "channel": "production"
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

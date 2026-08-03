@@ -6,6 +6,9 @@
     "orientation": "portrait",
     "icon": "./assets/citizen-centric-brand-mark.png",
     "scheme": "pcip-participant",
+    "plugins": [
+      "expo-notifications"
+    ],
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,

@@ -3,6 +3,7 @@ import "react-native-gesture-handler";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
+import * as Notifications from "expo-notifications";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 
@@ -25,6 +26,15 @@ export default function App() {
   const [authState, setAuthState] = useState<AuthState>({ status: "initialising" });
 
   useEffect(() => {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      }),
+    });
+
     const unsubscribe = authController.subscribe((state) => {
       setAuthState(state);
     });
