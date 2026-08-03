@@ -20,10 +20,34 @@ describe("parseInvitationTokenFromUrl", () => {
     expect(token).toBe("mobiletoken123");
   });
 
+  it("extracts token from custom scheme path variant", () => {
+    const token = parseInvitationTokenFromUrl("pcip-participant:///join-study?token=mobiletoken123");
+    expect(token).toBe("mobiletoken123");
+  });
+
   it("rejects missing token", () => {
     const token = parseInvitationTokenFromUrl(
       "https://participant.staging.politis.co.uk/join-study"
     );
+    expect(token).toBeNull();
+  });
+
+  it("supports percent-encoded tokens", () => {
+    const token = parseInvitationTokenFromUrl(
+      "https://participant.staging.politis.co.uk/join-study?token=abc%252B123"
+    );
+    expect(token).toBe("abc+123");
+  });
+
+  it("ignores unrelated links", () => {
+    const token = parseInvitationTokenFromUrl(
+      "https://participant.staging.politis.co.uk/other-path?token=abc123token"
+    );
+    expect(token).toBeNull();
+  });
+
+  it("rejects malformed links", () => {
+    const token = parseInvitationTokenFromUrl("not a url");
     expect(token).toBeNull();
   });
 });

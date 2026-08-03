@@ -1,10 +1,6 @@
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
-type InvitationScreenProps = {
-  token?: string;
-};
-
-export function InvitationScreen(_: InvitationScreenProps) {
+export function ProcessingInvitationScreen() {
   return (
     <View style={styles.container}>
       <ActivityIndicator accessibilityLabel="Joining your study" size="large" color="#00573d" />
@@ -23,7 +19,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#f7faf8",
     paddingHorizontal: 24,
-    paddingVertical: 28,
     gap: 14,
   },
   title: {

@@ -1,27 +1,23 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-type HomeScreenProps = {
-  participantDisplayName?: string;
-  onSignOut: () => void;
+type SignedOutScreenProps = {
+  onRetry: () => void;
 };
 
-export function HomeScreen({ participantDisplayName, onSignOut }: HomeScreenProps) {
+export function SignedOutScreen({ onRetry }: SignedOutScreenProps) {
   return (
     <View style={styles.container}>
       <Text accessibilityRole="header" style={styles.title}>
         Citizen Centric
       </Text>
-      <Text style={styles.body}>
-        {participantDisplayName ? `Welcome ${participantDisplayName}.` : "Welcome."} Your participant session is active.
-      </Text>
-      <Text style={styles.body}>Your studies and activities will appear here in the next journey increment.</Text>
+      <Text style={styles.body}>Open your study invitation link to sign in securely.</Text>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Sign out"
+        accessibilityLabel="Restore saved session"
+        onPress={onRetry}
         style={styles.button}
-        onPress={onSignOut}
       >
-        <Text style={styles.buttonText}>Sign out</Text>
+        <Text style={styles.buttonText}>Restore saved session</Text>
       </Pressable>
     </View>
   );

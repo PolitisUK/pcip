@@ -27,7 +27,14 @@ export function parseInvitationTokenFromUrl(url: string): string | null {
     return null;
   }
 
-  const trimmed = token.trim();
+  let decoded = token;
+  try {
+    decoded = decodeURIComponent(token);
+  } catch {
+    decoded = token;
+  }
+
+  const trimmed = decoded.trim();
   return trimmed ? trimmed : null;
 }
 
@@ -36,15 +43,4 @@ export const linking: LinkingOptions<RootStackParamList> = {
     `${env.deepLinkScheme}://`,
     `https://${env.deepLinkHost}`,
   ],
-  config: {
-    screens: {
-      Home: "",
-      Invitation: {
-        path: "join-study",
-        parse: {
-          token: (value: string) => value,
-        },
-      },
-    },
-  },
 };
