@@ -244,6 +244,52 @@ class ParticipantMessageSummary(BaseModel):
     created_at: datetime
 
 
+class MessageListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    data: list[ParticipantMessageSummary]
+    pagination: Pagination
+
+
+class CreateMessageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1, max_length=10000)
+
+
+class CreateMessageResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: ParticipantMessageSummary
+
+
+class PrivacyRequestAcknowledgement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: int
+    request_type: Literal["withdrawal", "deletion"]
+    status: Literal["received"]
+    submitted_at: datetime
+    message: str | None = None
+
+
+class WithdrawalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: Literal["study", "all"] = "study"
+    study_id: int | None = Field(default=None, ge=1)
+    reason: str | None = None
+    contact_preference: Literal["email", "sms", "phone", "none"] | None = None
+
+
+class DeletionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode_preference: Literal["auto", "delete", "anonymise"] = "auto"
+    reason: str | None = None
+    study_id: int | None = Field(default=None, ge=1)
+
+
 class PortalSummaryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

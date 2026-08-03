@@ -91,12 +91,17 @@ from .participant_api.schemas import (
     ActivityResponseValue,
     ActivitySummary,
     BearerSession,
+    CreateMessageRequest,
+    CreateMessageResponse,
+    DeletionRequest,
     InvitationContext,
     LogoutResponse,
+    MessageListResponse,
     Pagination,
     ParticipantMessageSummary,
     ParticipantSessionResponse,
     ParticipantSummary,
+    PrivacyRequestAcknowledgement,
     PortalResponseItem,
     PortalSummaryResponse,
     SessionExchangeRequest,
@@ -106,6 +111,7 @@ from .participant_api.schemas import (
     SubmittedResponseResult,
     StudyListResponse,
     StudySummary,
+    WithdrawalRequest,
 )
 
 VERSION = "0.6.0"
@@ -2910,6 +2916,63 @@ def _resolve_participant_api_evidence_scope(
     return invitation, participant_row, study_row, evidence_row
 
 
+def _resolve_participant_api_study_scope(
+    request: Request,
+    db: Session,
+    *,
+    write_scope: bool,
+) -> tuple[ParticipantInvitation, Participant, Study]:
+    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
+    if not invitation.accepted_at:
+        raise HTTPException(403, "Participant consent has not been accepted.")
+    if participant_row.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(403, "Participant consent is no longer active.")
+
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_portal_write" if write_scope else "participant_portal_read",
+        ip_limit=settings.rate_limit_portal_write_ip,
+        account_key=f"invitation:{invitation.id}",
+        account_limit=settings.rate_limit_portal_write_token,
+    )
+
+    study_row = db.scalar(
+        select(Study).where(
+            Study.id == invitation.study_id,
+            Study.organisation_id == invitation.organisation_id,
+        )
+    )
+    if not study_row:
+        raise _participant_api_unauthorised()
+
+    enrolled = db.scalar(
+        select(StudyEnrolment.id).where(
+            StudyEnrolment.organisation_id == invitation.organisation_id,
+            StudyEnrolment.study_id == invitation.study_id,
+            StudyEnrolment.participant_id == participant_row.id,
+        )
+    ) is not None
+    if not enrolled:
+        raise HTTPException(403, "Participant is not enrolled in this study.")
+
+    return invitation, participant_row, study_row
+
+
+def _record_participant_idempotency(
+    db: Session,
+    invitation_id: int,
+    action: str,
+    idempotency_key: str | None,
+) -> None:
+    if not idempotency_key:
+        return
+    scoped_key = f"participant:{invitation_id}:{action}:{idempotency_key}"
+    if token_already_redeemed(db, "participant_api_idempotency", scoped_key):
+        raise HTTPException(409, "Duplicate request was already processed.")
+    record_token_redemption(db, "participant_api_idempotency", scoped_key)
+
+
 def _update_activity_response_if_not_submitted(
     db: Session,
     response_id: int,
@@ -3225,6 +3288,217 @@ def participant_api_evidence_status(
     return EvidenceStatusResponse(
         evidence=_participant_evidence_metadata(evidence_row),
         downloadable=is_evidence_downloadable(evidence_row.scan_status),
+    )
+
+
+@app.get("/api/v1/participant/messages", response_model=MessageListResponse)
+def participant_api_messages(
+    request: Request,
+    response: Response,
+    cursor: str | None = Query(default=None, min_length=1),
+    limit: int = Query(default=25, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    invitation, participant_row, study_row = _resolve_participant_api_study_scope(request, db, write_scope=False)
+    del invitation
+    rows = list_participant_visible_messages(
+        db,
+        study_id=study_row.id,
+        participant_id=participant_row.id,
+    )
+    data = [
+        ParticipantMessageSummary(
+            message_id=row.id,
+            sender_type=row.sender_type,
+            body=row.body,
+            created_at=row.created_at,
+        )
+        for row in rows[:limit]
+    ]
+    _cache_control_no_store(response)
+    return MessageListResponse(
+        data=data,
+        pagination=Pagination(
+            cursor=cursor,
+            next_cursor=None,
+            limit=limit,
+            has_more=False,
+        ),
+    )
+
+
+@app.post("/api/v1/participant/messages", response_model=CreateMessageResponse, status_code=201)
+def participant_api_message_create(
+    payload: CreateMessageRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
+    _content_type_ok: None = Depends(_require_json_content_type),
+    db: Session = Depends(get_db),
+):
+    invitation, participant_row, study_row = _resolve_participant_api_study_scope(request, db, write_scope=True)
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(400, "Message body is required.")
+
+    try:
+        _record_participant_idempotency(db, invitation.id, "messages_create", idempotency_key)
+        row = create_participant_message(
+            invitation,
+            body=body,
+        )
+        db.add(row)
+        db.flush()
+        audit(
+            db,
+            invitation.organisation_id,
+            None,
+            "participant.message_created",
+            "participant_message",
+            row.id,
+            str(study_row.id),
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Message state conflict.")
+    except Exception:
+        db.rollback()
+        raise
+
+    _cache_control_no_store(response)
+    return CreateMessageResponse(
+        message=ParticipantMessageSummary(
+            message_id=row.id,
+            sender_type=row.sender_type,
+            body=row.body,
+            created_at=row.created_at,
+        )
+    )
+
+
+@app.post("/api/v1/participant/privacy/withdrawal-requests", response_model=PrivacyRequestAcknowledgement, status_code=202)
+def participant_api_withdrawal_request(
+    payload: WithdrawalRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
+    _content_type_ok: None = Depends(_require_json_content_type),
+    db: Session = Depends(get_db),
+):
+    invitation, participant_row, study_row = _resolve_participant_api_study_scope(request, db, write_scope=True)
+    target_study_id = payload.study_id or invitation.study_id
+    if payload.scope == "study" and target_study_id != invitation.study_id:
+        raise HTTPException(403, "Requested study is outside participant scope.")
+
+    enrolments = list(
+        db.scalars(
+            select(StudyEnrolment).where(
+                StudyEnrolment.organisation_id == invitation.organisation_id,
+                StudyEnrolment.participant_id == participant_row.id,
+                StudyEnrolment.study_id == invitation.study_id,
+            )
+        )
+    )
+
+    try:
+        _record_participant_idempotency(db, invitation.id, "privacy_withdrawal", idempotency_key)
+        for enrolment in enrolments:
+            enrolment.status = "withdrawn"
+        participant_row.consent_status = ConsentStatus.withdrawn.value
+        participant_row.status = ParticipantStatus.withdrawn.value
+        audit_event = AuditEvent(
+            organisation_id=invitation.organisation_id,
+            actor_user_id=None,
+            action="participant.withdrawal_requested",
+            entity_type="participant",
+            entity_id=str(participant_row.id),
+            detail=json.dumps(
+                {
+                    "scope": payload.scope,
+                    "study_id": study_row.id,
+                    "contact_preference": payload.contact_preference,
+                    "reason": payload.reason or "",
+                }
+            ),
+        )
+        db.add(audit_event)
+        db.flush()
+        request_id = int(audit_event.id)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Withdrawal request conflict.")
+    except Exception:
+        db.rollback()
+        raise
+
+    _cache_control_no_store(response)
+    return PrivacyRequestAcknowledgement(
+        request_id=request_id,
+        request_type="withdrawal",
+        status="received",
+        submitted_at=now(),
+        message="Withdrawal request received.",
+    )
+
+
+@app.post("/api/v1/participant/privacy/deletion-requests", response_model=PrivacyRequestAcknowledgement, status_code=202)
+def participant_api_deletion_request(
+    payload: DeletionRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
+    _content_type_ok: None = Depends(_require_json_content_type),
+    db: Session = Depends(get_db),
+):
+    invitation, participant_row, _study_row = _resolve_participant_api_study_scope(request, db, write_scope=True)
+    if payload.study_id is not None and payload.study_id != invitation.study_id:
+        raise HTTPException(403, "Requested study is outside participant scope.")
+
+    try:
+        _record_participant_idempotency(db, invitation.id, "privacy_deletion", idempotency_key)
+        audit_event = AuditEvent(
+            organisation_id=invitation.organisation_id,
+            actor_user_id=None,
+            action="participant.deletion_requested",
+            entity_type="participant",
+            entity_id=str(participant_row.id),
+            detail=json.dumps(
+                {
+                    "mode_preference": payload.mode_preference,
+                    "study_id": invitation.study_id,
+                    "reason": payload.reason or "",
+                }
+            ),
+        )
+        db.add(audit_event)
+        db.flush()
+        request_id = int(audit_event.id)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Deletion request conflict.")
+    except Exception:
+        db.rollback()
+        raise
+
+    _cache_control_no_store(response)
+    return PrivacyRequestAcknowledgement(
+        request_id=request_id,
+        request_type="deletion",
+        status="received",
+        submitted_at=now(),
+        message="Deletion request received.",
     )
 
 @app.delete("/api/v1/participant/session", response_model=LogoutResponse)
