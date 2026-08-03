@@ -8,7 +8,7 @@ import {
   type ParticipantSessionResponse,
   type SessionExchangeResponse,
 } from "../api/participantApi";
-import { parseInvitationTokenFromUrl } from "../navigation/deepLinks";
+import { parseInvitationLink } from "../navigation/deepLinks";
 import {
   clearSessionMaterial,
   loadSessionMaterial,
@@ -26,6 +26,8 @@ export class AuthController {
   private activeUrl: string | null = null;
   private lastInvitationUrl: string | null = null;
   private subscription: { remove: () => void } | null = null;
+  private disposed = false;
+  private operationVersion = 0;
 
   subscribe(listener: StateListener): () => void {
     this.listeners.add(listener);
@@ -41,10 +43,23 @@ export class AuthController {
   }
 
   private setState(state: AuthState): void {
+    if (this.disposed) {
+      return;
+    }
+
     this.state = state;
     for (const listener of this.listeners) {
       listener(state);
     }
+  }
+
+  private beginOperation(): number {
+    this.operationVersion += 1;
+    return this.operationVersion;
+  }
+
+  private isCurrentOperation(operationVersion: number): boolean {
+    return !this.disposed && this.operationVersion === operationVersion;
   }
 
   async initialise(): Promise<void> {
@@ -53,9 +68,10 @@ export class AuthController {
     try {
       const initialUrl = await Linking.getInitialURL();
       if (initialUrl) {
-        this.lastInvitationUrl = initialUrl;
-        await this.handleUrl(initialUrl);
-        return;
+        const handled = await this.handleUrl(initialUrl);
+        if (handled) {
+          return;
+        }
       }
     } catch {
       this.setState({ status: "recoverable_error", reason: "network" });
@@ -66,10 +82,15 @@ export class AuthController {
   }
 
   async restoreSession(): Promise<void> {
+    const operationVersion = this.beginOperation();
     this.setState({ status: "initialising" });
 
     try {
       const stored = await loadSessionMaterial();
+      if (!this.isCurrentOperation(operationVersion)) {
+        return;
+      }
+
       if (!stored) {
         this.setState({ status: "signed_out" });
         return;
@@ -77,12 +98,22 @@ export class AuthController {
 
       if (Date.parse(stored.expiresAt) <= Date.now()) {
         await clearSessionMaterial();
+        if (!this.isCurrentOperation(operationVersion)) {
+          return;
+        }
         this.setState({ status: "signed_out" });
         return;
       }
 
       const session = await getCurrentSession(stored.accessToken);
+      if (!this.isCurrentOperation(operationVersion)) {
+        return;
+      }
+
       await saveSessionFromValidatedContext(stored.accessToken, session);
+      if (!this.isCurrentOperation(operationVersion)) {
+        return;
+      }
 
       if (session.participant.consent_status !== "granted") {
         this.setState({
@@ -100,16 +131,31 @@ export class AuthController {
         studyScope: session.study_scope,
       });
     } catch (error) {
+      if (!this.isCurrentOperation(operationVersion)) {
+        return;
+      }
+
       if (error instanceof ApiRequestError) {
         if (error.status === 401) {
           await clearSessionMaterial();
+          if (!this.isCurrentOperation(operationVersion)) {
+            return;
+          }
           this.setState({ status: "terminal_error", reason: "revoked_session" });
           return;
         }
 
         if (error.status === 403) {
           await clearSessionMaterial();
+          if (!this.isCurrentOperation(operationVersion)) {
+            return;
+          }
           this.setState({ status: "terminal_error", reason: "forbidden" });
+          return;
+        }
+
+        if (error.kind === "network" || error.kind === "timeout") {
+          this.setState({ status: "recoverable_error", reason: "network" });
           return;
         }
       }
@@ -118,20 +164,26 @@ export class AuthController {
     }
   }
 
-  async handleUrl(url: string): Promise<void> {
+  async handleUrl(url: string): Promise<boolean> {
     if (this.exchangeInFlight) {
-      return;
+      return true;
     }
     if (this.activeUrl === url) {
-      return;
+      return true;
     }
 
-    const token = parseInvitationTokenFromUrl(url);
-    if (!token) {
+    const parsedLink = parseInvitationLink(url);
+    if (parsedLink.kind === "ignore") {
+      return false;
+    }
+
+    if (parsedLink.kind === "invalid_invitation") {
       this.setState({ status: "recoverable_error", reason: "invalid_invitation" });
-      return;
+      return true;
     }
 
+    const operationVersion = this.beginOperation();
+    const token = parsedLink.token;
     this.lastInvitationUrl = url;
     this.exchangeInFlight = true;
     this.activeUrl = url;
@@ -142,8 +194,16 @@ export class AuthController {
         { invitation_token: token },
         { idempotencyKey: createIdempotencyKey() },
       );
+      if (!this.isCurrentOperation(operationVersion)) {
+        return true;
+      }
 
       await saveSessionFromExchange(response);
+      if (!this.isCurrentOperation(operationVersion)) {
+        return true;
+      }
+
+      this.lastInvitationUrl = null;
 
       if (response.next_action === "consent_required" || response.participant.consent_status !== "granted") {
         this.setState({
@@ -151,7 +211,7 @@ export class AuthController {
           participantDisplayName: response.participant.display_name,
           studyId: response.invitation.study_id,
         });
-        return;
+        return true;
       }
 
       this.setState({
@@ -160,11 +220,18 @@ export class AuthController {
         participantId: response.participant.participant_id,
         studyScope: [response.invitation.study_id],
       });
+      return true;
     } catch (error) {
+      if (!this.isCurrentOperation(operationVersion)) {
+        return true;
+      }
       this.setState(mapExchangeError(error));
+      return true;
     } finally {
-      this.exchangeInFlight = false;
-      this.activeUrl = null;
+      if (this.isCurrentOperation(operationVersion)) {
+        this.exchangeInFlight = false;
+        this.activeUrl = null;
+      }
     }
   }
 
@@ -178,8 +245,16 @@ export class AuthController {
   }
 
   async signOut(): Promise<void> {
+    const operationVersion = this.beginOperation();
+    this.lastInvitationUrl = null;
+    this.exchangeInFlight = false;
+    this.activeUrl = null;
+
     try {
       const current = await loadSessionMaterial();
+      if (!this.isCurrentOperation(operationVersion)) {
+        return;
+      }
       if (current?.accessToken) {
         await revokeCurrentSession(current.accessToken, { idempotencyKey: createIdempotencyKey() });
       }
@@ -187,11 +262,19 @@ export class AuthController {
       // Best effort revocation; local secure clearing is authoritative for device state.
     } finally {
       await clearSessionMaterial();
+      if (!this.isCurrentOperation(operationVersion)) {
+        return;
+      }
       this.setState({ status: "signed_out" });
     }
   }
 
   destroy(): void {
+    this.disposed = true;
+    this.operationVersion += 1;
+    this.lastInvitationUrl = null;
+    this.activeUrl = null;
+    this.exchangeInFlight = false;
     this.subscription?.remove();
     this.subscription = null;
     this.listeners.clear();

@@ -38,6 +38,16 @@ const mockedSaveSessionMaterial = jest.mocked(saveSessionMaterial);
 const mockedLoadSessionMaterial = jest.mocked(loadSessionMaterial);
 const mockedClearSessionMaterial = jest.mocked(clearSessionMaterial);
 
+function deferredPromise<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function createControllerWithStates() {
   const controller = new AuthController();
   const states: string[] = [];
@@ -221,6 +231,16 @@ describe("AuthController", () => {
     expect(controller.getState()).toEqual({ status: "recoverable_error", reason: "secure_storage" });
   });
 
+  it("ignores unrelated links while signed out", async () => {
+    const { controller } = createControllerWithStates();
+
+    await controller.initialise();
+    await controller.handleUrl("https://participant.staging.politis.co.uk/other-path?token=abc123");
+
+    expect(mockedExchange).not.toHaveBeenCalled();
+    expect(controller.getState()).toEqual({ status: "signed_out" });
+  });
+
   it("prevents duplicate exchange while request is in progress", async () => {
     mockedExchange.mockImplementation(
       () => new Promise((resolve) => setTimeout(() => resolve({
@@ -253,6 +273,63 @@ describe("AuthController", () => {
     ]);
 
     expect(mockedExchange).toHaveBeenCalledTimes(1);
+  });
+
+  it("incoming invitation supersedes an in-flight session restore", async () => {
+    mockedSaveSessionMaterial.mockResolvedValue(undefined);
+    mockedLoadSessionMaterial.mockResolvedValue({
+      accessToken: "token-restore",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+
+    const restore = deferredPromise<{
+      session: { expires_at: string; revocable: true };
+      participant: { participant_id: number; display_name: string; consent_status: "granted" };
+      study_scope: number[];
+    }>();
+    mockedGetCurrentSession.mockImplementation(() => restore.promise);
+    mockedExchange.mockResolvedValue({
+      session: {
+        access_token: "token-fresh",
+        token_type: "Bearer",
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        revocable: true,
+      },
+      participant: {
+        participant_id: 55,
+        display_name: "Fresh",
+        consent_status: "granted",
+      },
+      invitation: {
+        study_id: 8,
+        invitation_status: "valid",
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        accepted_at: null,
+      },
+      next_action: "portal",
+    });
+
+    const { controller } = createControllerWithStates();
+    const restorePromise = controller.restoreSession();
+    await controller.handleUrl("https://participant.staging.politis.co.uk/join-study?token=newtoken");
+
+    restore.resolve({
+      session: { expires_at: new Date(Date.now() + 60_000).toISOString(), revocable: true },
+      participant: {
+        participant_id: 1,
+        display_name: "Old",
+        consent_status: "granted",
+      },
+      study_scope: [1],
+    });
+    await restorePromise;
+
+    expect(controller.getState()).toEqual({
+      status: "authenticated",
+      participantDisplayName: "Fresh",
+      participantId: 55,
+      studyScope: [8],
+    });
   });
 
   it("retry re-attempts the last invitation after a recoverable exchange failure", async () => {
@@ -296,6 +373,75 @@ describe("AuthController", () => {
       participantId: 21,
       studyScope: [31],
     });
+  });
+
+  it("clears local credentials even if logout revocation fails", async () => {
+    mockedLoadSessionMaterial.mockResolvedValue({
+      accessToken: "token-123",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    mockedRevokeCurrentSession.mockRejectedValue(new Error("server unavailable"));
+
+    const { controller } = createControllerWithStates();
+    await controller.signOut();
+
+    expect(mockedClearSessionMaterial).toHaveBeenCalled();
+    expect(controller.getState()).toEqual({ status: "signed_out" });
+  });
+
+  it("ignores stale exchange completion after sign-out", async () => {
+    const exchange = deferredPromise<{
+      session: { access_token: string; token_type: "Bearer"; expires_at: string; revocable: true };
+      participant: { participant_id: number; display_name: string; consent_status: "granted" };
+      invitation: { study_id: number; invitation_status: "valid"; expires_at: string; accepted_at: null };
+      next_action: "portal";
+    }>();
+    mockedExchange.mockImplementation(() => exchange.promise);
+    mockedLoadSessionMaterial.mockResolvedValue(null);
+
+    const { controller } = createControllerWithStates();
+    const handlePromise = controller.handleUrl("https://participant.staging.politis.co.uk/join-study?token=late");
+    await controller.signOut();
+
+    exchange.resolve({
+      session: {
+        access_token: "late-token",
+        token_type: "Bearer",
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        revocable: true,
+      },
+      participant: {
+        participant_id: 10,
+        display_name: "Late",
+        consent_status: "granted",
+      },
+      invitation: {
+        study_id: 4,
+        invitation_status: "valid",
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        accepted_at: null,
+      },
+      next_action: "portal",
+    });
+    await handlePromise;
+
+    expect(controller.getState()).toEqual({ status: "signed_out" });
+  });
+
+  it("preserves a potentially valid saved session on restore network failure", async () => {
+    mockedLoadSessionMaterial.mockResolvedValue({
+      accessToken: "token-123",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    mockedGetCurrentSession.mockRejectedValue(
+      new ApiRequestError({ status: 0, message: "Network request failed", kind: "network" })
+    );
+
+    const { controller } = createControllerWithStates();
+    await controller.initialise();
+
+    expect(mockedClearSessionMaterial).not.toHaveBeenCalled();
+    expect(controller.getState()).toEqual({ status: "recoverable_error", reason: "network" });
   });
 
   it("clears revoked session on 401 restore", async () => {

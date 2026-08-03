@@ -3,12 +3,17 @@ import type { LinkingOptions } from "@react-navigation/native";
 import { env } from "../config/env";
 import type { RootStackParamList } from "./types";
 
-export function parseInvitationTokenFromUrl(url: string): string | null {
+export type InvitationLinkParseResult =
+  | { kind: "token"; token: string }
+  | { kind: "invalid_invitation" }
+  | { kind: "ignore" };
+
+export function parseInvitationLink(url: string): InvitationLinkParseResult {
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    return null;
+    return { kind: "ignore" };
   }
 
   const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
@@ -19,12 +24,12 @@ export function parseInvitationTokenFromUrl(url: string): string | null {
   const schemeAllowed = scheme === env.deepLinkScheme.toLowerCase() && (path === "join-study" || host === "join-study");
 
   if (!httpsAllowed && !schemeAllowed) {
-    return null;
+    return { kind: "ignore" };
   }
 
   const token = parsed.searchParams.get("token");
   if (typeof token !== "string") {
-    return null;
+    return { kind: "invalid_invitation" };
   }
 
   let decoded = token;
@@ -35,7 +40,16 @@ export function parseInvitationTokenFromUrl(url: string): string | null {
   }
 
   const trimmed = decoded.trim();
-  return trimmed ? trimmed : null;
+  if (!trimmed) {
+    return { kind: "invalid_invitation" };
+  }
+
+  return { kind: "token", token: trimmed };
+}
+
+export function parseInvitationTokenFromUrl(url: string): string | null {
+  const result = parseInvitationLink(url);
+  return result.kind === "token" ? result.token : null;
 }
 
 export const linking: LinkingOptions<RootStackParamList> = {

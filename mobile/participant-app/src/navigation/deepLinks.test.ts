@@ -1,4 +1,4 @@
-import { parseInvitationTokenFromUrl } from "./deepLinks";
+import { parseInvitationLink, parseInvitationTokenFromUrl } from "./deepLinks";
 
 describe("parseInvitationTokenFromUrl", () => {
   it("extracts token from allowed HTTPS invitation link", () => {
@@ -49,5 +49,17 @@ describe("parseInvitationTokenFromUrl", () => {
   it("rejects malformed links", () => {
     const token = parseInvitationTokenFromUrl("not a url");
     expect(token).toBeNull();
+  });
+});
+
+describe("parseInvitationLink", () => {
+  it("classifies unrelated links as ignored", () => {
+    expect(parseInvitationLink("https://participant.staging.politis.co.uk/other-path?token=abc")).toEqual({ kind: "ignore" });
+    expect(parseInvitationLink("https://evil.example.invalid/join-study?token=abc")).toEqual({ kind: "ignore" });
+  });
+
+  it("classifies supported links without a usable token as invalid invitation", () => {
+    expect(parseInvitationLink("https://participant.staging.politis.co.uk/join-study")).toEqual({ kind: "invalid_invitation" });
+    expect(parseInvitationLink("https://participant.staging.politis.co.uk/join-study?token=%20%20")).toEqual({ kind: "invalid_invitation" });
   });
 });
