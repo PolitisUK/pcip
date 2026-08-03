@@ -1870,6 +1870,7 @@ def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activit
     if due is not None and due<release_offset_days: raise HTTPException(400,"Due day cannot be earlier than release day.")
     opts=[x.strip() for x in options.splitlines() if x.strip()]
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts)<2: raise HTTPException(400,"Choice and ranking activities require at least two options.")
+    if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts) != len(set(opts)): raise HTTPException(400,"Activity options must be unique.")
     pos=(db.scalar(select(func.max(Activity.position)).where(Activity.study_id==s.id)) or 0)+1; a=Activity(organisation_id=u.organisation_id,study_id=s.id,title=nonblank(title,"Activity title"),prompt=prompt.strip(),activity_type=activity_type,options_json=json.dumps(opts),position=pos,required=required,release_offset_days=release_offset_days,due_offset_days=due); db.add(a); db.flush(); audit(db,u.organisation_id,u.id,"activity.created","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/activities/{activity_id}/edit")
 def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form(...),options:str=Form(""),required:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
@@ -1882,6 +1883,7 @@ def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activi
     opts=[x.strip() for x in options.splitlines() if x.strip()]
     if due is not None and due<release_offset_days: raise HTTPException(400,"Invalid dates.")
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts)<2: raise HTTPException(400,"At least two options required.")
+    if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts) != len(set(opts)): raise HTTPException(400,"Activity options must be unique.")
     a.title=nonblank(title,"Activity title"); a.prompt=prompt.strip(); a.activity_type=activity_type; a.options_json=json.dumps(opts); a.required=required; a.release_offset_days=release_offset_days; a.due_offset_days=due; audit(db,u.organisation_id,u.id,"activity.updated","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{a.study_id}",303)
 @app.post("/activities/{activity_id}/delete")
 def delete_activity(activity_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
@@ -2262,6 +2264,7 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
         activity_windows=activity_windows,
         responses=responses,
         response_values=response_values,
+        activity_options={a.id: _participant_activity_options(a) or [] for a in acts},
         evidence_by_id=evidence_by_id,
         messages=msgs,
         max_upload_mb=settings.max_upload_mb,
@@ -2421,7 +2424,7 @@ def participant_api_portal_summary(
 
 
 @app.post("/participant-portal/activity/{activity_id}")
-async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:list[str]=Form(default=[]),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     context = participant_portal_context(request, db)
     inv = context[1] if context else None
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
@@ -2453,6 +2456,8 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
     if r.status == "submitted":
         raise HTTPException(409, "This activity response has already been submitted.")
     value, choice_list = serialise_response_payload(answer, choices)
+    value = _validate_activity_response_value(a, value, action)
+    choice_list = list(value.get("choices") or [])
     stored_key = None
     if upload and upload.filename:
         original=Path(upload.filename).name
@@ -3068,7 +3073,7 @@ def _response_value_from_json(value_json: str | None) -> ActivityResponseValue |
 
 
 def _participant_activity_options(activity_row: Activity) -> list[str] | None:
-    if activity_row.activity_type not in {"single_choice", "multiple_choice"}:
+    if activity_row.activity_type not in {"single_choice", "multiple_choice", "ranking"}:
         return None
 
     try:
@@ -3080,6 +3085,44 @@ def _participant_activity_options(activity_row: Activity) -> list[str] | None:
         return []
 
     return [option.strip() for option in payload if isinstance(option, str) and option.strip()]
+
+
+def _validate_activity_response_value(
+    activity_row: Activity,
+    value: dict[str, object],
+    action: str,
+) -> dict[str, object]:
+    if action not in {"draft", "submit"}:
+        raise HTTPException(400, "Invalid response action.")
+
+    answer = str(value.get("answer") or "")
+    raw_choices = value.get("choices") or []
+    choices = [x.strip() for x in raw_choices if isinstance(x, str) and x.strip()]
+    value["answer"] = answer
+    value["choices"] = choices
+
+    if activity_row.activity_type not in {"single_choice", "multiple_choice", "ranking"}:
+        return value
+
+    if answer.strip():
+        raise HTTPException(400, "Choice activities must use the available options.")
+
+    options = _participant_activity_options(activity_row) or []
+    if len(options) < 2:
+        raise HTTPException(409, "This activity does not have enough configured options.")
+    if len(choices) != len(set(choices)):
+        raise HTTPException(400, "Each option may only be selected once.")
+    if any(choice not in options for choice in choices):
+        raise HTTPException(400, "The response contains an option that is not available.")
+
+    if activity_row.activity_type == "single_choice" and len(choices) > 1:
+        raise HTTPException(400, "Select one option only.")
+    if activity_row.activity_type == "ranking" and action == "submit" and choices and len(choices) != len(options):
+        raise HTTPException(400, "Rank every option before submitting.")
+    if action == "submit" and activity_row.required and not choices:
+        raise HTTPException(400, "A response is required.")
+
+    return value
 
 
 def _participant_activity_summary(activity_row: Activity, window: dict[str, object]) -> ActivitySummary:
@@ -3249,7 +3292,11 @@ def _resolve_participant_api_activity_scope(
     return invitation, participant_row, study_row, activity_row
 
 
-def _participant_response_value_from_payload(payload: DraftResponseRequest) -> dict[str, object]:
+def _participant_response_value_from_payload(
+    payload: DraftResponseRequest,
+    activity_row: Activity,
+    action: str,
+) -> dict[str, object]:
     cleaned_choices = [x.strip() for x in payload.choices if isinstance(x, str) and x.strip()]
     value: dict[str, object] = {
         "answer": payload.answer or "",
@@ -3257,7 +3304,7 @@ def _participant_response_value_from_payload(payload: DraftResponseRequest) -> d
     }
     if payload.evidence_id is not None:
         value["evidence_id"] = payload.evidence_id
-    return value
+    return _validate_activity_response_value(activity_row, value, action)
 
 
 def _participant_evidence_scan_status(scan_status: str | None) -> str:
@@ -3437,7 +3484,7 @@ def participant_api_activity_response_draft(
 ):
     del idempotency_key
     invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
-    value = _participant_response_value_from_payload(payload)
+    value = _participant_response_value_from_payload(payload, activity_row, "draft")
 
     existing = db.scalar(
         select(ActivityResponse).where(
@@ -3514,7 +3561,7 @@ def participant_api_activity_response_submit(
 ):
     del idempotency_key
     invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
-    value = _participant_response_value_from_payload(payload)
+    value = _participant_response_value_from_payload(payload, activity_row, "submit")
     has_answer = bool((payload.answer or "").strip())
     has_choices = bool(value.get("choices"))
     has_evidence = payload.evidence_id is not None

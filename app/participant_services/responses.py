@@ -41,8 +41,9 @@ def resolve_or_create_activity_response(
     return response
 
 
-def serialise_response_payload(answer: str, choices: str) -> tuple[dict[str, object], list[str]]:
-    choice_list = [x.strip() for x in choices.split("|") if x.strip()]
+def serialise_response_payload(answer: str, choices: str | list[str]) -> tuple[dict[str, object], list[str]]:
+    raw_choices = choices.split("|") if isinstance(choices, str) else choices
+    choice_list = [x.strip() for x in raw_choices if isinstance(x, str) and x.strip()]
     value = {"answer": answer, "choices": choice_list}
     return value, choice_list
 

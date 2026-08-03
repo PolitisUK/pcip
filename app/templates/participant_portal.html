@@ -38,6 +38,8 @@
       {% set r = responses.get(a.id) %}
       {% set window = activity_windows.get(a.id) %}
       {% set response_value = response_values.get(a.id, {}) %}
+      {% set options = activity_options.get(a.id, []) %}
+      {% set selected_choices = response_value.get('choices', []) %}
       {% set evidence = evidence_by_id.get(response_value.get('evidence_id')) %}
       <article class="card activity-card">
         <div class="section-head">
@@ -56,6 +58,11 @@
         {% elif r and r.status == 'submitted' %}
         <div class="success" role="status">Your response was submitted{% if r.submitted_at %} on {{ r.submitted_at.strftime('%d %b %Y at %H:%M') }}{% endif %}.</div>
         {% if response_value.get('answer') %}<p class="submitted-answer">{{ response_value.get('answer') }}</p>{% endif %}
+        {% if selected_choices %}
+        {% if a.activity_type == 'ranking' %}<ol class="submitted-choices">{% else %}<ul class="submitted-choices">{% endif %}
+          {% for choice in selected_choices %}<li>{{ choice }}</li>{% endfor %}
+        {% if a.activity_type == 'ranking' %}</ol>{% else %}</ul>{% endif %}
+        {% endif %}
         {% else %}
         <form method="post" action="/participant-portal/activity/{{ a.id }}" enctype="multipart/form-data" class="stack">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -66,9 +73,34 @@
           <label for="answer-{{ a.id }}">Rating from 1 to 10</label>
           <input id="answer-{{ a.id }}" type="range" name="answer" min="1" max="10" value="{{ response_values.get(a.id, {}).get('answer', 5) }}">
           <div class="muted">1 = low, 10 = high</div>
-          {% elif a.activity_type in ['single_choice', 'multiple_choice', 'ranking'] %}
-          <p class="muted">Select the relevant option(s).</p>
-          <textarea name="answer" placeholder="Enter your selected option(s)"></textarea>
+          {% elif a.activity_type == 'single_choice' %}
+          <fieldset class="choice-group">
+            <legend>Select one option{% if a.required %} (required){% endif %}</legend>
+            {% for option in options %}
+            <label class="choice-option"><input type="radio" name="choices" value="{{ option }}" {% if option in selected_choices %}checked{% endif %}> <span>{{ option }}</span></label>
+            {% endfor %}
+          </fieldset>
+          {% elif a.activity_type == 'multiple_choice' %}
+          <fieldset class="choice-group">
+            <legend>Select all that apply{% if a.required %} (required){% endif %}</legend>
+            {% for option in options %}
+            <label class="choice-option"><input type="checkbox" name="choices" value="{{ option }}" {% if option in selected_choices %}checked{% endif %}> <span>{{ option }}</span></label>
+            {% endfor %}
+          </fieldset>
+          {% elif a.activity_type == 'ranking' %}
+          <fieldset class="ranking-group">
+            <legend>Rank every option, with your first choice at the top{% if a.required %} (required){% endif %}</legend>
+            {% for position in range(options|length) %}
+            <label for="rank-{{ a.id }}-{{ position }}">Position {{ position + 1 }}</label>
+            <select id="rank-{{ a.id }}-{{ position }}" name="choices">
+              <option value="">Choose an option</option>
+              {% for option in options %}
+              <option value="{{ option }}" {% if selected_choices|length > position and selected_choices[position] == option %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+            </select>
+            {% endfor %}
+            <p class="muted">Use each option once. You can save a partial ranking as a draft.</p>
+          </fieldset>
           {% elif a.activity_type == 'gps' %}
           <div class="row">
             <input id="answer-{{ a.id }}" name="answer" placeholder="Latitude, longitude">

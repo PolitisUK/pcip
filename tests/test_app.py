@@ -785,6 +785,18 @@ def test_invalid_status_and_activity_validation():
         study_id = int(study.headers['location'].split('/')[-1])
         r = post_with_csrf(f'/studies/{study_id}/activities', data={'title':'Bad choice','activity_type':'single_choice','options':'Only one','release_offset_days':'0','due_offset_days':'0','required':'true'})
         assert r.status_code == 400
+        duplicate_options = post_with_csrf(
+            f'/studies/{study_id}/activities',
+            data={
+                'title': 'Duplicate ranking',
+                'activity_type': 'ranking',
+                'options': 'Bus\nTrain\nBus',
+                'release_offset_days': '0',
+                'due_offset_days': '2',
+            },
+        )
+        assert duplicate_options.status_code == 400
+        assert duplicate_options.json() == {'detail': 'Activity options must be unique.'}
         invalid_methodology = post_with_csrf(
             f'/studies/{study_id}/edit',
             data={'title':'Validation study','methodology':'unsupported','status_value':'draft'},
@@ -5486,6 +5498,207 @@ def test_participant_api_activity_detail_exposes_choice_options_only_for_choice_
         assert multiple_body['activity']['activity_type'] == 'multiple_choice'
         assert multiple_body['activity']['options'] == ['Lighting', 'Crossing', 'Pavement width']
         assert 'response' not in multiple_body
+
+
+def test_participant_website_renders_structured_choice_controls_and_preserves_ordered_responses():
+    from app.models import Activity, ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('website-structured-choices')
+    with SessionLocal() as db:
+        base_row = db.get(Activity, context['activity_id'])
+        assert base_row is not None
+        rows = [
+            Activity(
+                organisation_id=base_row.organisation_id,
+                study_id=base_row.study_id,
+                title='Primary travel mode',
+                prompt='Choose one.',
+                activity_type='single_choice',
+                options_json=json.dumps(['Bus', 'Train', 'Walk']),
+                position=base_row.position + 20,
+                required=True,
+            ),
+            Activity(
+                organisation_id=base_row.organisation_id,
+                study_id=base_row.study_id,
+                title='Street priorities',
+                prompt='Choose any that apply.',
+                activity_type='multiple_choice',
+                options_json=json.dumps(['Lighting', 'Crossing', 'Seating']),
+                position=base_row.position + 21,
+                required=True,
+            ),
+            Activity(
+                organisation_id=base_row.organisation_id,
+                study_id=base_row.study_id,
+                title='Rank improvements',
+                prompt='Put these in order.',
+                activity_type='ranking',
+                options_json=json.dumps(['Lighting', 'Crossing', 'Seating']),
+                position=base_row.position + 22,
+                required=True,
+            ),
+        ]
+        db.add_all(rows)
+        db.flush()
+        single_id, multiple_id, ranking_id = [row.id for row in rows]
+        db.commit()
+
+    with client:
+        portal = client.get('/participant-portal', follow_redirects=False)
+        assert portal.status_code == 200
+        assert f'action="/participant-portal/activity/{single_id}"' in portal.text
+        assert 'type="radio" name="choices" value="Bus"' in portal.text
+        assert 'type="checkbox" name="choices" value="Lighting"' in portal.text
+        assert f'id="rank-{ranking_id}-0" name="choices"' in portal.text
+        assert 'Rank every option, with your first choice at the top' in portal.text
+
+        invalid_single = post_with_csrf(
+            f'/participant-portal/activity/{single_id}',
+            data={'action': 'submit', 'choices': ['Bus', 'Train']},
+            follow_redirects=False,
+        )
+        assert invalid_single.status_code == 400
+        assert invalid_single.json() == {'detail': 'Select one option only.'}
+
+        multiple = post_with_csrf(
+            f'/participant-portal/activity/{multiple_id}',
+            data={'action': 'submit', 'choices': ['Lighting', 'Seating']},
+            follow_redirects=False,
+        )
+        assert multiple.status_code == 303
+
+        ranking_draft = post_with_csrf(
+            f'/participant-portal/activity/{ranking_id}',
+            data={'action': 'draft', 'choices': ['Crossing', 'Lighting']},
+            follow_redirects=False,
+        )
+        assert ranking_draft.status_code == 303
+        draft_portal = client.get('/participant-portal')
+        assert '<option value="Crossing" selected>Crossing</option>' in draft_portal.text
+        assert '<option value="Lighting" selected>Lighting</option>' in draft_portal.text
+
+        incomplete_ranking = post_with_csrf(
+            f'/participant-portal/activity/{ranking_id}',
+            data={'action': 'submit', 'choices': ['Crossing', 'Lighting']},
+            follow_redirects=False,
+        )
+        assert incomplete_ranking.status_code == 400
+        assert incomplete_ranking.json() == {'detail': 'Rank every option before submitting.'}
+
+        complete_ranking = post_with_csrf(
+            f'/participant-portal/activity/{ranking_id}',
+            data={'action': 'submit', 'choices': ['Crossing', 'Lighting', 'Seating']},
+            follow_redirects=False,
+        )
+        assert complete_ranking.status_code == 303
+        submitted_portal = client.get('/participant-portal')
+        assert '<ol class="submitted-choices">' in submitted_portal.text
+
+    with SessionLocal() as db:
+        multiple_response = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == multiple_id,
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        ranking_response = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == ranking_id,
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert multiple_response is not None
+        assert json.loads(multiple_response.value_json)['choices'] == ['Lighting', 'Seating']
+        assert ranking_response is not None
+        assert json.loads(ranking_response.value_json)['choices'] == ['Crossing', 'Lighting', 'Seating']
+
+
+def test_participant_api_validates_choice_membership_uniqueness_and_complete_rankings():
+    from app.models import Activity, ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-structured-choices')
+    with SessionLocal() as db:
+        base_row = db.get(Activity, context['activity_id'])
+        assert base_row is not None
+        ranking = Activity(
+            organisation_id=base_row.organisation_id,
+            study_id=base_row.study_id,
+            title='Rank transport options',
+            prompt='Rank every option.',
+            activity_type='ranking',
+            options_json=json.dumps(['Bus', 'Train', 'Walk']),
+            position=base_row.position + 30,
+            required=True,
+        )
+        db.add(ranking)
+        db.flush()
+        ranking_id = ranking.id
+        db.commit()
+
+    headers = {'Authorization': f"Bearer {context['api_token']}"}
+    with client:
+        detail = client.get(
+            f'/api/v1/participant/activities/{ranking_id}',
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert detail.status_code == 200
+        assert detail.json()['activity']['options'] == ['Bus', 'Train', 'Walk']
+
+        unknown = client.put(
+            f'/api/v1/participant/activities/{ranking_id}/draft',
+            json={'choices': ['Bus', 'Ferry']},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert unknown.status_code == 400
+        assert unknown.json() == {'detail': 'The response contains an option that is not available.'}
+
+        duplicate = client.put(
+            f'/api/v1/participant/activities/{ranking_id}/draft',
+            json={'choices': ['Bus', 'Bus']},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert duplicate.status_code == 400
+        assert duplicate.json() == {'detail': 'Each option may only be selected once.'}
+
+        draft = client.put(
+            f'/api/v1/participant/activities/{ranking_id}/draft',
+            json={'choices': ['Train', 'Bus']},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert draft.status_code == 200
+
+        incomplete = client.post(
+            f'/api/v1/participant/activities/{ranking_id}/submit',
+            json={'choices': ['Train', 'Bus']},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert incomplete.status_code == 400
+        assert incomplete.json() == {'detail': 'Rank every option before submitting.'}
+
+        submitted = client.post(
+            f'/api/v1/participant/activities/{ranking_id}/submit',
+            json={'choices': ['Train', 'Bus', 'Walk']},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert submitted.status_code == 200
+
+    with SessionLocal() as db:
+        response = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == ranking_id,
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert response is not None
+        assert response.status == 'submitted'
+        assert json.loads(response.value_json)['choices'] == ['Train', 'Bus', 'Walk']
 
 
 def test_participant_api_activity_detail_enforces_scope_consent_enrolment_and_path_constraints():
