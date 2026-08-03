@@ -24,6 +24,11 @@ import {
 } from "../api/participantApi";
 import { CitizenCentricLogo } from "../components/CitizenCentricLogo";
 import { env } from "../config/env";
+import {
+  disablePushNotificationsLocally,
+  loadNotificationPreferences,
+  registerForPushNotifications,
+} from "../services/pushNotifications";
 import { loadSessionMaterial } from "../services/sessionStore";
 import { ParticipantHomeController } from "../studies/participantHomeController";
 import type { ActivitySummary, ParticipantHomeState } from "../studies/types";
@@ -100,6 +105,9 @@ type AccountPanelState = {
   deleting: boolean;
   confirmWithdraw: boolean;
   confirmDelete: boolean;
+  notificationsBusy: boolean;
+  notificationsEnabled: boolean;
+  notificationsUpdatedAt: string | null;
   message: EditorMessage | null;
 };
 
@@ -131,6 +139,9 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
     deleting: false,
     confirmWithdraw: false,
     confirmDelete: false,
+    notificationsBusy: false,
+    notificationsEnabled: false,
+    notificationsUpdatedAt: null,
     message: null,
   });
   const detailRequestVersion = useRef(0);
@@ -238,6 +249,26 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
       onSessionExpired();
     }
   }, [homeState, onSessionExpired]);
+
+  useEffect(() => {
+    let active = true;
+    const loadPreferences = async () => {
+      const preferences = await loadNotificationPreferences();
+      if (!active || !preferences) {
+        return;
+      }
+      setAccountState((current) => ({
+        ...current,
+        notificationsEnabled: preferences.enabled,
+        notificationsUpdatedAt: preferences.updatedAt,
+      }));
+    };
+    void loadPreferences();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const participantName = resolveParticipantName(homeState, participantDisplayName);
   const activeStudyTitle = hasJourneyData(homeState)
@@ -1151,6 +1182,52 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
     void refreshMessages();
   };
 
+  const enableNotifications = async () => {
+    setAccountState((current) => ({
+      ...current,
+      notificationsBusy: true,
+      message: null,
+    }));
+
+    const result = await registerForPushNotifications();
+    if (result.status === "enabled") {
+      setAccountState((current) => ({
+        ...current,
+        notificationsBusy: false,
+        notificationsEnabled: true,
+        notificationsUpdatedAt: new Date().toISOString(),
+        message: { tone: "success", text: "Notifications enabled for this device." },
+      }));
+      return;
+    }
+
+    const tone = result.status === "error" ? "error" : "success";
+    setAccountState((current) => ({
+      ...current,
+      notificationsBusy: false,
+      notificationsEnabled: false,
+      notificationsUpdatedAt: new Date().toISOString(),
+      message: { tone, text: result.message },
+    }));
+  };
+
+  const disableNotifications = async () => {
+    setAccountState((current) => ({
+      ...current,
+      notificationsBusy: true,
+      message: null,
+    }));
+
+    await disablePushNotificationsLocally();
+    setAccountState((current) => ({
+      ...current,
+      notificationsBusy: false,
+      notificationsEnabled: false,
+      notificationsUpdatedAt: new Date().toISOString(),
+      message: { tone: "success", text: "Notifications disabled on this device." },
+    }));
+  };
+
   const showDetail = detailState.status !== "idle";
 
   if (showDetail) {
@@ -1493,6 +1570,40 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
                 >
                   <Text style={styles.secondaryButtonText}>Support</Text>
                 </Pressable>
+              </View>
+
+              <View style={styles.confirmPanel}>
+                <Text style={styles.body}>Notifications</Text>
+                <Text style={styles.metaLine}>
+                  {accountState.notificationsEnabled
+                    ? "Push notifications are enabled for this device."
+                    : "Push notifications are currently disabled."}
+                </Text>
+                {accountState.notificationsUpdatedAt ? (
+                  <Text style={styles.metaLine}>Last updated: {formatDateTime(accountState.notificationsUpdatedAt)}</Text>
+                ) : null}
+                <View style={styles.actionRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Enable notifications"
+                    accessibilityState={{ disabled: accountState.notificationsBusy }}
+                    disabled={accountState.notificationsBusy}
+                    onPress={() => void enableNotifications()}
+                    style={[styles.secondaryButton, accountState.notificationsBusy ? styles.disabledButton : null]}
+                  >
+                    <Text style={styles.secondaryButtonText}>Enable notifications</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Disable notifications"
+                    accessibilityState={{ disabled: accountState.notificationsBusy }}
+                    disabled={accountState.notificationsBusy}
+                    onPress={() => void disableNotifications()}
+                    style={[styles.secondaryButton, accountState.notificationsBusy ? styles.disabledButton : null]}
+                  >
+                    <Text style={styles.secondaryButtonText}>Disable notifications</Text>
+                  </Pressable>
+                </View>
               </View>
 
               <View style={styles.confirmPanel}>
