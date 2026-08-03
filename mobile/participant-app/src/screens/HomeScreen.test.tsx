@@ -2,12 +2,14 @@ import { fireEvent, render, waitFor } from "@testing-library/react-native";
 
 import { ApiRequestError } from "../api/client";
 import {
+  getParticipantEvidenceStatus,
   getCurrentSession,
   getParticipantActivities,
   getParticipantActivityDetail,
   getParticipantStudies,
   saveParticipantActivityDraft,
   submitParticipantActivityResponse,
+  uploadParticipantActivityEvidence,
   type ParticipantSessionResponse,
 } from "../api/participantApi";
 import { loadSessionMaterial } from "../services/sessionStore";
@@ -24,6 +26,27 @@ jest.mock("../api/participantApi", () => ({
   getParticipantActivityDetail: jest.fn(),
   saveParticipantActivityDraft: jest.fn(),
   submitParticipantActivityResponse: jest.fn(),
+  uploadParticipantActivityEvidence: jest.fn(),
+  getParticipantEvidenceStatus: jest.fn(),
+}));
+
+jest.mock("expo-document-picker", () => ({
+  getDocumentAsync: jest.fn(),
+}));
+
+jest.mock("expo-image-picker", () => ({
+  MediaTypeOptions: {
+    All: "all",
+    Images: "images",
+    Videos: "videos",
+  },
+  UIImagePickerControllerQualityType: {
+    Medium: "medium",
+  },
+  requestCameraPermissionsAsync: jest.fn().mockResolvedValue({ granted: true }),
+  requestMediaLibraryPermissionsAsync: jest.fn().mockResolvedValue({ granted: true }),
+  launchCameraAsync: jest.fn(),
+  launchImageLibraryAsync: jest.fn(),
 }));
 
 const mockedLoadSessionMaterial = jest.mocked(loadSessionMaterial);
@@ -33,6 +56,11 @@ const mockedGetParticipantActivities = jest.mocked(getParticipantActivities);
 const mockedGetParticipantActivityDetail = jest.mocked(getParticipantActivityDetail);
 const mockedSaveParticipantActivityDraft = jest.mocked(saveParticipantActivityDraft);
 const mockedSubmitParticipantActivityResponse = jest.mocked(submitParticipantActivityResponse);
+const mockedUploadParticipantActivityEvidence = jest.mocked(uploadParticipantActivityEvidence);
+const mockedGetParticipantEvidenceStatus = jest.mocked(getParticipantEvidenceStatus);
+const mockedDocumentPicker = jest.requireMock("expo-document-picker") as {
+  getDocumentAsync: jest.Mock;
+};
 
 const session: ParticipantSessionResponse = {
   session: {
@@ -99,6 +127,42 @@ describe("HomeScreen", () => {
       status: "submitted",
       submitted_at: "2030-01-01T11:00:00Z",
       updated_at: "2030-01-01T11:00:00Z",
+    });
+    mockedUploadParticipantActivityEvidence.mockResolvedValue({
+      evidence: {
+        evidence_id: 901,
+        activity_id: 5,
+        original_name: "evidence.txt",
+        content_type: "text/plain",
+        size_bytes: 16,
+        scan_status: "clean",
+        scan_detail: "ok",
+        created_at: "2030-01-01T10:01:00Z",
+      },
+    });
+    mockedGetParticipantEvidenceStatus.mockResolvedValue({
+      evidence: {
+        evidence_id: 901,
+        activity_id: 5,
+        original_name: "evidence.txt",
+        content_type: "text/plain",
+        size_bytes: 16,
+        scan_status: "clean",
+        scan_detail: "ok",
+        created_at: "2030-01-01T10:01:00Z",
+      },
+      downloadable: true,
+    });
+    mockedDocumentPicker.getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [
+        {
+          uri: "file:///tmp/evidence.txt",
+          name: "evidence.txt",
+          mimeType: "text/plain",
+          size: 16,
+        },
+      ],
     });
   });
 
@@ -676,6 +740,183 @@ describe("HomeScreen", () => {
 
     await waitFor(() => {
       expect(onSessionExpired).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("uploads evidence, marks it clean, and attaches it to draft saves", async () => {
+    mockedGetParticipantStudies.mockResolvedValue({
+      data: [
+        { study_id: 11, title: "Study One", description: null, status: "active", methodology: "survey", enrolled: true },
+      ],
+      pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
+    });
+    mockedGetParticipantActivities.mockResolvedValue({
+      data: [
+        {
+          activity_id: 5,
+          title: "Mood check",
+          prompt: null,
+          activity_type: "short_text",
+          required: true,
+          position: 1,
+          availability: { status: "open", release_at: null, due_at: null },
+        },
+      ],
+    });
+    mockedGetParticipantActivityDetail.mockResolvedValue({
+      activity: {
+        activity_id: 5,
+        title: "Mood check",
+        prompt: "Tell us how your week was.",
+        activity_type: "short_text",
+        required: true,
+        position: 1,
+        availability: { status: "open", release_at: null, due_at: null },
+      },
+    });
+
+    const { getByLabelText, getByText } = await renderHome();
+
+    await waitFor(() => {
+      expect(getByLabelText(/Mood check. Available./)).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText(/Mood check. Available./));
+    await waitFor(() => {
+      expect(getByLabelText("Select document or audio evidence")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Select document or audio evidence"));
+
+    await waitFor(() => {
+      expect(mockedUploadParticipantActivityEvidence).toHaveBeenCalledTimes(1);
+      expect(getByText("Evidence scan passed. Ready for draft save and submission.")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Save draft response"));
+
+    await waitFor(() => {
+      expect(mockedSaveParticipantActivityDraft).toHaveBeenCalledWith(
+        "token",
+        5,
+        { answer: "", choices: [], evidence_id: 901 },
+        expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      );
+    });
+  });
+
+  it("preserves unsent response data when evidence upload fails offline", async () => {
+    mockedGetParticipantStudies.mockResolvedValue({
+      data: [
+        { study_id: 11, title: "Study One", description: null, status: "active", methodology: "survey", enrolled: true },
+      ],
+      pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
+    });
+    mockedGetParticipantActivities.mockResolvedValue({
+      data: [
+        {
+          activity_id: 5,
+          title: "Mood check",
+          prompt: null,
+          activity_type: "short_text",
+          required: true,
+          position: 1,
+          availability: { status: "open", release_at: null, due_at: null },
+        },
+      ],
+    });
+    mockedGetParticipantActivityDetail.mockResolvedValue({
+      activity: {
+        activity_id: 5,
+        title: "Mood check",
+        prompt: "Tell us how your week was.",
+        activity_type: "short_text",
+        required: true,
+        position: 1,
+        availability: { status: "open", release_at: null, due_at: null },
+      },
+    });
+    mockedUploadParticipantActivityEvidence.mockRejectedValueOnce(
+      new ApiRequestError({ status: 0, kind: "network", message: "offline" }),
+    );
+
+    const { getByLabelText, getByDisplayValue, getByText } = await renderHome();
+
+    await waitFor(() => {
+      expect(getByLabelText(/Mood check. Available./)).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText(/Mood check. Available./));
+    await waitFor(() => {
+      expect(getByLabelText("Response for Mood check")).toBeTruthy();
+    });
+
+    fireEvent.changeText(getByLabelText("Response for Mood check"), "Keep this unsent answer");
+    fireEvent.press(getByLabelText("Select document or audio evidence"));
+
+    await waitFor(() => {
+      expect(getByText("Evidence upload failed because your connection dropped. Your response draft is still saved locally.")).toBeTruthy();
+      expect(getByText("Unsaved changes")).toBeTruthy();
+      expect(getByDisplayValue("Keep this unsent answer")).toBeTruthy();
+    });
+  });
+
+  it("allows cancelling an in-flight evidence upload", async () => {
+    const pendingUpload = deferredPromise<Awaited<ReturnType<typeof uploadParticipantActivityEvidence>>>();
+    mockedUploadParticipantActivityEvidence.mockImplementationOnce(() => pendingUpload.promise);
+
+    mockedGetParticipantStudies.mockResolvedValue({
+      data: [
+        { study_id: 11, title: "Study One", description: null, status: "active", methodology: "survey", enrolled: true },
+      ],
+      pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
+    });
+    mockedGetParticipantActivities.mockResolvedValue({
+      data: [
+        {
+          activity_id: 5,
+          title: "Mood check",
+          prompt: null,
+          activity_type: "short_text",
+          required: true,
+          position: 1,
+          availability: { status: "open", release_at: null, due_at: null },
+        },
+      ],
+    });
+    mockedGetParticipantActivityDetail.mockResolvedValue({
+      activity: {
+        activity_id: 5,
+        title: "Mood check",
+        prompt: "Tell us how your week was.",
+        activity_type: "short_text",
+        required: true,
+        position: 1,
+        availability: { status: "open", release_at: null, due_at: null },
+      },
+    });
+
+    const { getByLabelText, getByText } = await renderHome();
+
+    await waitFor(() => {
+      expect(getByLabelText(/Mood check. Available./)).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText(/Mood check. Available./));
+    await waitFor(() => {
+      expect(getByLabelText("Select document or audio evidence")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Select document or audio evidence"));
+
+    await waitFor(() => {
+      expect(getByLabelText("Cancel evidence upload")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Cancel evidence upload"));
+
+    await waitFor(() => {
+      expect(getByText("Evidence upload cancelled.")).toBeTruthy();
     });
   });
 
