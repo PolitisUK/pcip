@@ -7,6 +7,9 @@ type SessionExchangeRequest = components["schemas"]["SessionExchangeRequest"];
 type SessionExchangeResponse = components["schemas"]["SessionExchangeResponse"];
 type ParticipantSessionResponse = components["schemas"]["ParticipantSessionResponse"];
 type LogoutResponse = components["schemas"]["LogoutResponse"];
+type StudyListResponse = components["schemas"]["StudyListResponse"];
+type ActivityListResponse = components["schemas"]["ActivityListResponse"];
+type ActivityDetailResponse = components["schemas"]["ActivityDetailResponse"];
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -49,9 +52,46 @@ export async function revokeCurrentSession(accessToken: string, options?: Reques
   });
 }
 
+export async function getParticipantStudies(accessToken: string, options?: RequestOptions): Promise<StudyListResponse> {
+  return apiRequest<StudyListResponse>("/api/v1/participant/studies", {
+    method: "GET",
+    accessToken,
+    signal: options?.signal,
+  });
+}
+
+export async function getParticipantActivities(
+  accessToken: string,
+  studyId?: number,
+  options?: RequestOptions,
+): Promise<ActivityListResponse> {
+  const query = typeof studyId === "number" ? `?study_id=${encodeURIComponent(String(studyId))}` : "";
+
+  return apiRequest<ActivityListResponse>(`/api/v1/participant/activities${query}`, {
+    method: "GET",
+    accessToken,
+    signal: options?.signal,
+  });
+}
+
+export async function getParticipantActivityDetail(
+  accessToken: string,
+  activityId: number,
+  options?: RequestOptions,
+): Promise<ActivityDetailResponse> {
+  return apiRequest<ActivityDetailResponse>(`/api/v1/participant/activities/${activityId}`, {
+    method: "GET",
+    accessToken,
+    signal: options?.signal,
+  });
+}
+
 export type {
   SessionExchangeRequest,
   SessionExchangeResponse,
   ParticipantSessionResponse,
   LogoutResponse,
+  StudyListResponse,
+  ActivityListResponse,
+  ActivityDetailResponse,
 };
