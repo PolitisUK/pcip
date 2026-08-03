@@ -1138,6 +1138,43 @@ pre {
   white-space: pre-wrap;
 }
 
+.submitted-choices {
+  margin: 12px 0 0;
+  padding-left: 24px;
+}
+
+.choice-group,
+.ranking-group {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.choice-group legend,
+.ranking-group legend {
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.choice-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.choice-option input {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+}
+
 .evidence-summary {
   display: grid;
   gap: 10px;
