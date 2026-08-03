@@ -7,11 +7,12 @@
   <title>{% block page_title %}{{ app_name }}{% endblock %}</title>
   <meta name="application-name" content="Citizen Centric">
   <meta name="theme-color" content="#215bb3">
+  {% block head_meta %}{% endblock %}
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" href="/static/politis_symbol_colour.png">
   <link rel="stylesheet" href="/static/app.css?v={{ version }}">
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
 <a class="skip-link" href="#main-content">Skip to main content</a>
 {% if user %}
 <div class="app-shell">
@@ -81,7 +82,7 @@
 {% block public %}{% endblock %}
 {% endif %}
 <div class="sr-only" aria-live="polite" aria-atomic="true" id="live-region"></div>
-<footer class="app-footer">Citizen Centric <span>by Politis</span> · <small>v{{ version }}</small></footer>
+{% block footer %}<footer class="app-footer">Citizen Centric <span>by Politis</span> · <small>v{{ version }}</small></footer>{% endblock %}
 <script nonce="{{ csp_nonce }}" src="/static/app.js?v={{ version }}" defer></script>
 {% block page_scripts %}{% endblock %}
 </body>

@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block page_title %}Citizen Centric — Research shaped around people{% endblock %}
+{% block head_meta %}
+<meta name="description" content="Citizen Centric helps research teams run inclusive studies, gather participant insight and manage evidence, consent and communication in one secure workspace.">
+{% endblock %}
+{% block body_class %}public-site{% endblock %}
+
+{% block public %}
+<header class="public-header">
+  <a class="brand public-site-brand" href="/" aria-label="Citizen Centric by Politis home">
+    <img class="brand-logo" src="/static/politis_symbol_colour.png" alt="">
+    <span class="brand-copy"><strong>Citizen Centric</strong><small>by Politis</small></span>
+  </a>
+  <nav class="public-nav" aria-label="Public navigation">
+    <a href="#how-it-works">How it works</a>
+    <a href="#participants">For participants</a>
+    <a href="#responsible-research">Privacy and security</a>
+  </nav>
+  <a class="btn secondary public-signin" href="/login">Researcher sign in</a>
+</header>
+
+<main id="main-content" tabindex="-1">
+  <section class="public-hero">
+    <div class="public-container public-hero-grid">
+      <div class="public-hero-copy">
+        <p class="public-kicker">Research shaped around people</p>
+        <h1>Understand communities through richer, more inclusive insight.</h1>
+        <p class="public-lead">Citizen Centric brings studies, participant activities, evidence and secure communication together—so research teams can listen well and act with confidence.</p>
+        <div class="public-actions">
+          <a class="btn public-primary" href="/login">Open researcher workspace</a>
+          <a class="btn secondary" href="#participants">See the participant experience</a>
+        </div>
+        <p class="public-action-note">Participants join through a private invitation from their research team.</p>
+      </div>
+
+      <div class="public-product-preview" aria-label="Citizen Centric research journey overview">
+        <div class="preview-topline">
+          <span class="preview-dot copper"></span>
+          <span>Live community study</span>
+          <span class="preview-status">Listening</span>
+        </div>
+        <div class="preview-question">
+          <span class="preview-label">Today’s activity</span>
+          <strong>What would make this place easier to use?</strong>
+          <div class="preview-response"><span></span><span></span><span class="short"></span></div>
+        </div>
+        <div class="preview-signals">
+          <div><strong>24</strong><span>participants</span></div>
+          <div><strong>18</strong><span>responses</span></div>
+          <div><strong>7</strong><span>shared files</span></div>
+        </div>
+        <div class="preview-message"><span class="preview-avatar">CC</span><p><strong>Participant insight</strong><br>“A safer crossing would help me visit more often.”</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="public-trust-strip" aria-label="Citizen Centric capabilities">
+    <div class="public-container trust-items">
+      <span>Longitudinal and mixed-method studies</span>
+      <span>Participant evidence</span>
+      <span>Consent and privacy controls</span>
+      <span>Secure two-way messaging</span>
+    </div>
+  </section>
+
+  <section class="public-section" id="how-it-works">
+    <div class="public-container">
+      <div class="public-section-heading">
+        <p class="public-kicker">One connected research journey</p>
+        <h2>From the first invitation to a clear evidence trail.</h2>
+        <p>Give teams a consistent way to organise studies while making participation straightforward on any modern device.</p>
+      </div>
+      <div class="public-steps">
+        <article><span class="step-number">01</span><h3>Design the study</h3><p>Set up projects, study methods and accessible activities for the questions you need to explore.</p></article>
+        <article><span class="step-number">02</span><h3>Invite participation</h3><p>Enrol people through private invitations, with clear consent and study-specific access.</p></article>
+        <article><span class="step-number">03</span><h3>Gather lived experience</h3><p>Collect structured responses, reflections, files, photos, audio and participant messages.</p></article>
+        <article><span class="step-number">04</span><h3>Keep research accountable</h3><p>Manage privacy requests, access controls and activity records from the same workspace.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="public-section public-section-soft" id="participants">
+    <div class="public-container public-split">
+      <div>
+        <p class="public-kicker">Designed for participation</p>
+        <h2>A clear, focused experience for sharing what matters.</h2>
+        <p class="public-lead-sm">Participants see only the study they joined. Activities, drafts, evidence, messages and privacy controls stay together in a simple portal branded as Citizen Centric.</p>
+        <ul class="public-checks">
+          <li>Works across desktop and mobile screen sizes</li>
+          <li>Supports text, choices, rankings and multimedia evidence</li>
+          <li>Preserves drafts until the participant is ready to submit</li>
+          <li>Provides self-service data and withdrawal controls</li>
+        </ul>
+      </div>
+      <div class="participant-preview" aria-hidden="true">
+        <div class="participant-preview-head"><span class="preview-avatar">CC</span><div><strong>Your activities</strong><small>Neighbourhood access study</small></div></div>
+        <div class="participant-task is-complete"><span>✓</span><div><strong>First impressions</strong><small>Submitted</small></div></div>
+        <div class="participant-task"><span>2</span><div><strong>Rank local improvements</strong><small>Draft saved</small></div></div>
+        <div class="participant-task"><span>3</span><div><strong>Share a photo or note</strong><small>Ready to start</small></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="public-section" id="responsible-research">
+    <div class="public-container responsible-grid">
+      <div class="public-section-heading align-left">
+        <p class="public-kicker">Responsible by design</p>
+        <h2>Controls that support careful, trustworthy research.</h2>
+        <p>Citizen Centric keeps participant access scoped to the relevant study and gives authorised teams the tools to manage consent, evidence and privacy requests.</p>
+      </div>
+      <div class="responsible-cards">
+        <article><strong>Scoped access</strong><p>Role-based researcher permissions and study-specific participant sessions.</p></article>
+        <article><strong>Safer evidence</strong><p>File validation, malware-screening states and protected downloads.</p></article>
+        <article><strong>Privacy controls</strong><p>Data export, deletion or anonymisation requests, and withdrawal workflows.</p></article>
+        <article><strong>Accountability</strong><p>Audit events and clear response states for important research actions.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="public-cta">
+    <div class="public-container public-cta-inner">
+      <div><p class="public-kicker">Citizen Centric by Politis</p><h2>Make space for better listening.</h2><p>Bring research operations and participant experience into one connected service.</p></div>
+      <div class="public-actions"><a class="btn public-primary" href="/login">Researcher sign in</a><a class="btn secondary" href="#participants">About participation</a></div>
+    </div>
+  </section>
+</main>
+{% endblock %}
+
+{% block footer %}
+<footer class="public-footer">
+  <div class="public-container public-footer-inner">
+    <div class="brand"><img class="brand-logo" src="/static/politis_symbol_colour.png" alt=""><span class="brand-copy"><strong>Citizen Centric</strong><small>by Politis</small></span></div>
+    <nav aria-label="Footer navigation"><a href="#how-it-works">How it works</a><a href="#responsible-research">Privacy and security</a><a href="/login">Researcher sign in</a></nav>
+    <small>Participant access is available through a private study invitation.</small>
+  </div>
+</footer>
+{% endblock %}

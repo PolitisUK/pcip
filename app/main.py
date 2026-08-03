@@ -560,19 +560,19 @@ def invalidate_session_cookie_user(request: Request, db: Session):
         return user
     return None
 
-def current_user(request: Request, db: Session = Depends(get_db)):
+def optional_current_user(request: Request, db: Session = Depends(get_db)):
     identity = decode_session(request.cookies.get("session", ""))
 
     if not identity:
-        raise HTTPException(303, headers={"Location": "/login"})
+        return None
 
     u = db.get(User, identity.user_id)
 
     if not u or not u.is_active:
-        raise HTTPException(303, headers={"Location": "/login"})
+        return None
 
     if u.session_version != identity.session_version:
-        raise HTTPException(303, headers={"Location": "/login"})
+        return None
 
     organisation_id = identity.organisation_id or u.organisation_id
     membership = db.scalar(
@@ -590,6 +590,13 @@ def current_user(request: Request, db: Session = Depends(get_db)):
         settings.environment in {"development", "test"}
         and organisation_id == u.organisation_id
     ):
+        return u
+    return None
+
+
+def current_user(request: Request, db: Session = Depends(get_db)):
+    u = optional_current_user(request, db)
+    if u:
         return u
     raise HTTPException(303, headers={"Location": "/login"})
 
@@ -1551,7 +1558,9 @@ def reset_password(request: Request, token:str=Form(""),password:str=Form(...),c
     user.password_hash=hash_password(password); row.used_at=now(); user.failed_login_count = 0; user.locked_until = None; bump_session_version(user); session_row.revoked_at = now(); audit(db,user.organisation_id,user.id,"auth.password_reset","user",user.id); db.commit(); response = RedirectResponse("/login",303); clear_public_auth_cookie(response); return response
 
 @app.get("/",response_class=HTMLResponse)
-def dashboard(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
+def dashboard(request:Request,u=Depends(optional_current_user),db:Session=Depends(get_db)):
+    if not u:
+        return render(request, "public_home.html")
     o=u.organisation_id
     organisation_wide = u.role in {"owner", "admin", "observer"}
     accessible_studies = (
