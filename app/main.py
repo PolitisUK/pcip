@@ -314,7 +314,9 @@ def normalise_scan_status(value: str | None) -> str:
     token = (value or "").strip().lower().replace(" ", "_")
     mapping = {
         "scan_failed": "failed",
-        "not_scanned": "not_scanned",
+        "not_scanned": "failed",
+        "not_configured": "failed",
+        "error": "failed",
     }
     return mapping.get(token, token)
 
@@ -393,6 +395,36 @@ ACTIVITY_TYPES = {
 COMMUNICATION_PREFERENCES = {"email", "sms", "phone", "none"}
 MAX_CSV_IMPORT_BYTES = 2 * 1024 * 1024
 MAX_CSV_IMPORT_ROWS = 10_000
+UPLOAD_CONTENT_TYPES = {
+    ".jpg": {"image/jpeg"},
+    ".jpeg": {"image/jpeg"},
+    ".png": {"image/png"},
+    ".webp": {"image/webp"},
+    ".mp3": {"audio/mpeg", "audio/mp3"},
+    ".wav": {"audio/wav", "audio/x-wav"},
+    ".m4a": {"audio/mp4", "audio/x-m4a"},
+    ".mp4": {"video/mp4"},
+    ".mov": {"video/quicktime"},
+    ".pdf": {"application/pdf"},
+    ".doc": {"application/msword"},
+    ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+    ".txt": {"text/plain"},
+    ".csv": {"text/csv", "application/csv", "text/plain"},
+}
+
+
+def validate_evidence_upload_metadata(filename: str, content_type: str | None, activity_type: str | None = None):
+    extension = Path(filename).suffix.lower()
+    allowed_extensions = {x.strip().lower() for x in settings.allowed_upload_extensions.split(",") if x.strip()}
+    if extension not in allowed_extensions:
+        raise HTTPException(415, "This file type is not permitted.")
+    declared_type = (content_type or "application/octet-stream").split(";", 1)[0].strip().lower()
+    expected_types = UPLOAD_CONTENT_TYPES.get(extension)
+    if expected_types and declared_type not in expected_types and declared_type != "application/octet-stream":
+        raise HTTPException(415, "The file extension and content type do not match.")
+    required_prefix = {"photo": "image/", "audio": "audio/", "video": "video/"}.get(activity_type or "")
+    if required_prefix and not declared_type.startswith(required_prefix):
+        raise HTTPException(415, f"This activity requires a {activity_type} file.")
 
 
 def validated_email(value: str) -> str | None:
@@ -967,6 +999,42 @@ def revoke_public_auth_session(request: Request, db: Session, scope: str):
         return
     row.revoked_at = now()
     db.commit()
+
+
+def apply_participant_withdrawal(
+    db: Session,
+    invitation: ParticipantInvitation,
+    participant_row: Participant,
+    scope: str,
+):
+    enrolment_query = select(StudyEnrolment).where(
+        StudyEnrolment.organisation_id == invitation.organisation_id,
+        StudyEnrolment.participant_id == participant_row.id,
+    )
+    invitation_query = select(ParticipantInvitation.id).where(
+        ParticipantInvitation.organisation_id == invitation.organisation_id,
+        ParticipantInvitation.participant_id == participant_row.id,
+    )
+    if scope == "study":
+        enrolment_query = enrolment_query.where(StudyEnrolment.study_id == invitation.study_id)
+        invitation_query = invitation_query.where(ParticipantInvitation.study_id == invitation.study_id)
+    enrolments = list(db.scalars(enrolment_query))
+    for enrolment in enrolments:
+        enrolment.status = "withdrawn"
+    invitation_ids = list(db.scalars(invitation_query))
+    if invitation_ids:
+        db.execute(
+            update(PublicAuthSession)
+            .where(
+                PublicAuthSession.participant_invitation_id.in_(invitation_ids),
+                PublicAuthSession.revoked_at.is_(None),
+            )
+            .values(revoked_at=now())
+        )
+    if scope == "all":
+        participant_row.consent_status = ConsentStatus.withdrawn.value
+        participant_row.status = ParticipantStatus.withdrawn.value
+    return enrolments
 
 
 def token_already_redeemed(db: Session, scope: str, raw_token: str) -> bool:
@@ -2059,7 +2127,9 @@ def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
         inv = resolve_invitation_by_token(db, token)
         valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at))
         if not valid:
-            return render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
+            response = render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
+            _cache_control_no_store(response)
+            return response
         if not inv.opened_at:
             inv.opened_at=now()
         raw_session = create_public_auth_session(
@@ -2072,18 +2142,23 @@ def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
         destination = "/participant-portal" if inv.accepted_at else "/join-study"
         response = RedirectResponse(destination, 303)
         set_public_auth_cookie(response, raw_session, 12 * 60 * 60)
+        _cache_control_no_store(response)
         return response
 
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
     if not session_row:
-        return render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
+        response = render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
+        _cache_control_no_store(response)
+        return response
     inv = db.get(ParticipantInvitation, session_row.participant_invitation_id)
     valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at))
     s=db.get(Study,inv.study_id) if valid else None
     p=db.get(Participant,inv.participant_id) if valid else None
     if valid and inv.accepted_at:
         return RedirectResponse("/participant-portal",303)
-    return render(request,"join_study.html",invitation=inv,study=s,participant=p,valid=valid)
+    response = render(request,"join_study.html",invitation=inv,study=s,participant=p,valid=valid)
+    _cache_control_no_store(response)
+    return response
 @app.post("/join-study")
 def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
@@ -2101,22 +2176,98 @@ def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csr
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not consent: raise HTTPException(400,"Consent is required.")
     p=db.get(Participant,inv.participant_id); grant_participant_consent(inv, p, now()); audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse("/participant-portal",303)
+
+
+def participant_portal_context(request: Request, db: Session):
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
+    inv = resolve_participant_invitation(db, session_row)
+    if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
+        return None
+    participant_row = db.scalar(
+        select(Participant).where(
+            Participant.id == inv.participant_id,
+            Participant.organisation_id == inv.organisation_id,
+        )
+    )
+    study_row = db.scalar(
+        select(Study).where(
+            Study.id == inv.study_id,
+            Study.organisation_id == inv.organisation_id,
+        )
+    )
+    enrolment = db.scalar(
+        select(StudyEnrolment).where(
+            StudyEnrolment.organisation_id == inv.organisation_id,
+            StudyEnrolment.study_id == inv.study_id,
+            StudyEnrolment.participant_id == inv.participant_id,
+        )
+    )
+    if (
+        not participant_row
+        or not study_row
+        or not enrolment
+        or enrolment.status == "withdrawn"
+        or participant_row.consent_status != ConsentStatus.granted.value
+    ):
+        return None
+    return session_row, inv, participant_row, study_row, enrolment
+
+
+def require_participant_portal_context(request: Request, db: Session):
+    context = participant_portal_context(request, db)
+    if not context:
+        raise HTTPException(401, "Your participant session is invalid, expired or no longer active.")
+    return context
+
+
 @app.get("/participant-portal",response_class=HTMLResponse)
 def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
     if token:
         return RedirectResponse(f"/join-study?token={token}",303)
-    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    if not session_row:
-        return RedirectResponse("/join-study",303)
-    inv = resolve_participant_invitation(db, session_row)
-    if not inv or inv.revoked_at or not unexpired(inv.expires_at):
-        return RedirectResponse("/join-study",303)
-    if not inv.accepted_at: return RedirectResponse("/join-study",303)
-    s=db.get(Study,inv.study_id); p=db.get(Participant,inv.participant_id); acts=db.scalars(select(Activity).where(Activity.study_id==s.id).order_by(Activity.position)).all(); activity_windows={a.id:activity_window(s,a) for a in acts}; responses={r.activity_id:r for r in db.scalars(select(ActivityResponse).where(ActivityResponse.study_id==s.id,ActivityResponse.participant_id==p.id)).all()}; response_values={}
+    context = participant_portal_context(request, db)
+    if not context:
+        response = RedirectResponse("/join-study",303)
+        clear_public_auth_cookie(response)
+        return response
+    _session_row, inv, p, s, _enrolment = context
+    acts=db.scalars(select(Activity).where(Activity.organisation_id==inv.organisation_id,Activity.study_id==s.id).order_by(Activity.position)).all(); activity_windows={a.id:activity_window(s,a) for a in acts}; responses={r.activity_id:r for r in db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id==inv.organisation_id,ActivityResponse.study_id==s.id,ActivityResponse.participant_id==p.id)).all()}; response_values={}
     for activity_id,response in responses.items():
         try: response_values[activity_id]=json.loads(response.value_json or "{}")
         except json.JSONDecodeError: response_values[activity_id]={}
-    msgs = list_participant_visible_messages(db, study_id=s.id, participant_id=p.id); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,activity_windows=activity_windows,responses=responses,response_values=response_values,messages=msgs)
+    evidence_ids = {
+        value.get("evidence_id")
+        for value in response_values.values()
+        if isinstance(value.get("evidence_id"), int)
+    }
+    evidence_by_id = {}
+    if evidence_ids:
+        evidence_by_id = {
+            row.id: row
+            for row in db.scalars(
+                select(EvidenceFile).where(
+                    EvidenceFile.id.in_(evidence_ids),
+                    EvidenceFile.organisation_id == inv.organisation_id,
+                    EvidenceFile.study_id == s.id,
+                    EvidenceFile.participant_id == p.id,
+                )
+            ).all()
+        }
+    msgs = list_participant_visible_messages(db, study_id=s.id, participant_id=p.id)
+    response = render(
+        request,
+        "participant_portal.html",
+        study=s,
+        participant=p,
+        activities=acts,
+        activity_windows=activity_windows,
+        responses=responses,
+        response_values=response_values,
+        evidence_by_id=evidence_by_id,
+        messages=msgs,
+        max_upload_mb=settings.max_upload_mb,
+    )
+    _cache_control_no_store(response)
+    return response
 
 
 @app.get(
@@ -2161,6 +2312,7 @@ def participant_api_portal_summary(
             StudyEnrolment.organisation_id == inv.organisation_id,
             StudyEnrolment.study_id == inv.study_id,
             StudyEnrolment.participant_id == participant_row.id,
+            StudyEnrolment.status != "withdrawn",
         )
     ) is not None
     if not enrolled:
@@ -2270,8 +2422,8 @@ def participant_api_portal_summary(
 
 @app.post("/participant-portal/activity/{activity_id}")
 async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = resolve_participant_invitation(db, session_row)
+    context = participant_portal_context(request, db)
+    inv = context[1] if context else None
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
@@ -2281,9 +2433,9 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
         account_key=account_key,
         account_limit=settings.rate_limit_portal_write_token,
     )
-    if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
+    if not context or not inv:
         raise HTTPException(400,"This participant link is invalid or expired.")
-    a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.study_id==inv.study_id));
+    a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.organisation_id==inv.organisation_id,Activity.study_id==inv.study_id));
     if not a: raise HTTPException(404)
     s=db.get(Study,inv.study_id)
     window=activity_window(s,a)
@@ -2298,14 +2450,13 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
         activity_id=a.id,
         participant_id=inv.participant_id,
     )
+    if r.status == "submitted":
+        raise HTTPException(409, "This activity response has already been submitted.")
     value, choice_list = serialise_response_payload(answer, choices)
     stored_key = None
     if upload and upload.filename:
         original=Path(upload.filename).name
-        extension=Path(original).suffix.lower()
-        allowed_extensions={x.strip().lower() for x in settings.allowed_upload_extensions.split(",") if x.strip()}
-        if extension not in allowed_extensions:
-            raise HTTPException(400,"This file type is not permitted.")
+        validate_evidence_upload_metadata(original, upload.content_type, a.activity_type)
         try:
             stored=storage.save_stream(upload.file,original,settings.max_upload_mb*1024*1024)
         except ValueError as exc:
@@ -2356,9 +2507,9 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
         raise
     return RedirectResponse("/participant-portal",303)
 @app.post("/participant-portal/message")
-def participant_message(request: Request, token:str=Form(""),body:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = resolve_participant_invitation(db, session_row)
+def participant_message(request: Request, token:str=Form(""),body:str=Form(..., max_length=10000),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    context = participant_portal_context(request, db)
+    inv = context[1] if context else None
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
@@ -2368,10 +2519,135 @@ def participant_message(request: Request, token:str=Form(""),body:str=Form(...),
         account_key=account_key,
         account_limit=settings.rate_limit_portal_write_token,
     )
-    if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
+    if not context or not inv:
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
-    db.add(create_participant_message(inv, body=body)); db.commit(); return RedirectResponse("/participant-portal#messages",303)
+    db.add(create_participant_message(inv, body=body)); audit(db,inv.organisation_id,None,"participant.message_created","participant",inv.participant_id,str(inv.study_id)); db.commit(); set_flash(request,"success","Your message was sent securely."); return RedirectResponse("/participant-portal#messages",303)
+
+
+@app.post("/participant-portal/sign-out")
+def participant_portal_sign_out(request: Request, csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    context = participant_portal_context(request, db)
+    if context:
+        session_row, inv, _participant_row, _study_row, _enrolment = context
+        session_row.revoked_at = now()
+        audit(db, inv.organisation_id, None, "participant.portal_session_revoked", "public_auth_session", session_row.id, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
+        db.commit()
+    response = RedirectResponse("/join-study", 303)
+    clear_public_auth_cookie(response)
+    return response
+
+
+@app.post("/participant-portal/privacy/deletion-request")
+def participant_portal_deletion_request(
+    request: Request,
+    reason: str = Form("", max_length=2000),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    _session_row, inv, participant_row, _study_row, _enrolment = require_participant_portal_context(request, db)
+    audit_event = AuditEvent(
+        organisation_id=inv.organisation_id,
+        actor_user_id=None,
+        action="participant.deletion_requested",
+        entity_type="participant",
+        entity_id=str(participant_row.id),
+        detail=json.dumps({"mode_preference": "auto", "study_id": inv.study_id, "reason": reason.strip()}),
+    )
+    db.add(audit_event)
+    db.commit()
+    set_flash(request, "success", "Your data deletion request was received. The research team will review it securely.")
+    return RedirectResponse("/participant-portal#privacy", 303)
+
+
+@app.post("/participant-portal/privacy/withdrawal-request")
+def participant_portal_withdrawal_request(
+    request: Request,
+    reason: str = Form("", max_length=2000),
+    contact_preference: str = Form("none"),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    _session_row, inv, participant_row, study_row, _enrolment = require_participant_portal_context(request, db)
+    if contact_preference not in COMMUNICATION_PREFERENCES:
+        raise HTTPException(400, "Choose a valid contact preference.")
+    apply_participant_withdrawal(db, inv, participant_row, "all")
+    audit(
+        db,
+        inv.organisation_id,
+        None,
+        "participant.withdrawal_requested",
+        "participant",
+        participant_row.id,
+        json.dumps({"scope": "all", "study_id": study_row.id, "contact_preference": contact_preference, "reason": reason.strip()}),
+    )
+    db.commit()
+    set_flash(request, "success", "You have withdrawn from Citizen Centric research. The research team has been notified.")
+    response = RedirectResponse("/join-study", 303)
+    clear_public_auth_cookie(response)
+    return response
+
+
+def resolve_participant_portal_evidence(request: Request, db: Session, evidence_id: int):
+    _session_row, inv, participant_row, _study_row, _enrolment = require_participant_portal_context(request, db)
+    evidence_row = db.scalar(
+        select(EvidenceFile).where(
+            EvidenceFile.id == evidence_id,
+            EvidenceFile.organisation_id == inv.organisation_id,
+            EvidenceFile.study_id == inv.study_id,
+            EvidenceFile.participant_id == participant_row.id,
+        )
+    )
+    if not evidence_row:
+        raise HTTPException(404, "Evidence file was not found.")
+    return evidence_row
+
+
+def refresh_evidence_scan_status(db: Session, evidence_row: EvidenceFile):
+    if evidence_row.storage_provider != "azure_blob":
+        return
+    latest_status, latest_detail = storage.scan_result(evidence_row.stored_name)
+    if latest_status != "pending" or evidence_row.scan_status == "pending":
+        evidence_row.scan_status = latest_status
+        evidence_row.scan_detail = latest_detail
+        if latest_status in {"clean", "infected", "scan_failed"}:
+            evidence_row.scan_completed_at = now()
+        db.commit()
+
+
+@app.get("/participant-portal/evidence/{evidence_id}/status")
+def participant_portal_evidence_status(request: Request, evidence_id: int, db: Session = Depends(get_db)):
+    evidence_row = resolve_participant_portal_evidence(request, db, evidence_id)
+    refresh_evidence_scan_status(db, evidence_row)
+    response = JSONResponse(
+        {
+            "evidence_id": evidence_row.id,
+            "status": _participant_evidence_scan_status(evidence_row.scan_status),
+            "downloadable": is_evidence_downloadable(evidence_row.scan_status),
+        }
+    )
+    _cache_control_no_store(response)
+    return response
+
+
+@app.get("/participant-portal/evidence/{evidence_id}")
+def participant_portal_evidence_download(request: Request, evidence_id: int, db: Session = Depends(get_db)):
+    evidence_row = resolve_participant_portal_evidence(request, db, evidence_id)
+    refresh_evidence_scan_status(db, evidence_row)
+    ensure_clean_scan_for_download(evidence_row.scan_status)
+    if evidence_row.storage_provider == "azure_blob":
+        response = RedirectResponse(
+            storage.download_url(evidence_row.stored_name, evidence_row.original_name, evidence_row.content_type, settings.azure_sas_minutes),
+            303,
+        )
+        _cache_control_no_store(response)
+        return response
+    path = storage.path(evidence_row.stored_name)
+    if not path.exists():
+        raise HTTPException(404, "Stored evidence is unavailable.")
+    response = FileResponse(path, media_type=evidence_row.content_type, filename=evidence_row.original_name)
+    _cache_control_no_store(response)
+    return response
 
 
 @app.post("/api/v1/participant/session/exchange", response_model=SessionExchangeResponse)
@@ -2515,6 +2791,7 @@ def participant_api_studies(
             StudyEnrolment.organisation_id == invitation.organisation_id,
             StudyEnrolment.study_id == invitation.study_id,
             StudyEnrolment.participant_id == participant_row.id,
+            StudyEnrolment.status != "withdrawn",
         )
     ) is not None
 
@@ -2581,6 +2858,7 @@ def participant_api_activities(
             StudyEnrolment.organisation_id == invitation.organisation_id,
             StudyEnrolment.study_id == invitation.study_id,
             StudyEnrolment.participant_id == participant_row.id,
+            StudyEnrolment.status != "withdrawn",
         )
     ) is not None
     if not enrolled:
@@ -2727,6 +3005,7 @@ def participant_api_activity_detail(
             StudyEnrolment.organisation_id == invitation.organisation_id,
             StudyEnrolment.study_id == invitation.study_id,
             StudyEnrolment.participant_id == participant_row.id,
+            StudyEnrolment.status != "withdrawn",
         )
     ) is not None
     if not enrolled:
@@ -2806,6 +3085,7 @@ def _resolve_participant_api_activity_scope(
             StudyEnrolment.organisation_id == invitation.organisation_id,
             StudyEnrolment.study_id == invitation.study_id,
             StudyEnrolment.participant_id == participant_row.id,
+            StudyEnrolment.status != "withdrawn",
         )
     ) is not None
     if not enrolled:
@@ -2897,6 +3177,7 @@ def _resolve_participant_api_evidence_scope(
             StudyEnrolment.organisation_id == invitation.organisation_id,
             StudyEnrolment.study_id == invitation.study_id,
             StudyEnrolment.participant_id == participant_row.id,
+            StudyEnrolment.status != "withdrawn",
         )
     ) is not None
     if not enrolled:
@@ -2951,6 +3232,7 @@ def _resolve_participant_api_study_scope(
             StudyEnrolment.organisation_id == invitation.organisation_id,
             StudyEnrolment.study_id == invitation.study_id,
             StudyEnrolment.participant_id == participant_row.id,
+            StudyEnrolment.status != "withdrawn",
         )
     ) is not None
     if not enrolled:
@@ -3207,11 +3489,7 @@ def participant_api_activity_evidence_upload(
     original = Path(file.filename or "").name
     if not original:
         raise HTTPException(400, "A file is required.")
-
-    extension = Path(original).suffix.lower()
-    allowed_extensions = {x.strip().lower() for x in settings.allowed_upload_extensions.split(",") if x.strip()}
-    if extension not in allowed_extensions:
-        raise HTTPException(415, "This file type is not permitted.")
+    validate_evidence_upload_metadata(original, file.content_type, activity_row.activity_type)
 
     try:
         stored = storage.save_stream(file.file, original, settings.max_upload_mb * 1024 * 1024)
@@ -3394,22 +3672,9 @@ def participant_api_withdrawal_request(
     if payload.scope == "study" and target_study_id != invitation.study_id:
         raise HTTPException(403, "Requested study is outside participant scope.")
 
-    enrolments = list(
-        db.scalars(
-            select(StudyEnrolment).where(
-                StudyEnrolment.organisation_id == invitation.organisation_id,
-                StudyEnrolment.participant_id == participant_row.id,
-                StudyEnrolment.study_id == invitation.study_id,
-            )
-        )
-    )
-
     try:
         _record_participant_idempotency(db, invitation.id, "privacy_withdrawal", idempotency_key)
-        for enrolment in enrolments:
-            enrolment.status = "withdrawn"
-        participant_row.consent_status = ConsentStatus.withdrawn.value
-        participant_row.status = ParticipantStatus.withdrawn.value
+        apply_participant_withdrawal(db, invitation, participant_row, payload.scope)
         audit_event = AuditEvent(
             organisation_id=invitation.organisation_id,
             actor_user_id=None,
