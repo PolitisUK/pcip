@@ -2560,6 +2560,145 @@ def participant_portal_deletion_request(
     return RedirectResponse("/participant-portal#privacy", 303)
 
 
+def participant_self_export_payload(
+    db: Session,
+    invitation: ParticipantInvitation,
+    participant_row: Participant,
+    study_row: Study,
+    enrolment: StudyEnrolment,
+):
+    activities = list(
+        db.scalars(
+            select(Activity)
+            .where(
+                Activity.organisation_id == invitation.organisation_id,
+                Activity.study_id == study_row.id,
+            )
+            .order_by(Activity.position.asc(), Activity.id.asc())
+        )
+    )
+    activities_by_id = {row.id: row for row in activities}
+    responses = list(
+        db.scalars(
+            select(ActivityResponse)
+            .where(
+                ActivityResponse.organisation_id == invitation.organisation_id,
+                ActivityResponse.study_id == study_row.id,
+                ActivityResponse.participant_id == participant_row.id,
+            )
+            .order_by(ActivityResponse.id.asc())
+        )
+    )
+    evidence = list(
+        db.scalars(
+            select(EvidenceFile)
+            .where(
+                EvidenceFile.organisation_id == invitation.organisation_id,
+                EvidenceFile.study_id == study_row.id,
+                EvidenceFile.participant_id == participant_row.id,
+            )
+            .order_by(EvidenceFile.id.asc())
+        )
+    )
+    messages = list_participant_visible_messages(
+        db,
+        study_id=study_row.id,
+        participant_id=participant_row.id,
+    )
+
+    response_items = []
+    for response_row in responses:
+        value = {}
+        try:
+            value = json.loads(response_row.value_json or "{}")
+        except json.JSONDecodeError:
+            value = {}
+        activity_row = activities_by_id.get(response_row.activity_id)
+        response_items.append(
+            {
+                "activity": activity_row.title if activity_row else "Activity",
+                "activity_type": activity_row.activity_type if activity_row else None,
+                "status": response_row.status,
+                "answer": value.get("answer") if isinstance(value.get("answer"), str) else None,
+                "choices": [x for x in value.get("choices", []) if isinstance(x, str)]
+                if isinstance(value.get("choices"), list)
+                else [],
+                "submitted_at": _iso(response_row.submitted_at),
+                "updated_at": _iso(response_row.updated_at),
+            }
+        )
+
+    return {
+        "application_name": "Citizen Centric",
+        "generated_at": _iso(now()),
+        "scope": "current_study",
+        "participant_profile": {
+            "reference": participant_row.reference,
+            "name": participant_row.name,
+            "email": participant_row.email,
+            "phone": participant_row.phone,
+            "status": participant_row.status,
+            "consent_status": participant_row.consent_status,
+            "communication_preference": participant_row.communication_preference,
+            "created_at": _iso(participant_row.created_at),
+        },
+        "study": {
+            "title": study_row.title,
+            "description": study_row.description,
+            "status": study_row.status,
+            "enrolment_status": enrolment.status,
+            "enrolled_at": _iso(enrolment.enrolled_at),
+        },
+        "activity_responses": response_items,
+        "evidence_files": [
+            {
+                "activity": activities_by_id[row.activity_id].title if row.activity_id in activities_by_id else "Activity",
+                "filename": row.original_name,
+                "content_type": row.content_type,
+                "size_bytes": row.size_bytes,
+                "scan_status": _participant_evidence_scan_status(row.scan_status),
+                "created_at": _iso(row.created_at),
+            }
+            for row in evidence
+        ],
+        "messages": [
+            {
+                "sender": row.sender_type,
+                "body": row.body,
+                "created_at": _iso(row.created_at),
+            }
+            for row in messages
+        ],
+    }
+
+
+@app.post("/participant-portal/privacy/data-export")
+def participant_portal_data_export(
+    request: Request,
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    _session_row, inv, participant_row, study_row, enrolment = require_participant_portal_context(request, db)
+    payload = participant_self_export_payload(db, inv, participant_row, study_row, enrolment)
+    audit(
+        db,
+        inv.organisation_id,
+        None,
+        "privacy.participant_self_exported",
+        "participant",
+        participant_row.id,
+        str(study_row.id),
+    )
+    db.commit()
+    response = Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="citizen-centric-my-data.json"'},
+    )
+    _cache_control_no_store(response)
+    return response
+
+
 @app.post("/participant-portal/privacy/withdrawal-request")
 def participant_portal_withdrawal_request(
     request: Request,
