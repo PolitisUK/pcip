@@ -128,26 +128,58 @@
 </section>
 
 <section id="messages" class="card card--data section">
-  <h2>Messages and internal notes</h2>
+  <div class="section-head">
+    <div>
+      <h2>Participant-visible messages</h2>
+      <p class="muted">Everything in this timeline can be seen by the participant in their study portal.</p>
+    </div>
+    <a class="btn secondary" href="/messages">Open message workspace</a>
+  </div>
   <div class="conversation">
     {% for m in messages %}
-    <div class="message {{ m.sender_type }} {% if m.internal_note %}note{% endif %}">
-      <strong>{% if m.internal_note %}Internal note{% else %}{{ m.sender_type|title }}{% endif %}</strong>
+    <div class="message {{ m.sender_type }}">
+      <div class="message-heading">
+        <strong>{{ 'Participant' if m.sender_type == 'participant' else 'Research team' }}</strong>
+        <span class="muted">{{ studies[m.study_id].title }}</span>
+      </div>
       <p>{{ m.body }}</p>
-      <small>{{ m.created_at.strftime('%d %b %Y %H:%M') }}</small>
+      <small>{{ m.created_at.strftime('%d %b %Y %H:%M') }}{% if m.sender_type == 'researcher' %} · {{ 'Viewed by participant' if m.read_at else 'Available in portal' }}{% endif %}</small>
     </div>
     {% else %}
-    <p class="empty">No messages yet.</p>
+    <p class="empty">No participant-visible messages yet.</p>
     {% endfor %}
   </div>
   {% if can_edit and enrolments %}
-  <form method="post" action="/participants/{{ participant.id }}/message" class="stack section">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="field"><label>Study</label><select name="study_id">{% for e in enrolments %}<option value="{{ e.study_id }}">{{ studies[e.study_id].title }}</option>{% endfor %}</select></div>
-    <div class="field"><label>Message</label><textarea name="body" required></textarea></div>
-    <label class="check"><input type="checkbox" name="internal_note" value="true"> Internal note, hidden from participant</label>
-    <button>Post</button>
-  </form>
+  <div class="conversation-actions section">
+    <strong>Continue a study conversation</strong>
+    <div class="inline">{% for e in enrolments %}{% if e.status != 'withdrawn' %}<a class="btn secondary" href="/messages/{{ e.study_id }}/{{ participant.id }}">{{ studies[e.study_id].title }}</a>{% endif %}{% endfor %}</div>
+  </div>
+  {% endif %}
+</section>
+
+<section id="internal-notes" class="card card--warning section">
+  <div class="section-head">
+    <div>
+      <h2>Internal research notes</h2>
+      <p class="muted">Private workspace notes. These are never shown in the participant portal or participant data export.</p>
+    </div>
+  </div>
+  <div class="internal-note-list">
+    {% for m in internal_notes %}
+    <article class="internal-note-card">
+      <div class="message-heading"><strong>Internal note</strong><span class="muted">{{ studies[m.study_id].title }}</span></div>
+      <p>{{ m.body }}</p>
+      <small>{{ m.created_at.strftime('%d %b %Y %H:%M') }}</small>
+    </article>
+    {% else %}
+    <p class="empty">No internal research notes yet.</p>
+    {% endfor %}
+  </div>
+  {% if can_edit and enrolments %}
+  <div class="conversation-actions section">
+    <strong>Add a note within a study conversation</strong>
+    <div class="inline">{% for e in enrolments %}<a class="btn secondary" href="/messages/{{ e.study_id }}/{{ participant.id }}#internal-notes">{{ studies[e.study_id].title }}</a>{% endfor %}</div>
+  </div>
   {% endif %}
 </section>
 

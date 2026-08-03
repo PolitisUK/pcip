@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import select, func, or_, text, update
+from sqlalchemy import select, func, or_, and_, case, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .config import settings, validate_runtime_settings
@@ -1969,9 +1969,26 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
         responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(allowed_ids)).order_by(ActivityResponse.updated_at.desc())).all()
         evidence_files=db.scalars(select(EvidenceFile).where(EvidenceFile.participant_id==p.id,EvidenceFile.organisation_id==u.organisation_id,EvidenceFile.study_id.in_(allowed_ids)).order_by(EvidenceFile.created_at.desc())).all()
         messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id,ParticipantMessage.study_id.in_(allowed_ids)).order_by(ParticipantMessage.created_at)).all()
+    unread_result = db.execute(
+        update(ParticipantMessage)
+        .where(
+            ParticipantMessage.organisation_id == u.organisation_id,
+            ParticipantMessage.participant_id == p.id,
+            ParticipantMessage.study_id.in_(studies.keys()),
+            ParticipantMessage.sender_type == "participant",
+            ParticipantMessage.internal_note == False,
+            ParticipantMessage.read_at.is_(None),
+        )
+        .values(read_at=now())
+    )
+    if unread_result.rowcount:
+        audit(db,u.organisation_id,u.id,"message.participant_messages_read","participant",p.id,str(unread_result.rowcount)); db.commit()
+        for message in messages:
+            if message.sender_type == "participant" and not message.internal_note and message.read_at is None:
+                message.read_at = now()
     privacy_counts = participant_related_counts(db, p.id, u.organisation_id) if u.role in {"owner", "admin"} else None
     privacy_workflow_token = request.session.get(privacy_workflow_key(p.id)) if u.role in {"owner", "admin"} else None
-    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
+    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=[m for m in messages if not m.internal_note],internal_notes=[m for m in messages if m.internal_note],statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
 
 
 @app.get("/participants/{participant_id}/export")
@@ -2264,6 +2281,23 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
             ).all()
         }
     msgs = list_participant_visible_messages(db, study_id=s.id, participant_id=p.id)
+    participant_read_result = db.execute(
+        update(ParticipantMessage)
+        .where(
+            ParticipantMessage.organisation_id == inv.organisation_id,
+            ParticipantMessage.study_id == s.id,
+            ParticipantMessage.participant_id == p.id,
+            ParticipantMessage.sender_type == "researcher",
+            ParticipantMessage.internal_note == False,
+            ParticipantMessage.read_at.is_(None),
+        )
+        .values(read_at=now())
+    )
+    if participant_read_result.rowcount:
+        audit(db,inv.organisation_id,None,"participant.messages_read","participant",p.id,str(s.id)); db.commit()
+        for message in msgs:
+            if message.sender_type == "researcher" and message.read_at is None:
+                message.read_at = now()
     response = render(
         request,
         "participant_portal.html",
@@ -3991,6 +4025,243 @@ def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(.
         raise HTTPException(400,"Participant is not enrolled in this study.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
     db.add(create_researcher_message(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id,sender_user_id=u.id,body=body,internal_note=internal_note)); audit(db,u.organisation_id,u.id,"message.created","participant",p.id,"internal" if internal_note else s.title); db.commit(); return RedirectResponse(f"/participants/{p.id}#messages",303)
+
+
+def _conversation_scope(db: Session, user: User, study_id: int, participant_id: int):
+    study_row = study(db, study_id, user.organisation_id)
+    permission = require_study_permission(db, user, study_row)
+    participant_row = participant(db, participant_id, user.organisation_id)
+    enrolment = db.scalar(
+        select(StudyEnrolment).where(
+            StudyEnrolment.organisation_id == user.organisation_id,
+            StudyEnrolment.study_id == study_row.id,
+            StudyEnrolment.participant_id == participant_row.id,
+        )
+    )
+    if not enrolment:
+        raise HTTPException(404, "Conversation not found.")
+    return study_row, participant_row, enrolment, permission
+
+
+@app.get("/messages", response_class=HTMLResponse)
+def researcher_conversations(
+    request: Request,
+    q: str = "",
+    study_id: int | None = None,
+    status_filter: str = "",
+    page: int = 1,
+    u=Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if status_filter not in {"", "unread"}:
+        raise HTTPException(400, "Invalid message status filter.")
+    accessible_studies = (
+        select(Study.id).where(Study.organisation_id == u.organisation_id)
+        if u.role in {"owner", "admin", "observer"}
+        else study_scope_for_user(u)
+    )
+    unread_count = func.sum(
+        case(
+            (
+                and_(
+                    ParticipantMessage.sender_type == "participant",
+                    ParticipantMessage.internal_note == False,
+                    ParticipantMessage.read_at.is_(None),
+                ),
+                1,
+            ),
+            else_=0,
+        )
+    )
+    latest_at = func.max(ParticipantMessage.created_at)
+    stmt = (
+        select(
+            StudyEnrolment.study_id.label("study_id"),
+            StudyEnrolment.participant_id.label("participant_id"),
+            Study.title.label("study_title"),
+            Participant.name.label("participant_name"),
+            Participant.reference.label("participant_reference"),
+            latest_at.label("latest_at"),
+            unread_count.label("unread_count"),
+        )
+        .join(Study, Study.id == StudyEnrolment.study_id)
+        .join(Participant, Participant.id == StudyEnrolment.participant_id)
+        .outerjoin(
+            ParticipantMessage,
+            and_(
+                ParticipantMessage.organisation_id == StudyEnrolment.organisation_id,
+                ParticipantMessage.study_id == StudyEnrolment.study_id,
+                ParticipantMessage.participant_id == StudyEnrolment.participant_id,
+                ParticipantMessage.internal_note == False,
+            ),
+        )
+        .where(
+            StudyEnrolment.organisation_id == u.organisation_id,
+            StudyEnrolment.status != "withdrawn",
+            StudyEnrolment.study_id.in_(accessible_studies),
+        )
+        .group_by(
+            StudyEnrolment.study_id,
+            StudyEnrolment.participant_id,
+            Study.title,
+            Participant.name,
+            Participant.reference,
+        )
+    )
+    if study_id is not None:
+        if not db.scalar(accessible_studies.where(Study.id == study_id)):
+            raise HTTPException(403, "You do not have access to this study.")
+        stmt = stmt.where(StudyEnrolment.study_id == study_id)
+    if q.strip():
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Participant.name.ilike(term),
+                Participant.reference.ilike(term),
+                Study.title.ilike(term),
+            )
+        )
+    if status_filter == "unread":
+        stmt = stmt.having(unread_count > 0)
+    stmt = stmt.order_by(latest_at.desc(), Participant.name.asc())
+    page = max(1, page)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.execute(stmt.offset((page - 1) * 25).limit(25)).all()
+    pages = max(1, (total + 24) // 25)
+    available_studies = db.scalars(
+        select(Study)
+        .where(Study.organisation_id == u.organisation_id, Study.id.in_(accessible_studies))
+        .order_by(Study.title)
+    ).all()
+    return render(
+        request,
+        "messages.html",
+        user=u,
+        conversations=rows,
+        q=q,
+        study_id=study_id,
+        status_filter=status_filter,
+        studies=available_studies,
+        page=page,
+        pages=pages,
+        total=total,
+    )
+
+
+@app.get("/messages/{study_id}/{participant_id}", response_class=HTMLResponse)
+def researcher_conversation(
+    study_id: int,
+    participant_id: int,
+    request: Request,
+    u=Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    study_row, participant_row, enrolment, permission = _conversation_scope(db, u, study_id, participant_id)
+    rows = db.scalars(
+        select(ParticipantMessage)
+        .where(
+            ParticipantMessage.organisation_id == u.organisation_id,
+            ParticipantMessage.study_id == study_row.id,
+            ParticipantMessage.participant_id == participant_row.id,
+        )
+        .order_by(ParticipantMessage.created_at, ParticipantMessage.id)
+    ).all()
+    visible_messages = [row for row in rows if not row.internal_note]
+    internal_notes = [row for row in rows if row.internal_note]
+    read_result = db.execute(
+        update(ParticipantMessage)
+        .where(
+            ParticipantMessage.organisation_id == u.organisation_id,
+            ParticipantMessage.study_id == study_row.id,
+            ParticipantMessage.participant_id == participant_row.id,
+            ParticipantMessage.sender_type == "participant",
+            ParticipantMessage.internal_note == False,
+            ParticipantMessage.read_at.is_(None),
+        )
+        .values(read_at=now())
+    )
+    if read_result.rowcount:
+        audit(db,u.organisation_id,u.id,"message.participant_messages_read","participant",participant_row.id,str(study_row.id)); db.commit()
+        read_time = now()
+        for message in visible_messages:
+            if message.sender_type == "participant" and message.read_at is None:
+                message.read_at = read_time
+    return render(
+        request,
+        "message_conversation.html",
+        user=u,
+        study=study_row,
+        participant=participant_row,
+        enrolment=enrolment,
+        messages=visible_messages,
+        internal_notes=internal_notes,
+        can_send=permission in {"edit", "manage"} and enrolment.status != "withdrawn",
+    )
+
+
+def _create_researcher_conversation_entry(
+    *,
+    db: Session,
+    user: User,
+    study_id: int,
+    participant_id: int,
+    body: str,
+    internal_note: bool,
+):
+    study_row, participant_row, enrolment, permission = _conversation_scope(db, user, study_id, participant_id)
+    if permission not in {"edit", "manage"}:
+        raise HTTPException(403, "You do not have permission to update this conversation.")
+    if not internal_note and enrolment.status == "withdrawn":
+        raise HTTPException(409, "Messages cannot be sent to a withdrawn participant.")
+    cleaned_body = body.strip()
+    if not cleaned_body:
+        raise HTTPException(400, "Message cannot be empty.")
+    row = create_researcher_message(
+        organisation_id=user.organisation_id,
+        study_id=study_row.id,
+        participant_id=participant_row.id,
+        sender_user_id=user.id,
+        body=cleaned_body,
+        internal_note=internal_note,
+    )
+    db.add(row)
+    db.flush()
+    audit(
+        db,
+        user.organisation_id,
+        user.id,
+        "message.internal_note_created" if internal_note else "message.participant_visible_created",
+        "participant_message",
+        row.id,
+        str(study_row.id),
+    )
+    db.commit()
+
+
+@app.post("/messages/{study_id}/{participant_id}")
+def researcher_conversation_send(
+    study_id: int,
+    participant_id: int,
+    body: str = Form(..., max_length=10000),
+    u=Depends(roles("owner", "admin", "researcher")),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    _create_researcher_conversation_entry(db=db,user=u,study_id=study_id,participant_id=participant_id,body=body,internal_note=False)
+    return RedirectResponse(f"/messages/{study_id}/{participant_id}#conversation", 303)
+
+
+@app.post("/messages/{study_id}/{participant_id}/notes")
+def researcher_conversation_note(
+    study_id: int,
+    participant_id: int,
+    body: str = Form(..., max_length=10000),
+    u=Depends(roles("owner", "admin", "researcher")),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    _create_researcher_conversation_entry(db=db,user=u,study_id=study_id,participant_id=participant_id,body=body,internal_note=True)
+    return RedirectResponse(f"/messages/{study_id}/{participant_id}#internal-notes", 303)
 @app.get("/evidence/{evidence_id}")
 def evidence(evidence_id:int,u=Depends(current_user),db:Session=Depends(get_db)):
     e = resolve_org_scoped_evidence(db, u.organisation_id, evidence_id)

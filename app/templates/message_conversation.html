@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Conversation with {{ participant.name }}{% endblock %}
+{% block page_description %}<p class="page-description">{{ study.title }} · {{ participant.reference }} · {{ enrolment.status|title }}</p>{% endblock %}
+{% block contextual_help %}<p class="muted">Messages in the participant conversation are visible in the study portal. Internal research notes remain private to authorised researchers.</p>{% endblock %}
+{% block content %}
+<div class="conversation-breadcrumb"><a href="/messages">← All messages</a><a href="/participants/{{ participant.id }}">Open participant record</a></div>
+
+<section class="message-workspace-grid section-compact">
+  <div id="conversation" class="card card--data">
+    <div class="section-head">
+      <div><p class="eyebrow">Visible to participant</p><h2>Study conversation</h2><p class="muted">Messages here are available to {{ participant.name }} in the Citizen Centric participant portal.</p></div>
+      <span class="badge {{ enrolment.status }}">{{ enrolment.status|title }}</span>
+    </div>
+    <div class="conversation conversation-thread">
+      {% for message in messages %}
+      <article class="message {{ message.sender_type }}">
+        <div class="message-heading"><strong>{{ 'Participant' if message.sender_type == 'participant' else 'Research team' }}</strong>{% if message.sender_type == 'participant' %}<span class="badge clean">Read by team</span>{% elif message.read_at %}<span class="badge clean">Viewed by participant</span>{% else %}<span class="badge pending">Available in portal</span>{% endif %}</div>
+        <p>{{ message.body }}</p>
+        <small>{{ message.created_at.strftime('%d %b %Y at %H:%M') }}</small>
+      </article>
+      {% else %}
+      <p class="empty">No participant-visible messages yet.</p>
+      {% endfor %}
+    </div>
+    {% if can_send %}
+    <form method="post" action="/messages/{{ study.id }}/{{ participant.id }}" class="stack message-composer section">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="participant-visible-message"><strong>Message to participant</strong><span class="muted">Visible in {{ study.title }}</span></label>
+      <textarea id="participant-visible-message" name="body" maxlength="10000" rows="5" required></textarea>
+      <button>Send to participant portal</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <aside id="internal-notes" class="card card--warning internal-notes-panel">
+    <p class="eyebrow">Research team only</p>
+    <h2>Internal notes</h2>
+    <div class="privacy-boundary"><strong>Private workspace</strong><p>Notes here are excluded from the participant portal and participant data export.</p></div>
+    <div class="internal-note-list section">
+      {% for note in internal_notes %}
+      <article class="internal-note-card"><p>{{ note.body }}</p><small>{{ note.created_at.strftime('%d %b %Y at %H:%M') }}</small></article>
+      {% else %}
+      <p class="empty">No internal notes for this study conversation.</p>
+      {% endfor %}
+    </div>
+    {% if can_send %}
+    <form method="post" action="/messages/{{ study.id }}/{{ participant.id }}/notes" class="stack section">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="internal-note"><strong>Add internal note</strong><span class="muted">Never visible to the participant</span></label>
+      <textarea id="internal-note" name="body" maxlength="10000" rows="4" required></textarea>
+      <button class="secondary">Save internal note</button>
+    </form>
+    {% endif %}
+  </aside>
+</section>
+{% endblock %}

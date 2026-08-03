@@ -2337,6 +2337,249 @@ def test_participant_message_route_preserves_validation_and_storage_semantics():
             assert message.body == 'hello research'
 
 
+def test_researcher_message_workspace_separates_visibility_and_tracks_read_state():
+    from app.models import AuditEvent, Participant, ParticipantMessage, User
+
+    context = _prepare_participant_api_activity_response_context('researcher-message-workspace')
+    with SessionLocal() as db:
+        actor = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert actor is not None
+        participant = db.get(Participant, context['participant_id'])
+        assert participant is not None
+        participant_reference = participant.reference
+        participant_visible = ParticipantMessage(
+            organisation_id=actor.organisation_id,
+            study_id=context['study_id'],
+            participant_id=context['participant_id'],
+            sender_type='participant',
+            body='Participant message needing a response',
+            internal_note=False,
+        )
+        researcher_visible = ParticipantMessage(
+            organisation_id=actor.organisation_id,
+            study_id=context['study_id'],
+            participant_id=context['participant_id'],
+            sender_type='researcher',
+            sender_user_id=actor.id,
+            body='Existing participant-visible reply',
+            internal_note=False,
+        )
+        private_note = ParticipantMessage(
+            organisation_id=actor.organisation_id,
+            study_id=context['study_id'],
+            participant_id=context['participant_id'],
+            sender_type='researcher',
+            sender_user_id=actor.id,
+            body='Private research context must stay internal',
+            internal_note=True,
+        )
+        db.add_all([participant_visible, researcher_visible, private_note])
+        db.commit()
+        participant_message_id = participant_visible.id
+        researcher_message_id = researcher_visible.id
+        private_note_id = private_note.id
+
+    with client:
+        auth()
+        index = client.get('/messages', follow_redirects=False)
+        assert index.status_code == 200
+        assert 'Researcher communications' in index.text
+        assert '1 new' in index.text
+        assert f'/messages/{context["study_id"]}/{context["participant_id"]}' in index.text
+        assert 'Private research context must stay internal' not in index.text
+        assert 'href="/messages"' in index.text
+
+        unread_only = client.get('/messages?status_filter=unread', follow_redirects=False)
+        assert unread_only.status_code == 200
+        assert '1 new' in unread_only.text
+
+        conversation = client.get(
+            f'/messages/{context["study_id"]}/{context["participant_id"]}',
+            follow_redirects=False,
+        )
+        assert conversation.status_code == 200
+        assert 'Visible to participant' in conversation.text
+        assert 'Participant message needing a response' in conversation.text
+        assert 'Existing participant-visible reply' in conversation.text
+        assert 'Private workspace' in conversation.text
+        assert 'Private research context must stay internal' in conversation.text
+        assert 'name="internal_note"' not in conversation.text
+        assert 'action="/messages/' in conversation.text
+        assert '/notes"' in conversation.text
+
+        participant_record = client.get(f'/participants/{context["participant_id"]}')
+        assert participant_record.status_code == 200
+        assert 'Participant-visible messages' in participant_record.text
+        assert 'Internal research notes' in participant_record.text
+        assert 'name="internal_note"' not in participant_record.text
+
+        visible_send = post_with_csrf(
+            f'/messages/{context["study_id"]}/{context["participant_id"]}',
+            data={'body': 'New message for participant portal'},
+            follow_redirects=False,
+        )
+        assert visible_send.status_code == 303
+        assert visible_send.headers['location'].endswith('#conversation')
+
+        internal_send = post_with_csrf(
+            f'/messages/{context["study_id"]}/{context["participant_id"]}/notes',
+            data={'body': 'New private research note'},
+            follow_redirects=False,
+        )
+        assert internal_send.status_code == 303
+        assert internal_send.headers['location'].endswith('#internal-notes')
+
+        empty_send = post_with_csrf(
+            f'/messages/{context["study_id"]}/{context["participant_id"]}',
+            data={'body': '   '},
+            follow_redirects=False,
+        )
+        assert empty_send.status_code == 400
+
+        refreshed_index = client.get(f'/messages?q={participant_reference}')
+        assert '1 new' not in refreshed_index.text
+        assert 'Up to date' in refreshed_index.text
+
+    with SessionLocal() as db:
+        participant_message = db.get(ParticipantMessage, participant_message_id)
+        researcher_message = db.get(ParticipantMessage, researcher_message_id)
+        private_note = db.get(ParticipantMessage, private_note_id)
+        assert participant_message is not None and participant_message.read_at is not None
+        assert researcher_message is not None and researcher_message.read_at is None
+        assert private_note is not None and private_note.read_at is None
+        visible_created = db.scalar(
+            select(ParticipantMessage).where(ParticipantMessage.body == 'New message for participant portal')
+        )
+        internal_created = db.scalar(
+            select(ParticipantMessage).where(ParticipantMessage.body == 'New private research note')
+        )
+        assert visible_created is not None and visible_created.internal_note is False
+        assert internal_created is not None and internal_created.internal_note is True
+        assert db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == 'message.participant_visible_created',
+                AuditEvent.entity_id == str(visible_created.id),
+            )
+        ) is not None
+        assert db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == 'message.internal_note_created',
+                AuditEvent.entity_id == str(internal_created.id),
+            )
+        ) is not None
+
+    with client:
+        client.cookies.delete('session')
+        participant_portal = client.get('/participant-portal', follow_redirects=False)
+        assert participant_portal.status_code == 200
+        assert 'New message for participant portal' in participant_portal.text
+        assert 'New private research note' not in participant_portal.text
+
+    with SessionLocal() as db:
+        visible_created = db.scalar(
+            select(ParticipantMessage).where(ParticipantMessage.body == 'New message for participant portal')
+        )
+        internal_created = db.scalar(
+            select(ParticipantMessage).where(ParticipantMessage.body == 'New private research note')
+        )
+        assert visible_created is not None and visible_created.read_at is not None
+        assert internal_created is not None and internal_created.read_at is None
+
+
+def test_researcher_message_workspace_enforces_organisation_scope_and_observer_is_read_only():
+    from app.models import Organisation, OrganisationMembership, Participant, Project, Study, StudyEnrolment
+    from app.security import hash_password
+
+    context = _prepare_participant_api_activity_response_context('researcher-message-scope')
+    observer_email = f'{unique_value("message-observer")}@example.org'
+    observer_password = 'SecurePass123!'
+    with SessionLocal() as db:
+        scoped_study = db.get(Study, context['study_id'])
+        assert scoped_study is not None
+        observer = User(
+            organisation_id=scoped_study.organisation_id,
+            name='Message Observer',
+            email=observer_email,
+            password_hash=hash_password(observer_password),
+            role='observer',
+        )
+        db.add(observer)
+        db.flush()
+        db.add(OrganisationMembership(user_id=observer.id, organisation_id=scoped_study.organisation_id, role='observer'))
+
+        other_org = Organisation(name=unique_value('Other message org'), slug=unique_value('other-message-org').lower())
+        db.add(other_org)
+        db.flush()
+        other_project = Project(
+            organisation_id=other_org.id,
+            title='Other message project',
+            code=unique_value('OTHER-MSG').upper(),
+            status='live',
+            created_by_id=observer.id,
+        )
+        db.add(other_project)
+        db.flush()
+        other_study = Study(
+            organisation_id=other_org.id,
+            project_id=other_project.id,
+            title='Other organisation private study',
+            code=unique_value('OTHER-STUDY').upper(),
+            methodology='diary',
+            status='recruiting',
+            created_by_id=observer.id,
+        )
+        other_participant = Participant(
+            organisation_id=other_org.id,
+            reference=unique_value('OTHER-P').upper(),
+            name='Other Organisation Participant',
+            status='active',
+            consent_status='granted',
+            communication_preference='none',
+            created_by_id=observer.id,
+        )
+        db.add_all([other_study, other_participant])
+        db.flush()
+        db.add(
+            StudyEnrolment(
+                organisation_id=other_org.id,
+                study_id=other_study.id,
+                participant_id=other_participant.id,
+                status='enrolled',
+            )
+        )
+        db.commit()
+        other_study_id = other_study.id
+        other_participant_id = other_participant.id
+
+    with client:
+        client.cookies.clear()
+        login_as(observer_email, observer_password)
+        index = client.get('/messages')
+        assert index.status_code == 200
+        assert 'Other organisation private study' not in index.text
+
+        conversation = client.get(
+            f'/messages/{context["study_id"]}/{context["participant_id"]}',
+            follow_redirects=False,
+        )
+        assert conversation.status_code == 200
+        assert 'Send to participant portal' not in conversation.text
+        assert 'Add internal note' not in conversation.text
+
+        denied_send = post_with_csrf(
+            f'/messages/{context["study_id"]}/{context["participant_id"]}',
+            data={'body': 'observer must not send'},
+            follow_redirects=False,
+        )
+        assert denied_send.status_code == 403
+
+        cross_org = client.get(
+            f'/messages/{other_study_id}/{other_participant_id}',
+            follow_redirects=False,
+        )
+        assert cross_org.status_code == 404
+
+
 def hosted_settings(**overrides):
     data = {
         'environment': 'production',
