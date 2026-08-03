@@ -5037,6 +5037,7 @@ def test_participant_api_activity_detail_returns_contract_shape_and_read_after_w
             'short_text', 'long_text', 'single_choice', 'multiple_choice', 'rating',
             'slider', 'photo', 'audio', 'video', 'gps', 'ranking', 'file'
         }
+        assert 'options' not in initial_body['activity']
         assert isinstance(initial_body['activity']['required'], bool)
         assert isinstance(initial_body['activity']['position'], int)
         assert initial_body['activity']['availability']['status'] in {'open', 'upcoming', 'closed'}
@@ -5112,6 +5113,70 @@ def test_participant_api_activity_detail_returns_contract_shape_and_read_after_w
         assert evidence_body['response']['value']['evidence_id'] == 123
         assert 'scan_status' not in evidence_body['response']['value']
         assert 'scan_detail' not in evidence_body['response']['value']
+
+
+def test_participant_api_activity_detail_exposes_choice_options_only_for_choice_activities_and_preserves_ordering():
+    from app.models import Activity
+
+    context = _prepare_participant_api_activity_response_context('api-activity-detail-choice-options')
+
+    with SessionLocal() as db:
+        base_row = db.get(Activity, context['activity_id'])
+        assert base_row is not None
+
+        single_row = Activity(
+            organisation_id=base_row.organisation_id,
+            study_id=base_row.study_id,
+            title='Travel mode',
+            prompt='Choose one option.',
+            activity_type='single_choice',
+            options_json=json.dumps(['Bus', 'Train', 'Walk']),
+            position=base_row.position + 10,
+            required=True,
+            release_offset_days=0,
+            due_offset_days=None,
+        )
+        multiple_row = Activity(
+            organisation_id=base_row.organisation_id,
+            study_id=base_row.study_id,
+            title='Street issues',
+            prompt='Choose all that apply.',
+            activity_type='multiple_choice',
+            options_json=json.dumps(['Lighting', 'Crossing', 'Pavement width']),
+            position=base_row.position + 11,
+            required=True,
+            release_offset_days=0,
+            due_offset_days=None,
+        )
+        db.add(single_row)
+        db.add(multiple_row)
+        db.flush()
+        single_activity_id = single_row.id
+        multiple_activity_id = multiple_row.id
+        db.commit()
+
+    with client:
+        single_detail = client.get(
+            f"/api/v1/participant/activities/{single_activity_id}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert single_detail.status_code == 200
+        single_body = single_detail.json()
+        assert single_body['activity']['activity_type'] == 'single_choice'
+        assert single_body['activity']['options'] == ['Bus', 'Train', 'Walk']
+        assert 'response' not in single_body
+
+        multiple_detail = client.get(
+            f"/api/v1/participant/activities/{multiple_activity_id}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert multiple_detail.status_code == 200
+        multiple_body = multiple_detail.json()
+        assert multiple_body['activity']['activity_type'] == 'multiple_choice'
+        assert multiple_body['activity']['options'] == ['Lighting', 'Crossing', 'Pavement width']
+        assert 'response' not in multiple_body
 
 
 def test_participant_api_activity_detail_enforces_scope_consent_enrolment_and_path_constraints():
