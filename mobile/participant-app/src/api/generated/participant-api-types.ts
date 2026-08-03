@@ -824,6 +824,8 @@ export interface components {
             prompt?: string | null;
             /** @enum {string} */
             activity_type: "short_text" | "long_text" | "single_choice" | "multiple_choice" | "rating" | "slider" | "photo" | "audio" | "video" | "gps" | "ranking" | "file";
+            /** @description Participant-safe response options for choice-based activities only. */
+            options?: string[];
             required: boolean;
             position: number;
             availability: components["schemas"]["ActivityAvailability"];
@@ -855,7 +857,7 @@ export interface components {
         };
         ActivityDetailResponse: {
             activity: components["schemas"]["ActivitySummary"];
-            response: {
+            response?: {
                 response_id?: number;
                 /** @enum {string} */
                 status?: "draft" | "submitted";

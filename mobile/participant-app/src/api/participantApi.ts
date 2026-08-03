@@ -10,6 +10,10 @@ type LogoutResponse = components["schemas"]["LogoutResponse"];
 type StudyListResponse = components["schemas"]["StudyListResponse"];
 type ActivityListResponse = components["schemas"]["ActivityListResponse"];
 type ActivityDetailResponse = components["schemas"]["ActivityDetailResponse"];
+type DraftResponseRequest = components["schemas"]["DraftResponseRequest"];
+type DraftResponseResult = components["schemas"]["DraftResponseResult"];
+type SubmitResponseRequest = components["schemas"]["SubmitResponseRequest"];
+type SubmittedResponseResult = components["schemas"]["SubmittedResponseResult"];
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -86,6 +90,36 @@ export async function getParticipantActivityDetail(
   });
 }
 
+export async function saveParticipantActivityDraft(
+  accessToken: string,
+  activityId: number,
+  payload: DraftResponseRequest,
+  options?: RequestOptions,
+): Promise<DraftResponseResult> {
+  return apiRequest<DraftResponseResult>(`/api/v1/participant/activities/${activityId}/draft`, {
+    method: "PUT",
+    accessToken,
+    body: payload,
+    headers: withIdempotencyHeader(options),
+    signal: options?.signal,
+  });
+}
+
+export async function submitParticipantActivityResponse(
+  accessToken: string,
+  activityId: number,
+  payload: SubmitResponseRequest,
+  options?: RequestOptions,
+): Promise<SubmittedResponseResult> {
+  return apiRequest<SubmittedResponseResult>(`/api/v1/participant/activities/${activityId}/submit`, {
+    method: "POST",
+    accessToken,
+    body: payload,
+    headers: withIdempotencyHeader(options),
+    signal: options?.signal,
+  });
+}
+
 export type {
   SessionExchangeRequest,
   SessionExchangeResponse,
@@ -94,4 +128,8 @@ export type {
   StudyListResponse,
   ActivityListResponse,
   ActivityDetailResponse,
+  DraftResponseRequest,
+  DraftResponseResult,
+  SubmitResponseRequest,
+  SubmittedResponseResult,
 };
