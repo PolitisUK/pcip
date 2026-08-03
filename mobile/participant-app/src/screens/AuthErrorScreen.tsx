@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { AuthState } from "../auth/types";
+import { CitizenCentricLogo } from "../components/CitizenCentricLogo";
 
 type RecoverableReason = Extract<AuthState, { status: "recoverable_error" }>["reason"];
 type TerminalReason = Extract<AuthState, { status: "terminal_error" }>["reason"];
@@ -78,6 +79,7 @@ export function AuthErrorScreen({ state, onRetry, onSignOut }: AuthErrorScreenPr
 
   return (
     <View style={styles.container}>
+      <CitizenCentricLogo variant="full" />
       <Text accessibilityRole="header" style={styles.title}>
         {copy.title}
       </Text>

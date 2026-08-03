@@ -11,6 +11,7 @@ import type { AuthState } from "./src/auth/types";
 import { linking } from "./src/navigation/deepLinks";
 import { routeNameForAuthState } from "./src/navigation/appStateRouter";
 import type { RootStackParamList } from "./src/navigation/types";
+import { CitizenCentricLogo } from "./src/components/CitizenCentricLogo";
 import { AuthErrorScreen } from "./src/screens/AuthErrorScreen";
 import { ConsentRequiredScreen } from "./src/screens/ConsentRequiredScreen";
 import { HomeScreen } from "./src/screens/HomeScreen";
@@ -39,6 +40,7 @@ export default function App() {
   if (authState.status === "initialising") {
     return (
       <View accessibilityLabel="Loading Citizen Centric" style={styles.loadingContainer}>
+        <CitizenCentricLogo variant="full" />
         <ActivityIndicator size="large" color="#00573d" />
       </View>
     );
@@ -77,6 +79,7 @@ export default function App() {
               <HomeScreen
                 participantDisplayName={authState.participantDisplayName}
                 onSignOut={() => void authController.signOut()}
+                onSessionExpired={() => void authController.signOut()}
               />
             )}
           </Stack.Screen>
@@ -105,5 +108,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#f7faf8",
+    paddingHorizontal: 24,
+    gap: 12,
   },
 });

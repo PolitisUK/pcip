@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "Citizen Centric Participant (Staging)",
+    "name": "Citizen Centric",
     "slug": "citizen-centric-participant-staging",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/citizen-centric-brand-mark.png",
     "scheme": "pcip-participant",
     "userInterfaceStyle": "light",
     "ios": {
@@ -37,7 +37,7 @@
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
+        "foregroundImage": "./assets/citizen-centric-brand-mark.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
