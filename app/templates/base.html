@@ -10,7 +10,7 @@
   {% block head_meta %}{% endblock %}
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" href="/static/politis_symbol_colour.png">
-  <link rel="stylesheet" href="/static/app.css?v={{ version }}">
+  <link rel="stylesheet" href="/static/app.css?v={{ version }}-website">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -29,6 +29,7 @@
       <a class="{% if request.url.path.startswith('/projects') %}active{% endif %}" href="/projects" {% if request.url.path.startswith('/projects') %}aria-current="page"{% endif %}>Projects</a>
       <a class="{% if request.url.path.startswith('/studies') %}active{% endif %}" href="/studies" {% if request.url.path.startswith('/studies') %}aria-current="page"{% endif %}>Studies</a>
       <a class="{% if request.url.path.startswith('/participants') %}active{% endif %}" href="/participants" {% if request.url.path.startswith('/participants') %}aria-current="page"{% endif %}>Participants</a>
+      <a class="{% if request.url.path.startswith('/messages') %}active{% endif %}" href="/messages" {% if request.url.path.startswith('/messages') %}aria-current="page"{% endif %}>Messages</a>
       {% if user.role in ['owner','admin'] %}
       <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers" {% if request.url.path.startswith('/researchers') %}aria-current="page"{% endif %}>Researchers</a>
       <a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit" {% if request.url.path.startswith('/audit') %}aria-current="page"{% endif %}>Audit log</a>
