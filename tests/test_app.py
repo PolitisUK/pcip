@@ -5955,3 +5955,164 @@ def test_participant_api_evidence_upload_rejects_after_response_submission():
         )
         assert upload.status_code == 409
         assert upload.json() == {'detail': 'Activity response has already been submitted.'}
+
+
+def test_participant_api_messages_list_and_create_excludes_internal_notes():
+    from app.models import Participant, ParticipantMessage
+
+    context = _prepare_participant_api_activity_response_context('api-messages-list-create')
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
+        internal = ParticipantMessage(
+            organisation_id=participant_row.organisation_id,
+            study_id=context['study_id'],
+            participant_id=context['participant_id'],
+            sender_type='researcher',
+            sender_user_id=None,
+            body='internal note',
+            internal_note=True,
+        )
+        visible = ParticipantMessage(
+            organisation_id=participant_row.organisation_id,
+            study_id=context['study_id'],
+            participant_id=context['participant_id'],
+            sender_type='researcher',
+            sender_user_id=None,
+            body='visible note',
+            internal_note=False,
+        )
+        db.add(internal)
+        db.add(visible)
+        db.commit()
+
+    with client:
+        listed = client.get(
+            '/api/v1/participant/messages',
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert listed.status_code == 200
+        assert listed.headers.get('cache-control') == 'no-store'
+        listed_bodies = [x['body'] for x in listed.json()['data']]
+        assert 'visible note' in listed_bodies
+        assert 'internal note' not in listed_bodies
+
+        created = client.post(
+            '/api/v1/participant/messages',
+            json={'body': 'participant message from app'},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'msg-create-1234',
+            },
+            follow_redirects=False,
+        )
+        assert created.status_code == 201
+        assert created.headers.get('cache-control') == 'no-store'
+        assert created.json()['message']['sender_type'] == 'participant'
+        assert created.json()['message']['body'] == 'participant message from app'
+
+        duplicate = client.post(
+            '/api/v1/participant/messages',
+            json={'body': 'participant message from app'},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'msg-create-1234',
+            },
+            follow_redirects=False,
+        )
+        assert duplicate.status_code == 409
+
+
+def test_participant_api_privacy_withdrawal_request_updates_participant_and_enrolment():
+    from app.models import Participant, StudyEnrolment
+
+    context = _prepare_participant_api_activity_response_context('api-privacy-withdrawal')
+
+    with client:
+        response = client.post(
+            '/api/v1/participant/privacy/withdrawal-requests',
+            json={
+                'scope': 'study',
+                'study_id': context['study_id'],
+                'reason': 'No longer able to continue',
+                'contact_preference': 'email',
+            },
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'withdrawal-1234',
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 202
+        body = response.json()
+        assert body['request_type'] == 'withdrawal'
+        assert body['status'] == 'received'
+        assert body['request_id'] >= 1
+
+        duplicate = client.post(
+            '/api/v1/participant/privacy/withdrawal-requests',
+            json={'scope': 'study', 'study_id': context['study_id']},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'withdrawal-1234',
+            },
+            follow_redirects=False,
+        )
+        assert duplicate.status_code == 403
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
+        assert participant_row.consent_status == 'withdrawn'
+        assert participant_row.status == 'withdrawn'
+        enrolment = db.scalar(
+            select(StudyEnrolment).where(
+                StudyEnrolment.study_id == context['study_id'],
+                StudyEnrolment.participant_id == context['participant_id'],
+            )
+        )
+        assert enrolment is not None
+        assert enrolment.status == 'withdrawn'
+
+
+def test_participant_api_privacy_deletion_request_is_acknowledged_without_immediate_deletion():
+    from app.models import Participant
+
+    context = _prepare_participant_api_activity_response_context('api-privacy-deletion')
+
+    with client:
+        response = client.post(
+            '/api/v1/participant/privacy/deletion-requests',
+            json={
+                'mode_preference': 'auto',
+                'study_id': context['study_id'],
+                'reason': 'Please remove my account data',
+            },
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'deletion-1234',
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 202
+        body = response.json()
+        assert body['request_type'] == 'deletion'
+        assert body['status'] == 'received'
+        assert body['request_id'] >= 1
+
+        duplicate = client.post(
+            '/api/v1/participant/privacy/deletion-requests',
+            json={'mode_preference': 'auto'},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'deletion-1234',
+            },
+            follow_redirects=False,
+        )
+        assert duplicate.status_code == 409
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
