@@ -81,6 +81,9 @@ from .participant_api.schemas import (
     ActivityAvailability,
     ActivityDetailResponse,
     ActivityDetailResponseItem,
+    EvidenceMetadata,
+    EvidenceStatusResponse,
+    EvidenceUploadResponse,
     DraftResponseRequest,
     DraftResponseResult,
     ActivityListResponse,
@@ -2832,6 +2835,81 @@ def _participant_response_value_from_payload(payload: DraftResponseRequest) -> d
     return value
 
 
+def _participant_evidence_scan_status(scan_status: str | None) -> str:
+    token = (scan_status or "").strip().lower().replace(" ", "_")
+    if token in {"pending", "clean", "infected", "scan_failed"}:
+        return token
+    if token in {"error", "failed", "not_scanned", "not_configured"}:
+        return "scan_failed"
+    return "pending"
+
+
+def _participant_evidence_metadata(evidence_row: EvidenceFile) -> EvidenceMetadata:
+    return EvidenceMetadata(
+        evidence_id=evidence_row.id,
+        activity_id=evidence_row.activity_id,
+        original_name=evidence_row.original_name,
+        content_type=evidence_row.content_type,
+        size_bytes=evidence_row.size_bytes,
+        scan_status=_participant_evidence_scan_status(evidence_row.scan_status),
+        scan_detail=evidence_row.scan_detail or None,
+        created_at=evidence_row.created_at,
+    )
+
+
+def _resolve_participant_api_evidence_scope(
+    request: Request,
+    db: Session,
+    evidence_id: int,
+) -> tuple[ParticipantInvitation, Participant, Study, EvidenceFile]:
+    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
+    if not invitation.accepted_at:
+        raise HTTPException(403, "Participant consent has not been accepted.")
+    if participant_row.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(403, "Participant consent is no longer active.")
+
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_portal_read",
+        ip_limit=settings.rate_limit_portal_write_ip,
+        account_key=f"invitation:{invitation.id}",
+        account_limit=settings.rate_limit_portal_write_token,
+    )
+
+    study_row = db.scalar(
+        select(Study).where(
+            Study.id == invitation.study_id,
+            Study.organisation_id == invitation.organisation_id,
+        )
+    )
+    if not study_row:
+        raise _participant_api_unauthorised()
+
+    enrolled = db.scalar(
+        select(StudyEnrolment.id).where(
+            StudyEnrolment.organisation_id == invitation.organisation_id,
+            StudyEnrolment.study_id == invitation.study_id,
+            StudyEnrolment.participant_id == participant_row.id,
+        )
+    ) is not None
+    if not enrolled:
+        raise HTTPException(403, "Participant is not enrolled in this study.")
+
+    evidence_row = db.scalar(
+        select(EvidenceFile).where(
+            EvidenceFile.id == evidence_id,
+            EvidenceFile.organisation_id == invitation.organisation_id,
+            EvidenceFile.study_id == invitation.study_id,
+            EvidenceFile.participant_id == participant_row.id,
+        )
+    )
+    if not evidence_row:
+        raise HTTPException(404, "Evidence not found.")
+
+    return invitation, participant_row, study_row, evidence_row
+
+
 def _update_activity_response_if_not_submitted(
     db: Session,
     response_id: int,
@@ -3029,6 +3107,124 @@ def participant_api_activity_response_submit(
         status="submitted",
         submitted_at=response_row.submitted_at or response_row.updated_at,
         updated_at=response_row.updated_at,
+    )
+
+
+@app.post(
+    "/api/v1/participant/activities/{activity_id}/evidence-uploads",
+    response_model=EvidenceUploadResponse,
+    status_code=201,
+)
+def participant_api_activity_evidence_upload(
+    request: Request,
+    response: Response,
+    activity_id: int = ApiPath(..., ge=1),
+    form_activity_id: int = Form(..., alias="activity_id", ge=1),
+    file: UploadFile = File(...),
+    note: str | None = Form(default=None, max_length=2000),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
+    db: Session = Depends(get_db),
+):
+    del note, idempotency_key
+    if form_activity_id != activity_id:
+        raise HTTPException(400, "Form activity_id does not match path activity_id.")
+
+    invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
+    existing_response = db.scalar(
+        select(ActivityResponse).where(
+            ActivityResponse.organisation_id == invitation.organisation_id,
+            ActivityResponse.study_id == invitation.study_id,
+            ActivityResponse.activity_id == activity_row.id,
+            ActivityResponse.participant_id == participant_row.id,
+        )
+    )
+    if existing_response and existing_response.status == "submitted":
+        raise HTTPException(409, "Activity response has already been submitted.")
+
+    original = Path(file.filename or "").name
+    if not original:
+        raise HTTPException(400, "A file is required.")
+
+    extension = Path(original).suffix.lower()
+    allowed_extensions = {x.strip().lower() for x in settings.allowed_upload_extensions.split(",") if x.strip()}
+    if extension not in allowed_extensions:
+        raise HTTPException(415, "This file type is not permitted.")
+
+    try:
+        stored = storage.save_stream(file.file, original, settings.max_upload_mb * 1024 * 1024)
+    except ValueError as exc:
+        raise HTTPException(413, str(exc))
+
+    stored_key = stored.key
+    try:
+        if stored.provider == "local":
+            local_path = storage.path(stored.key)
+            scan_status, scan_detail = scan_file(local_path)
+            if scan_status == "infected":
+                delete_stored_object_safely(stored.key, "infected")
+                audit(db, invitation.organisation_id, None, "evidence.rejected", "activity", activity_row.id, scan_detail)
+                db.commit()
+                raise HTTPException(400, "The uploaded file failed malware screening.")
+        else:
+            scan_status, scan_detail = "pending", "Awaiting Microsoft Defender for Storage on-upload scan."
+
+        evidence_row = build_evidence_file(
+            organisation_id=invitation.organisation_id,
+            study_id=invitation.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+            response_id=existing_response.id if existing_response else None,
+            original_name=original,
+            stored_name=stored.key,
+            content_type=file.content_type or "application/octet-stream",
+            size_bytes=stored.size,
+            sha256_hex=stored.sha256_hex,
+            scan_status=scan_status,
+            scan_detail=scan_detail,
+            storage_provider=stored.provider,
+            blob_uri=stored.uri,
+        )
+        db.add(evidence_row)
+        db.flush()
+        audit(db, invitation.organisation_id, None, "evidence.uploaded", "evidence_file", evidence_row.id, str(activity_row.id))
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        delete_stored_object_safely(stored_key, "upload_processing_failed")
+        raise
+
+    _cache_control_no_store(response)
+    return EvidenceUploadResponse(evidence=_participant_evidence_metadata(evidence_row))
+
+
+@app.get(
+    "/api/v1/participant/evidence/{evidence_id}/status",
+    response_model=EvidenceStatusResponse,
+)
+def participant_api_evidence_status(
+    request: Request,
+    response: Response,
+    evidence_id: int = ApiPath(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    _invitation, _participant_row, _study_row, evidence_row = _resolve_participant_api_evidence_scope(request, db, evidence_id)
+
+    if evidence_row.storage_provider == "azure_blob":
+        latest_status, latest_detail = storage.scan_result(evidence_row.stored_name)
+        if latest_status != "pending" or evidence_row.scan_status == "pending":
+            evidence_row.scan_status = latest_status
+            evidence_row.scan_detail = latest_detail
+            if latest_status in {"clean", "infected", "scan_failed"}:
+                evidence_row.scan_completed_at = now()
+            db.commit()
+
+    _cache_control_no_store(response)
+    return EvidenceStatusResponse(
+        evidence=_participant_evidence_metadata(evidence_row),
+        downloadable=is_evidence_downloadable(evidence_row.scan_status),
     )
 
 @app.delete("/api/v1/participant/session", response_model=LogoutResponse)

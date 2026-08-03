@@ -136,6 +136,39 @@ class SubmittedResponseResult(BaseModel):
     updated_at: datetime
 
 
+class EvidenceUploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    activity_id: int = Field(ge=1)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class EvidenceMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: int = Field(ge=1)
+    activity_id: int = Field(ge=1)
+    original_name: str
+    content_type: str
+    size_bytes: int = Field(ge=0)
+    scan_status: Literal["pending", "clean", "infected", "scan_failed"]
+    scan_detail: str | None = None
+    created_at: datetime
+
+
+class EvidenceUploadResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: EvidenceMetadata
+
+
+class EvidenceStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: EvidenceMetadata
+    downloadable: bool
+
+
 class SessionExchangeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

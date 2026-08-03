@@ -5837,3 +5837,96 @@ def test_participant_api_activity_response_invalid_evidence_reference_does_not_m
         assert payload['answer'] == 'stable draft'
         assert payload['choices'] == ['alpha']
         assert row.status == 'draft'
+
+
+def test_participant_api_evidence_upload_and_status_support_activity_response_reference():
+    from io import BytesIO
+
+    context = _prepare_participant_api_activity_response_context('api-evidence-upload-foundation')
+
+    with client:
+        upload = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/evidence-uploads",
+            data={'activity_id': str(context['activity_id'])},
+            files={'file': ('evidence.txt', BytesIO(b'ordinary evidence'), 'text/plain')},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert upload.status_code == 201
+        assert upload.headers.get('cache-control') == 'no-store'
+        upload_body = upload.json()
+        assert upload_body['evidence']['activity_id'] == context['activity_id']
+        assert upload_body['evidence']['original_name'] == 'evidence.txt'
+        assert upload_body['evidence']['content_type'] == 'text/plain'
+        assert upload_body['evidence']['size_bytes'] == len(b'ordinary evidence')
+        assert upload_body['evidence']['scan_status'] in {'pending', 'clean', 'infected', 'scan_failed'}
+        evidence_id = upload_body['evidence']['evidence_id']
+
+        status = client.get(
+            f"/api/v1/participant/evidence/{evidence_id}/status",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert status.status_code == 200
+        assert status.headers.get('cache-control') == 'no-store'
+        status_body = status.json()
+        assert status_body['evidence']['evidence_id'] == evidence_id
+        assert status_body['downloadable'] == (status_body['evidence']['scan_status'] == 'clean')
+
+        drafted = client.put(
+            f"/api/v1/participant/activities/{context['activity_id']}/draft",
+            json={'answer': 'with evidence', 'choices': [], 'evidence_id': evidence_id},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert drafted.status_code == 200
+
+        detail = client.get(
+            f"/api/v1/participant/activities/{context['activity_id']}",
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert detail.status_code == 200
+        assert detail.json()['response']['value']['evidence_id'] == evidence_id
+
+
+def test_participant_api_evidence_upload_rejects_mismatched_form_activity_id():
+    from io import BytesIO
+
+    context = _prepare_participant_api_activity_response_context('api-evidence-upload-form-mismatch')
+
+    with client:
+        mismatch = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/evidence-uploads",
+            data={'activity_id': str(context['activity_id'] + 1)},
+            files={'file': ('mismatch.txt', BytesIO(b'ordinary evidence'), 'text/plain')},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert mismatch.status_code == 400
+        assert mismatch.json() == {'detail': 'Form activity_id does not match path activity_id.'}
+
+
+def test_participant_api_evidence_status_is_scoped_to_participant_context():
+    from io import BytesIO
+
+    first = _prepare_participant_api_activity_response_context('api-evidence-status-scope-a')
+    second = _prepare_participant_api_activity_response_context('api-evidence-status-scope-b')
+
+    with client:
+        upload = client.post(
+            f"/api/v1/participant/activities/{first['activity_id']}/evidence-uploads",
+            data={'activity_id': str(first['activity_id'])},
+            files={'file': ('scope.txt', BytesIO(b'ordinary evidence'), 'text/plain')},
+            headers={'Authorization': f"Bearer {first['api_token']}"},
+            follow_redirects=False,
+        )
+        assert upload.status_code == 201
+        evidence_id = upload.json()['evidence']['evidence_id']
+
+        blocked = client.get(
+            f"/api/v1/participant/evidence/{evidence_id}/status",
+            headers={'Authorization': f"Bearer {second['api_token']}"},
+            follow_redirects=False,
+        )
+        assert blocked.status_code == 404
