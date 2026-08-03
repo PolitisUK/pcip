@@ -1,5 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { CitizenCentricLogo } from "../components/CitizenCentricLogo";
+
 type SignedOutScreenProps = {
   onRetry: () => void;
 };
@@ -7,9 +9,7 @@ type SignedOutScreenProps = {
 export function SignedOutScreen({ onRetry }: SignedOutScreenProps) {
   return (
     <View style={styles.container}>
-      <Text accessibilityRole="header" style={styles.title}>
-        Citizen Centric
-      </Text>
+      <CitizenCentricLogo variant="full" />
       <Text style={styles.body}>Open your study invitation link to sign in securely.</Text>
       <Pressable
         accessibilityRole="button"
@@ -30,11 +30,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 28,
     gap: 14,
-  },
-  title: {
-    color: "#0c2f24",
-    fontSize: 26,
-    fontWeight: "700",
   },
   body: {
     color: "#25433a",

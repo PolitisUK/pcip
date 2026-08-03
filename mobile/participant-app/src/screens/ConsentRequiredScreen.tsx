@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { CitizenCentricLogo } from "../components/CitizenCentricLogo";
 
 type ConsentRequiredScreenProps = {
   participantDisplayName?: string;
@@ -8,6 +9,7 @@ type ConsentRequiredScreenProps = {
 export function ConsentRequiredScreen({ participantDisplayName, onSignOut }: ConsentRequiredScreenProps) {
   return (
     <View style={styles.container}>
+      <CitizenCentricLogo variant="full" />
       <Text accessibilityRole="header" style={styles.title}>
         Citizen Centric consent needed
       </Text>

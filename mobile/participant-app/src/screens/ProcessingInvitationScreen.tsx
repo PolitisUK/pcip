@@ -1,8 +1,11 @@
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
+import { CitizenCentricLogo } from "../components/CitizenCentricLogo";
+
 export function ProcessingInvitationScreen() {
   return (
     <View style={styles.container}>
+      <CitizenCentricLogo variant="full" />
       <ActivityIndicator accessibilityLabel="Joining your study" size="large" color="#00573d" />
       <Text accessibilityRole="header" style={styles.title}>
         Joining your study
