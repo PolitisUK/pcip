@@ -117,6 +117,30 @@ def test_login_and_dashboard():
         assert d.status_code == 200 and 'Seven-day town centre diary' in d.text
 
 
+def test_public_homepage_is_available_without_authentication_and_keeps_workspace_data_private():
+    with client:
+        client.cookies.clear()
+        homepage = client.get('/', follow_redirects=False)
+        assert homepage.status_code == 200
+        assert 'Research shaped around people' in homepage.text
+        assert 'Understand communities through richer, more inclusive insight.' in homepage.text
+        assert 'href="/login">Researcher sign in</a>' in homepage.text
+        assert 'href="#participants">See the participant experience</a>' in homepage.text
+        assert 'Privacy and security' in homepage.text
+        assert 'Seven-day town centre diary' not in homepage.text
+        assert 'Politis Demo Council' not in homepage.text
+        assert 'name="description"' in homepage.text
+        assert 'class="public-site"' in homepage.text
+
+        login_page = client.get('/login')
+        assert login_page.status_code == 200
+        assert 'href="/">← Citizen Centric home</a>' in login_page.text
+
+        protected = client.get('/projects', follow_redirects=False)
+        assert protected.status_code == 303
+        assert protected.headers['location'] == '/login'
+
+
 def test_global_user_can_hold_memberships_in_multiple_organisations():
     from app.models import Organisation, OrganisationMembership
     from app.security import decode_session, hash_password
@@ -2561,7 +2585,7 @@ def test_stolen_cookie_stops_working_after_admin_password_reset():
 
         client.cookies.clear()
         client.cookies.set('session', stolen_cookie)
-        denied = client.get('/', follow_redirects=False)
+        denied = client.get('/projects', follow_redirects=False)
         assert denied.status_code == 303
         assert denied.headers['location'] == '/login'
 
@@ -2590,7 +2614,7 @@ def test_logout_invalidates_existing_session_cookie():
 
         client.cookies.clear()
         client.cookies.set('session', stolen_cookie)
-        denied = client.get('/', follow_redirects=False)
+        denied = client.get('/projects', follow_redirects=False)
         assert denied.status_code == 303
         assert denied.headers['location'] == '/login'
 
@@ -2651,7 +2675,7 @@ def test_password_reset_invalidates_existing_session_cookie():
 
         client.cookies.clear()
         client.cookies.set('session', stolen_cookie)
-        denied = client.get('/', follow_redirects=False)
+        denied = client.get('/projects', follow_redirects=False)
         assert denied.status_code == 303
         assert denied.headers['location'] == '/login'
 
