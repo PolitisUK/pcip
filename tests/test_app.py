@@ -5930,3 +5930,28 @@ def test_participant_api_evidence_status_is_scoped_to_participant_context():
             follow_redirects=False,
         )
         assert blocked.status_code == 404
+
+
+def test_participant_api_evidence_upload_rejects_after_response_submission():
+    from io import BytesIO
+
+    context = _prepare_participant_api_activity_response_context('api-evidence-upload-after-submit')
+
+    with client:
+        submitted = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'finalised response', 'choices': []},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert submitted.status_code == 200
+
+        upload = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/evidence-uploads",
+            data={'activity_id': str(context['activity_id'])},
+            files={'file': ('late.txt', BytesIO(b'ordinary evidence'), 'text/plain')},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert upload.status_code == 409
+        assert upload.json() == {'detail': 'Activity response has already been submitted.'}
