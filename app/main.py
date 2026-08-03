@@ -2612,19 +2612,7 @@ def participant_api_activities(
             if response_row
             else None
         )
-        item = ActivitySummary(
-            activity_id=activity_row.id,
-            title=activity_row.title,
-            prompt=activity_row.prompt or None,
-            activity_type=activity_row.activity_type,
-            required=bool(activity_row.required),
-            position=activity_row.position,
-            availability=ActivityAvailability(
-                status=str(window.get("status") or "open"),
-                release_at=window.get("release_at"),
-                due_at=window.get("due_at"),
-            ),
-        )
+        item = _participant_activity_summary(activity_row, window)
         if response_summary:
             item.response = response_summary
         data.append(item)
@@ -2651,6 +2639,43 @@ def _response_value_from_json(value_json: str | None) -> ActivityResponseValue |
     if not value.model_fields_set:
         return None
     return value
+
+
+def _participant_activity_options(activity_row: Activity) -> list[str] | None:
+    if activity_row.activity_type not in {"single_choice", "multiple_choice"}:
+        return None
+
+    try:
+        payload = json.loads(activity_row.options_json or "[]")
+    except json.JSONDecodeError:
+        return []
+
+    if not isinstance(payload, list):
+        return []
+
+    return [option.strip() for option in payload if isinstance(option, str) and option.strip()]
+
+
+def _participant_activity_summary(activity_row: Activity, window: dict[str, object]) -> ActivitySummary:
+    item = ActivitySummary(
+        activity_id=activity_row.id,
+        title=activity_row.title,
+        prompt=activity_row.prompt or None,
+        activity_type=activity_row.activity_type,
+        required=bool(activity_row.required),
+        position=activity_row.position,
+        availability=ActivityAvailability(
+            status=str(window.get("status") or "open"),
+            release_at=window.get("release_at"),
+            due_at=window.get("due_at"),
+        ),
+    )
+
+    options = _participant_activity_options(activity_row)
+    if options is not None:
+        item.options = options
+
+    return item
 
 
 @app.get(
@@ -2718,21 +2743,7 @@ def participant_api_activity_detail(
     )
 
     window = activity_window(study_row, activity_row, now())
-    result = ActivityDetailResponse(
-        activity=ActivitySummary(
-            activity_id=activity_row.id,
-            title=activity_row.title,
-            prompt=activity_row.prompt or None,
-            activity_type=activity_row.activity_type,
-            required=bool(activity_row.required),
-            position=activity_row.position,
-            availability=ActivityAvailability(
-                status=str(window.get("status") or "open"),
-                release_at=window.get("release_at"),
-                due_at=window.get("due_at"),
-            ),
-        )
-    )
+    result = ActivityDetailResponse(activity=_participant_activity_summary(activity_row, window))
 
     if response_row:
         response_item = ActivityDetailResponseItem(

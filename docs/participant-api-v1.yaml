@@ -907,6 +907,11 @@ components:
             - gps
             - ranking
             - file
+        options:
+          type: array
+          description: Participant-safe response options for choice-based activities only.
+          items:
+            type: string
         required:
           type: boolean
         position:
@@ -983,7 +988,7 @@ components:
     ActivityDetailResponse:
       type: object
       additionalProperties: false
-      required: [activity, response]
+      required: [activity]
       properties:
         activity:
           $ref: '#/components/schemas/ActivitySummary'

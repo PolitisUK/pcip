@@ -94,6 +94,7 @@ class ActivitySummary(BaseModel):
     title: str
     prompt: str | None = None
     activity_type: str
+    options: list[str] | None = None
     required: bool
     position: int
     availability: ActivityAvailability
