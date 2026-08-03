@@ -895,7 +895,8 @@ button.is-loading::after,
 .badge.live,
 .badge.active,
 .badge.submitted,
-.badge.accepted {
+.badge.accepted,
+.badge.clean {
   background: #e8f0ff;
   color: var(--brand-900);
 }
@@ -910,7 +911,8 @@ button.is-loading::after,
 .badge.closed,
 .badge.revoked,
 .badge.archived,
-.badge.failed {
+.badge.failed,
+.badge.rejected {
   background: #f2e6e6;
   color: #7e2c2c;
 }
@@ -1103,6 +1105,25 @@ pre {
   text-align: right;
 }
 
+.portal-signout {
+  margin-top: 4px;
+}
+
+.portal-links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.portal-links a {
+  border-radius: var(--radius-pill);
+  background: var(--brand-soft);
+  padding: 7px 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
 .portal-main {
   max-width: 1020px;
   margin: 0 auto;
@@ -1111,6 +1132,46 @@ pre {
 
 .activity-card {
   margin-bottom: 14px;
+}
+
+.submitted-answer {
+  white-space: pre-wrap;
+}
+
+.evidence-summary {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.evidence-summary > div,
+.evidence-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.evidence-name {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.evidence-download {
+  min-height: var(--control-height-compact);
+  padding: 7px 11px;
+}
+
+.privacy-card details {
+  border-top: 1px solid var(--border);
+  padding: 14px 0;
+}
+
+.privacy-card summary {
+  cursor: pointer;
+  font-weight: 700;
 }
 
 .conversation {

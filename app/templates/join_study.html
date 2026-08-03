@@ -3,6 +3,8 @@
 <div class="login-wrap">
 	<div class="login-card">
 		<div class="brand public-brand"><img class="brand-logo" src="/static/politis_symbol_colour.png" alt="Politis logo"><span class="brand-copy"><strong>Citizen Centric</strong><small>by Politis</small></span></div>
+		{% if flash_notice %}<div class="success" role="status">{{ flash_notice }}</div>{% endif %}
+		{% if flash_error %}<div class="error" role="alert">{{ flash_error }}</div>{% endif %}
 		{% if valid %}
 		<p class="eyebrow">Research invitation</p>
 		<h1>{{ study.title }}</h1>

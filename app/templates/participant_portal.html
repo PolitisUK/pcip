@@ -12,20 +12,33 @@
     <div class="portal-summary">
       <strong>{{ participant.name }}</strong>
       <span class="muted">{{ study.title }}</span>
+      <form method="post" action="/participant-portal/sign-out">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="ghost portal-signout" type="submit">Sign out</button>
+      </form>
     </div>
   </header>
   <main class="portal-main" id="main-content" tabindex="-1">
+    {% if flash_notice %}<div class="success" role="status">{{ flash_notice }}</div>{% endif %}
+    {% if flash_error %}<div class="error" role="alert">{{ flash_error }}</div>{% endif %}
     <section class="card">
       <p class="eyebrow">You're enrolled</p>
       <h1>{{ study.title }}</h1>
       <p>{{ study.description }}</p>
+      <nav class="portal-links" aria-label="Participant portal sections">
+        <a href="#activities">Activities</a>
+        <a href="#messages">Messages</a>
+        <a href="#privacy">Privacy and account</a>
+      </nav>
     </section>
 
-    <section class="section">
+    <section class="section" id="activities">
       <h2>Your activities</h2>
       {% for a in activities %}
       {% set r = responses.get(a.id) %}
       {% set window = activity_windows.get(a.id) %}
+      {% set response_value = response_values.get(a.id, {}) %}
+      {% set evidence = evidence_by_id.get(response_value.get('evidence_id')) %}
       <article class="card activity-card">
         <div class="section-head">
           <div>
@@ -40,6 +53,9 @@
         <p class="notice">This activity will be available from {{ window.release_at.strftime('%d %b %Y %H:%M') }}.</p>
         {% elif window.status == 'closed' %}
         <p class="notice">This activity closed on {{ window.due_at.strftime('%d %b %Y %H:%M') }}.</p>
+        {% elif r and r.status == 'submitted' %}
+        <div class="success" role="status">Your response was submitted{% if r.submitted_at %} on {{ r.submitted_at.strftime('%d %b %Y at %H:%M') }}{% endif %}.</div>
+        {% if response_value.get('answer') %}<p class="submitted-answer">{{ response_value.get('answer') }}</p>{% endif %}
         {% else %}
         <form method="post" action="/participant-portal/activity/{{ a.id }}" enctype="multipart/form-data" class="stack">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -61,6 +77,7 @@
           {% else %}
           <label for="upload-{{ a.id }}">Choose a file</label>
           <input id="upload-{{ a.id }}" type="file" name="upload" {% if a.activity_type in ['photo', 'audio', 'video'] %}accept="{{ a.activity_type }}/*"{% endif %}>
+          <p class="muted">Maximum {{ max_upload_mb }} MB. Files are malware-screened before they can be opened.</p>
           <textarea name="answer" placeholder="Optional caption or note"></textarea>
           {% endif %}
 
@@ -69,6 +86,31 @@
             <button name="action" value="submit">Submit</button>
           </div>
         </form>
+        {% endif %}
+
+        {% if evidence %}
+        <div class="evidence-summary js-evidence-status" data-status-url="/participant-portal/evidence/{{ evidence.id }}/status" data-evidence-id="{{ evidence.id }}">
+          <div>
+            <strong>Attached evidence</strong>
+            <span class="evidence-name">{{ evidence.original_name }}</span>
+          </div>
+          <div class="evidence-state" aria-live="polite">
+            {% set evidence_status = evidence.scan_status|lower|replace(' ', '_') %}
+            {% if evidence_status == 'clean' %}
+            <span class="badge clean">Ready</span>
+            <a class="btn secondary evidence-download" href="/participant-portal/evidence/{{ evidence.id }}">Open file</a>
+            {% elif evidence_status == 'infected' %}
+            <span class="badge rejected">Rejected</span>
+            <span class="muted">This file was blocked by malware screening. Upload a different file before submitting.</span>
+            {% elif evidence_status in ['failed', 'scan_failed', 'not_scanned', 'not_configured', 'error'] %}
+            <span class="badge rejected">Scan failed</span>
+            <span class="muted">The file cannot be opened. Please try uploading it again.</span>
+            {% else %}
+            <span class="badge pending">Scanning</span>
+            <span class="muted">Security checks are still in progress.</span>
+            {% endif %}
+          </div>
+        </div>
         {% endif %}
       </article>
       {% else %}
@@ -91,9 +133,45 @@
       </div>
       <form method="post" action="/participant-portal/message" class="stack section">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <textarea name="body" placeholder="Write to the research team" required></textarea>
+        <label for="participant-message">Write to the research team</label>
+        <textarea id="participant-message" name="body" maxlength="10000" required></textarea>
         <button>Send message</button>
       </form>
+    </section>
+
+    <section id="privacy" class="card section privacy-card">
+      <p class="eyebrow">Your account</p>
+      <h2>Privacy and control</h2>
+      <p>You can ask the research team to delete or anonymise your Citizen Centric data. You can also withdraw from Citizen Centric research at any time.</p>
+
+      <details>
+        <summary>Request deletion or anonymisation</summary>
+        <form method="post" action="/participant-portal/privacy/deletion-request" class="stack section">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label for="deletion-reason">Anything you want the research team to know (optional)</label>
+          <textarea id="deletion-reason" name="reason" maxlength="2000"></textarea>
+          <p class="muted">The team will review the request and may delete or anonymise records where retention obligations apply.</p>
+          <button class="secondary" type="submit">Send data request</button>
+        </form>
+      </details>
+
+      <details>
+        <summary>Withdraw from Citizen Centric research</summary>
+        <form method="post" action="/participant-portal/privacy/withdrawal-request" class="stack section">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label for="withdrawal-contact">How may the team contact you about this request?</label>
+          <select id="withdrawal-contact" name="contact_preference">
+            <option value="none">Do not contact me</option>
+            <option value="email">Email</option>
+            <option value="sms">Text message</option>
+            <option value="phone">Phone</option>
+          </select>
+          <label for="withdrawal-reason">Reason (optional)</label>
+          <textarea id="withdrawal-reason" name="reason" maxlength="2000"></textarea>
+          <p class="notice">Withdrawing ends your access to all Citizen Centric studies immediately. Existing research records are handled under the relevant study privacy terms.</p>
+          <button class="danger" type="submit" data-confirm="Withdraw from all Citizen Centric research now? You will be signed out immediately.">Withdraw and sign out</button>
+        </form>
+      </details>
     </section>
   </main>
 </div>

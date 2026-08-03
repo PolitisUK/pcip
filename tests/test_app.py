@@ -898,12 +898,170 @@ def test_participant_portal_draft_submit_and_message(monkeypatch):
         assert draft.status_code==303
         submit=post_with_csrf(f'/participant-portal/activity/{activity_id}', data={'action':'submit','answer':'final answer'}, follow_redirects=False)
         assert submit.status_code==303
+        late_edit=post_with_csrf(f'/participant-portal/activity/{activity_id}', data={'action':'draft','answer':'changed after submit'}, follow_redirects=False)
+        assert late_edit.status_code==409
         msg=post_with_csrf('/participant-portal/message', data={'body':'Hello research team'}, follow_redirects=False)
         assert msg.status_code==303
         with SessionLocal() as db:
             response=db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id==participant_id,ActivityResponse.activity_id==activity_id))
             assert response.status=='submitted' and 'final answer' in response.value_json
+            assert 'changed after submit' not in response.value_json
             assert db.scalar(select(ParticipantMessage).where(ParticipantMessage.participant_id==participant_id)) is not None
+
+
+def test_participant_website_surfaces_account_privacy_controls_and_no_store():
+    _prepare_participant_api_activity_response_context('website-controls')
+
+    with client:
+        portal = client.get('/participant-portal', follow_redirects=False)
+        assert portal.status_code == 200
+        assert portal.headers.get('cache-control') == 'no-store'
+        assert 'Privacy and control' in portal.text
+        assert 'Request deletion or anonymisation' in portal.text
+        assert 'Withdraw from Citizen Centric research' in portal.text
+        assert 'Citizen Centric' in portal.text
+        assert re.search(r'\bPCIP\b', portal.text, re.IGNORECASE) is None
+
+
+def test_participant_website_sign_out_revokes_session_and_clears_cookie():
+    _prepare_participant_api_activity_response_context('website-sign-out')
+
+    with client:
+        signed_out = post_with_csrf('/participant-portal/sign-out', follow_redirects=False)
+        assert signed_out.status_code == 303
+        assert signed_out.headers['location'] == '/join-study'
+        assert 'public_auth_session=' in (signed_out.headers.get('set-cookie') or '')
+        portal = client.get('/participant-portal', follow_redirects=False)
+        assert portal.status_code == 303
+        assert portal.headers['location'] == '/join-study'
+
+
+def test_participant_website_deletion_request_is_audited_without_deleting_account():
+    from app.models import AuditEvent, Participant
+
+    context = _prepare_participant_api_activity_response_context('website-deletion')
+
+    with client:
+        requested = post_with_csrf(
+            '/participant-portal/privacy/deletion-request',
+            data={'reason': 'Please remove data that is no longer required'},
+            follow_redirects=False,
+        )
+        assert requested.status_code == 303
+        assert requested.headers['location'] == '/participant-portal#privacy'
+        portal = client.get('/participant-portal')
+        assert 'data deletion request was received' in portal.text
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
+        event = db.scalar(
+            select(AuditEvent)
+            .where(
+                AuditEvent.action == 'participant.deletion_requested',
+                AuditEvent.entity_id == str(context['participant_id']),
+            )
+            .order_by(AuditEvent.id.desc())
+        )
+        assert event is not None
+        assert 'Please remove data that is no longer required' in event.detail
+
+
+def test_participant_website_withdrawal_revokes_portal_access_and_updates_consent():
+    from app.models import Participant, StudyEnrolment
+
+    context = _prepare_participant_api_activity_response_context('website-withdrawal')
+
+    with client:
+        withdrawn = post_with_csrf(
+            '/participant-portal/privacy/withdrawal-request',
+            data={'reason': 'I no longer wish to participate', 'contact_preference': 'email'},
+            follow_redirects=False,
+        )
+        assert withdrawn.status_code == 303
+        assert withdrawn.headers['location'] == '/join-study'
+        assert 'public_auth_session=' in (withdrawn.headers.get('set-cookie') or '')
+        unavailable = client.get('/participant-portal', follow_redirects=False)
+        assert unavailable.status_code == 303
+        assert unavailable.headers['location'] == '/join-study'
+        revoked_api = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert revoked_api.status_code == 401
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
+        assert participant_row.consent_status == 'withdrawn'
+        enrolment = db.scalar(
+            select(StudyEnrolment).where(
+                StudyEnrolment.study_id == context['study_id'],
+                StudyEnrolment.participant_id == context['participant_id'],
+            )
+        )
+        assert enrolment is not None
+        assert enrolment.status == 'withdrawn'
+
+
+def test_participant_website_evidence_is_scoped_screened_and_downloadable_when_clean(monkeypatch):
+    from io import BytesIO
+    import app.main as main_module
+    from app.models import ActivityResponse, EvidenceFile
+
+    first = _prepare_participant_api_activity_response_context('website-evidence-a')
+    monkeypatch.setattr(main_module, 'scan_file', lambda _path: ('clean', 'No threats found'))
+
+    with client:
+        mismatch = post_with_csrf(
+            f"/participant-portal/activity/{first['activity_id']}",
+            data={'action': 'draft', 'answer': 'mismatch'},
+            files={'upload': ('mismatch.txt', BytesIO(b'not an image'), 'image/png')},
+            follow_redirects=False,
+        )
+        assert mismatch.status_code == 415
+
+        uploaded = post_with_csrf(
+            f"/participant-portal/activity/{first['activity_id']}",
+            data={'action': 'draft', 'answer': 'evidence note'},
+            files={'upload': ('participant-note.txt', BytesIO(b'participant evidence'), 'text/plain')},
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+
+        portal = client.get('/participant-portal')
+        assert 'Attached evidence' in portal.text
+        assert 'participant-note.txt' in portal.text
+
+    with SessionLocal() as db:
+        response_row = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == first['activity_id'],
+                ActivityResponse.participant_id == first['participant_id'],
+            )
+        )
+        assert response_row is not None
+        evidence_id = json.loads(response_row.value_json)['evidence_id']
+        evidence_row = db.get(EvidenceFile, evidence_id)
+        assert evidence_row is not None
+        assert evidence_row.scan_status == 'clean'
+
+    with client:
+        status = client.get(f'/participant-portal/evidence/{evidence_id}/status')
+        assert status.status_code == 200
+        assert status.headers.get('cache-control') == 'no-store'
+        assert status.json() == {'evidence_id': evidence_id, 'status': 'clean', 'downloadable': True}
+        downloaded = client.get(f'/participant-portal/evidence/{evidence_id}')
+        assert downloaded.status_code == 200
+        assert downloaded.headers.get('cache-control') == 'no-store'
+        assert downloaded.content == b'participant evidence'
+
+    second = _prepare_participant_api_activity_response_context('website-evidence-b')
+    assert second['participant_id'] != first['participant_id']
+    with client:
+        blocked = client.get(f'/participant-portal/evidence/{evidence_id}/status')
+        assert blocked.status_code == 404
 
 
 def test_bulk_import_editing_and_password_reset_request():
@@ -6025,7 +6183,7 @@ def test_participant_api_messages_list_and_create_excludes_internal_notes():
         assert duplicate.status_code == 409
 
 
-def test_participant_api_privacy_withdrawal_request_updates_participant_and_enrolment():
+def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_only():
     from app.models import Participant, StudyEnrolment
 
     context = _prepare_participant_api_activity_response_context('api-privacy-withdrawal')
@@ -6060,13 +6218,13 @@ def test_participant_api_privacy_withdrawal_request_updates_participant_and_enro
             },
             follow_redirects=False,
         )
-        assert duplicate.status_code == 403
+        assert duplicate.status_code == 401
 
     with SessionLocal() as db:
         participant_row = db.get(Participant, context['participant_id'])
         assert participant_row is not None
-        assert participant_row.consent_status == 'withdrawn'
-        assert participant_row.status == 'withdrawn'
+        assert participant_row.consent_status == 'granted'
+        assert participant_row.status == 'active'
         enrolment = db.scalar(
             select(StudyEnrolment).where(
                 StudyEnrolment.study_id == context['study_id'],
