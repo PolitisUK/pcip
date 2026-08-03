@@ -5,5 +5,8 @@ describe("env defaults", () => {
     expect(env.apiBaseUrl).toMatch(/^https?:\/\//);
     expect(env.deepLinkHost.length).toBeGreaterThan(0);
     expect(env.deepLinkScheme.length).toBeGreaterThan(0);
+    expect(env.privacyUrl).toMatch(/^https?:\/\//);
+    expect(env.termsUrl).toMatch(/^https?:\/\//);
+    expect(env.supportUrl).toMatch(/^https?:\/\//);
   });
 });

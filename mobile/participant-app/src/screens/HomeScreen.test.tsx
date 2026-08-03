@@ -2,11 +2,15 @@ import { fireEvent, render, waitFor } from "@testing-library/react-native";
 
 import { ApiRequestError } from "../api/client";
 import {
+  createParticipantMessage,
   getParticipantEvidenceStatus,
+  getParticipantMessages,
   getCurrentSession,
   getParticipantActivities,
   getParticipantActivityDetail,
   getParticipantStudies,
+  requestParticipantDeletion,
+  requestParticipantWithdrawal,
   saveParticipantActivityDraft,
   submitParticipantActivityResponse,
   uploadParticipantActivityEvidence,
@@ -28,6 +32,14 @@ jest.mock("../api/participantApi", () => ({
   submitParticipantActivityResponse: jest.fn(),
   uploadParticipantActivityEvidence: jest.fn(),
   getParticipantEvidenceStatus: jest.fn(),
+  getParticipantMessages: jest.fn(),
+  createParticipantMessage: jest.fn(),
+  requestParticipantWithdrawal: jest.fn(),
+  requestParticipantDeletion: jest.fn(),
+}));
+
+jest.mock("expo-linking", () => ({
+  openURL: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("expo-document-picker", () => ({
@@ -58,8 +70,15 @@ const mockedSaveParticipantActivityDraft = jest.mocked(saveParticipantActivityDr
 const mockedSubmitParticipantActivityResponse = jest.mocked(submitParticipantActivityResponse);
 const mockedUploadParticipantActivityEvidence = jest.mocked(uploadParticipantActivityEvidence);
 const mockedGetParticipantEvidenceStatus = jest.mocked(getParticipantEvidenceStatus);
+const mockedGetParticipantMessages = jest.mocked(getParticipantMessages);
+const mockedCreateParticipantMessage = jest.mocked(createParticipantMessage);
+const mockedRequestParticipantWithdrawal = jest.mocked(requestParticipantWithdrawal);
+const mockedRequestParticipantDeletion = jest.mocked(requestParticipantDeletion);
 const mockedDocumentPicker = jest.requireMock("expo-document-picker") as {
   getDocumentAsync: jest.Mock;
+};
+const mockedLinking = jest.requireMock("expo-linking") as {
+  openURL: jest.Mock;
 };
 
 const session: ParticipantSessionResponse = {
@@ -153,6 +172,33 @@ describe("HomeScreen", () => {
       },
       downloadable: true,
     });
+    mockedGetParticipantMessages.mockResolvedValue({
+      data: [],
+      pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
+    });
+    mockedCreateParticipantMessage.mockResolvedValue({
+      message: {
+        message_id: 77,
+        sender_type: "participant",
+        body: "Hello team",
+        created_at: "2030-01-01T11:05:00Z",
+      },
+    });
+    mockedRequestParticipantWithdrawal.mockResolvedValue({
+      request_id: 15,
+      request_type: "withdrawal",
+      status: "received",
+      submitted_at: "2030-01-01T11:30:00Z",
+      message: "ok",
+    });
+    mockedRequestParticipantDeletion.mockResolvedValue({
+      request_id: 16,
+      request_type: "deletion",
+      status: "received",
+      submitted_at: "2030-01-01T11:31:00Z",
+      message: "ok",
+    });
+    mockedLinking.openURL.mockResolvedValue(undefined);
     mockedDocumentPicker.getDocumentAsync.mockResolvedValue({
       canceled: false,
       assets: [
@@ -1052,6 +1098,98 @@ describe("HomeScreen", () => {
 
     await waitFor(() => {
       expect(getByText("You appear to be offline. Check your connection and try again.")).toBeTruthy();
+    });
+  });
+
+  it("loads inbox messages and sends a participant message", async () => {
+    mockedGetParticipantStudies.mockResolvedValue({
+      data: [
+        { study_id: 11, title: "Study One", description: null, status: "active", methodology: "survey", enrolled: true },
+      ],
+      pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
+    });
+    mockedGetParticipantActivities.mockResolvedValue({ data: [] });
+    mockedGetParticipantMessages.mockResolvedValue({
+      data: [
+        {
+          message_id: 1,
+          sender_type: "researcher",
+          body: "Welcome to the study inbox",
+          created_at: "2030-01-01T09:00:00Z",
+        },
+      ],
+      pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
+    });
+
+    const { getByLabelText, getByText } = await renderHome();
+
+    await waitFor(() => {
+      expect(getByLabelText("Open messages panel")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Open messages panel"));
+
+    await waitFor(() => {
+      expect(getByText("Welcome to the study inbox")).toBeTruthy();
+    });
+
+    fireEvent.changeText(getByLabelText("Compose message"), "Could you clarify next steps?");
+    fireEvent.press(getByLabelText("Send message"));
+
+    await waitFor(() => {
+      expect(mockedCreateParticipantMessage).toHaveBeenCalledWith(
+        "token",
+        { body: "Could you clarify next steps?" },
+        expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      );
+      expect(getByText("Message sent.")).toBeTruthy();
+    });
+  });
+
+  it("submits withdrawal and deletion requests from account panel", async () => {
+    mockedGetParticipantStudies.mockResolvedValue({
+      data: [
+        { study_id: 11, title: "Study One", description: null, status: "active", methodology: "survey", enrolled: true },
+      ],
+      pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
+    });
+    mockedGetParticipantActivities.mockResolvedValue({ data: [] });
+    const onSessionExpired = jest.fn();
+
+    const { getByLabelText } = await renderHome({ onSessionExpired });
+
+    await waitFor(() => {
+      expect(getByLabelText("Open account and privacy panel")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Open account and privacy panel"));
+    fireEvent.press(getByLabelText("Open privacy policy"));
+
+    await waitFor(() => {
+      expect(mockedLinking.openURL).toHaveBeenCalled();
+    });
+
+    fireEvent.press(getByLabelText("Start deletion request"));
+    fireEvent.press(getByLabelText("Confirm deletion request"));
+
+    await waitFor(() => {
+      expect(mockedRequestParticipantDeletion).toHaveBeenCalledWith(
+        "token",
+        expect.objectContaining({ study_id: 11, mode_preference: "auto" }),
+        expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      );
+    });
+
+    fireEvent.press(getByLabelText("Start withdrawal request"));
+    fireEvent.press(getByLabelText("Confirm withdrawal request"));
+
+    await waitFor(() => {
+      expect(mockedRequestParticipantWithdrawal).toHaveBeenCalledWith(
+        "token",
+        expect.objectContaining({ study_id: 11, scope: "study" }),
+        expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      );
+      expect(onSessionExpired).toHaveBeenCalledTimes(1);
     });
   });
 
