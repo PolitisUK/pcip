@@ -2,20 +2,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import * as Linking from "expo-linking";
 
 import { ApiRequestError } from "../api/client";
 import {
+  createParticipantMessage,
+  getParticipantMessages,
   getParticipantEvidenceStatus,
   getCurrentSession,
   getParticipantActivityDetail,
+  requestParticipantDeletion,
+  requestParticipantWithdrawal,
   saveParticipantActivityDraft,
   submitParticipantActivityResponse,
   uploadParticipantActivityEvidence,
+  type CreateMessageResponse,
   type ActivityDetailResponse,
   type EvidenceMetadata,
   type DraftResponseRequest,
+  type MessageListResponse,
 } from "../api/participantApi";
 import { CitizenCentricLogo } from "../components/CitizenCentricLogo";
+import { env } from "../config/env";
 import { loadSessionMaterial } from "../services/sessionStore";
 import { ParticipantHomeController } from "../studies/participantHomeController";
 import type { ActivitySummary, ParticipantHomeState } from "../studies/types";
@@ -76,6 +84,25 @@ type ActivityDetailViewState =
   | { status: "ready"; activityId: number; detail: ActivityDetailResponse; editor: ActivityEditorState }
   | { status: "error"; activityId: number; message: string };
 
+type HomePanel = "home" | "account" | "messages";
+
+type MessagesPanelState = {
+  status: "idle" | "loading" | "ready" | "error";
+  items: MessageListResponse["data"];
+  selectedThreadId: string | null;
+  composeBody: string;
+  sending: boolean;
+  message: EditorMessage | null;
+};
+
+type AccountPanelState = {
+  withdrawing: boolean;
+  deleting: boolean;
+  confirmWithdraw: boolean;
+  confirmDelete: boolean;
+  message: EditorMessage | null;
+};
+
 const dateLabel = new Intl.DateTimeFormat("en-GB", {
   day: "numeric",
   month: "short",
@@ -89,6 +116,23 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
   const [homeState, setHomeState] = useState<ParticipantHomeState>({ status: "initialising" });
   const accessTokenRef = useRef<string | null>(null);
   const [detailState, setDetailState] = useState<ActivityDetailViewState>({ status: "idle" });
+  const [homePanel, setHomePanel] = useState<HomePanel>("home");
+  const [consentStatus, setConsentStatus] = useState<string>("granted");
+  const [messagesState, setMessagesState] = useState<MessagesPanelState>({
+    status: "idle",
+    items: [],
+    selectedThreadId: null,
+    composeBody: "",
+    sending: false,
+    message: null,
+  });
+  const [accountState, setAccountState] = useState<AccountPanelState>({
+    withdrawing: false,
+    deleting: false,
+    confirmWithdraw: false,
+    confirmDelete: false,
+    message: null,
+  });
   const detailRequestVersion = useRef(0);
   const detailAbortController = useRef<AbortController | null>(null);
   const writeRequestVersion = useRef(0);
@@ -96,6 +140,8 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
   const evidenceRequestVersion = useRef(0);
   const evidenceAbortController = useRef<AbortController | null>(null);
   const evidencePollTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messagesRequestVersion = useRef(0);
+  const messagesAbortController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const unsubscribe = controller.subscribe((state) => {
@@ -130,6 +176,8 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
           return;
         }
 
+        setConsentStatus(session.participant.consent_status);
+
         await controller.load({
           accessToken: token,
           session,
@@ -161,6 +209,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
           },
           preferredStudyId: sessionMaterial.studyScope?.[0],
         });
+        setConsentStatus(sessionMaterial.consentStatus || "granted");
       }
     };
 
@@ -179,6 +228,8 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
         clearTimeout(evidencePollTimeout.current);
         evidencePollTimeout.current = null;
       }
+      messagesAbortController.current?.abort();
+      messagesAbortController.current = null;
     };
   }, [controller, onSessionExpired, participantDisplayName]);
 
@@ -189,6 +240,10 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
   }, [homeState, onSessionExpired]);
 
   const participantName = resolveParticipantName(homeState, participantDisplayName);
+  const activeStudyTitle = hasJourneyData(homeState)
+    ? homeState.studies.find((study) => study.study_id === homeState.activeStudyId)?.title || "No study selected"
+    : "No study selected";
+  const consentLabel = readableConsentStatus(consentStatus);
 
   const updateReadyDetail = (
     updater: (state: Extract<ActivityDetailViewState, { status: "ready" }>) => Extract<ActivityDetailViewState, { status: "ready" }>,
@@ -884,6 +939,218 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
     }));
   };
 
+  const openPolicyLink = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      setAccountState((current) => ({
+        ...current,
+        message: { tone: "error", text: "We could not open this link right now." },
+      }));
+    }
+  };
+
+  const refreshMessages = async () => {
+    const accessToken = accessTokenRef.current;
+    if (!accessToken) {
+      return;
+    }
+
+    messagesRequestVersion.current += 1;
+    const requestVersion = messagesRequestVersion.current;
+    messagesAbortController.current?.abort();
+    const requestController = new AbortController();
+    messagesAbortController.current = requestController;
+
+    setMessagesState((current) => ({
+      ...current,
+      status: "loading",
+      message: null,
+    }));
+
+    try {
+      const result = await getParticipantMessages(accessToken, { signal: requestController.signal });
+      if (requestVersion !== messagesRequestVersion.current) {
+        return;
+      }
+
+      setMessagesState((current) => ({
+        ...current,
+        status: "ready",
+        items: result.data,
+        selectedThreadId: "study-thread",
+      }));
+    } catch (error) {
+      if (requestVersion !== messagesRequestVersion.current) {
+        return;
+      }
+      if (error instanceof ApiRequestError && error.status === 401) {
+        onSessionExpired();
+        return;
+      }
+
+      setMessagesState((current) => ({
+        ...current,
+        status: "error",
+        message: {
+          tone: "error",
+          text: (error instanceof ApiRequestError && (error.kind === "network" || error.kind === "timeout"))
+            ? "You appear to be offline. Check your connection and try again."
+            : "We could not load messages right now.",
+        },
+      }));
+    }
+  };
+
+  const sendMessage = async () => {
+    const accessToken = accessTokenRef.current;
+    const body = messagesState.composeBody.trim();
+    if (!accessToken || !body) {
+      return;
+    }
+
+    setMessagesState((current) => ({
+      ...current,
+      sending: true,
+      message: null,
+    }));
+
+    try {
+      const created: CreateMessageResponse = await createParticipantMessage(
+        accessToken,
+        { body },
+        { idempotencyKey: createIdempotencyKey("message", 0) },
+      );
+
+      setMessagesState((current) => ({
+        ...current,
+        status: "ready",
+        sending: false,
+        composeBody: "",
+        items: [...current.items, created.message],
+        selectedThreadId: "study-thread",
+        message: { tone: "success", text: "Message sent." },
+      }));
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 401) {
+        onSessionExpired();
+        return;
+      }
+
+      setMessagesState((current) => ({
+        ...current,
+        sending: false,
+        message: {
+          tone: "error",
+          text: (error instanceof ApiRequestError && (error.kind === "network" || error.kind === "timeout"))
+            ? "You appear to be offline. Check your connection and try again."
+            : "We could not send this message right now.",
+        },
+      }));
+    }
+  };
+
+  const submitWithdrawalRequest = async () => {
+    const accessToken = accessTokenRef.current;
+    if (!accessToken || !hasJourneyData(homeState) || homeState.activeStudyId === null) {
+      return;
+    }
+
+    setAccountState((current) => ({
+      ...current,
+      withdrawing: true,
+      message: null,
+      confirmWithdraw: false,
+    }));
+
+    try {
+      await requestParticipantWithdrawal(
+        accessToken,
+        {
+          scope: "study",
+          study_id: homeState.activeStudyId,
+          reason: "Participant requested withdrawal from account screen.",
+          contact_preference: "email",
+        },
+        { idempotencyKey: createIdempotencyKey("withdrawal", homeState.activeStudyId) },
+      );
+
+      setAccountState((current) => ({
+        ...current,
+        withdrawing: false,
+        message: { tone: "success", text: "Withdrawal request received. Your account session will now sign out." },
+      }));
+      onSessionExpired();
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 401) {
+        onSessionExpired();
+        return;
+      }
+      setAccountState((current) => ({
+        ...current,
+        withdrawing: false,
+        message: {
+          tone: "error",
+          text: (error instanceof ApiRequestError && (error.kind === "network" || error.kind === "timeout"))
+            ? "You appear to be offline. Check your connection and try again."
+            : "We could not submit your withdrawal request right now.",
+        },
+      }));
+    }
+  };
+
+  const submitDeletionRequest = async () => {
+    const accessToken = accessTokenRef.current;
+    if (!accessToken || !hasJourneyData(homeState) || homeState.activeStudyId === null) {
+      return;
+    }
+
+    setAccountState((current) => ({
+      ...current,
+      deleting: true,
+      message: null,
+      confirmDelete: false,
+    }));
+
+    try {
+      await requestParticipantDeletion(
+        accessToken,
+        {
+          mode_preference: "auto",
+          study_id: homeState.activeStudyId,
+          reason: "Participant requested deletion from account screen.",
+        },
+        { idempotencyKey: createIdempotencyKey("deletion", homeState.activeStudyId) },
+      );
+
+      setAccountState((current) => ({
+        ...current,
+        deleting: false,
+        message: { tone: "success", text: "Deletion request received. The research team will process it securely." },
+      }));
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 401) {
+        onSessionExpired();
+        return;
+      }
+      setAccountState((current) => ({
+        ...current,
+        deleting: false,
+        message: {
+          tone: "error",
+          text: (error instanceof ApiRequestError && (error.kind === "network" || error.kind === "timeout"))
+            ? "You appear to be offline. Check your connection and try again."
+            : "We could not submit your deletion request right now.",
+        },
+      }));
+    }
+  };
+
+  const openMessagesPanel = () => {
+    setHomePanel("messages");
+    void refreshMessages();
+  };
+
   const showDetail = detailState.status !== "idle";
 
   if (showDetail) {
@@ -1062,52 +1329,244 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
 
       {hasJourneyData(homeState) && (
         <View style={styles.contentBlock}>
-          {homeState.studies.length > 1 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Choose a study</Text>
-              <View style={styles.studyList}>
-                {homeState.studies.map((study) => {
-                  const selected = homeState.activeStudyId === study.study_id;
+          <View style={styles.panelTabs}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open activities panel"
+              onPress={() => setHomePanel("home")}
+              style={[styles.panelTab, homePanel === "home" ? styles.panelTabActive : null]}
+            >
+              <Text style={[styles.panelTabText, homePanel === "home" ? styles.panelTabTextActive : null]}>Activities</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open messages panel"
+              onPress={openMessagesPanel}
+              style={[styles.panelTab, homePanel === "messages" ? styles.panelTabActive : null]}
+            >
+              <Text style={[styles.panelTabText, homePanel === "messages" ? styles.panelTabTextActive : null]}>Messages</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open account and privacy panel"
+              onPress={() => setHomePanel("account")}
+              style={[styles.panelTab, homePanel === "account" ? styles.panelTabActive : null]}
+            >
+              <Text style={[styles.panelTabText, homePanel === "account" ? styles.panelTabTextActive : null]}>Account</Text>
+            </Pressable>
+          </View>
 
-                  return (
-                    <Pressable
-                      key={study.study_id}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Select study ${study.title}`}
-                      onPress={() => {
-                        cancelEvidenceOperations();
-                        setDetailState({ status: "idle" });
-                        void controller.selectStudy(study.study_id);
-                      }}
-                      style={[styles.studyChip, selected ? styles.studyChipSelected : null]}
-                    >
-                      <Text style={[styles.studyChipText, selected ? styles.studyChipTextSelected : null]}>{study.title}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              {homeState.requiresStudySelection ? <Text style={styles.body}>Choose a study to view its activities.</Text> : null}
+          {homePanel === "home" && (
+            <>
+              {homeState.studies.length > 1 && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Choose a study</Text>
+                  <View style={styles.studyList}>
+                    {homeState.studies.map((study) => {
+                      const selected = homeState.activeStudyId === study.study_id;
+
+                      return (
+                        <Pressable
+                          key={study.study_id}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Select study ${study.title}`}
+                          onPress={() => {
+                            cancelEvidenceOperations();
+                            setDetailState({ status: "idle" });
+                            void controller.selectStudy(study.study_id);
+                          }}
+                          style={[styles.studyChip, selected ? styles.studyChipSelected : null]}
+                        >
+                          <Text style={[styles.studyChipText, selected ? styles.studyChipTextSelected : null]}>{study.title}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  {homeState.requiresStudySelection ? <Text style={styles.body}>Choose a study to view its activities.</Text> : null}
+                </View>
+              )}
+
+              {homeState.activeStudyId !== null && (
+                <>
+                  {homeState.isRefreshing && (
+                    <View style={styles.refreshRow}>
+                      <ActivityIndicator size="small" color="#00573d" />
+                      <Text style={styles.metaLine}>Refreshing</Text>
+                    </View>
+                  )}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Refresh activities"
+                    onPress={() => void controller.refresh()}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>Refresh</Text>
+                  </Pressable>
+                  <ActivitySections activities={homeState.activities} onSelect={openActivityDetail} />
+                </>
+              )}
+            </>
+          )}
+
+          {homePanel === "messages" && (
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Inbox</Text>
+              <Text style={styles.metaLine}>Study: {activeStudyTitle}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Refresh messages"
+                onPress={() => void refreshMessages()}
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.secondaryButtonText}>Refresh messages</Text>
+              </Pressable>
+              {messagesState.status === "loading" && (
+                <View style={styles.refreshRow}>
+                  <ActivityIndicator size="small" color="#00573d" />
+                  <Text style={styles.metaLine}>Loading messages</Text>
+                </View>
+              )}
+              {messagesState.items.length === 0 && messagesState.status === "ready" ? (
+                <Text style={styles.body}>No messages yet. Send a message to your study team.</Text>
+              ) : null}
+              {messagesState.items.map((item) => (
+                <View key={item.message_id} style={styles.messageRow}>
+                  <Text style={styles.cardTitle}>{item.sender_type === "researcher" ? "Research Team" : "You"}</Text>
+                  <Text style={styles.body}>{item.body}</Text>
+                  <Text style={styles.metaLine}>{formatDateTime(item.created_at)}</Text>
+                </View>
+              ))}
+              {messagesState.message ? <InlineMessage message={messagesState.message} /> : null}
+              <TextInput
+                accessibilityLabel="Compose message"
+                multiline
+                numberOfLines={4}
+                onChangeText={(text) => setMessagesState((current) => ({ ...current, composeBody: text }))}
+                placeholder="Write a secure message to your study team"
+                style={[styles.input, styles.multilineInput]}
+                textAlignVertical="top"
+                value={messagesState.composeBody}
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+                accessibilityState={{ disabled: messagesState.sending || !messagesState.composeBody.trim() }}
+                disabled={messagesState.sending || !messagesState.composeBody.trim()}
+                onPress={() => void sendMessage()}
+                style={[styles.button, (messagesState.sending || !messagesState.composeBody.trim()) ? styles.disabledPrimaryButton : null]}
+              >
+                <Text style={styles.buttonText}>{messagesState.sending ? "Sending" : "Send message"}</Text>
+              </Pressable>
             </View>
           )}
 
-          {homeState.activeStudyId !== null && (
-            <>
-              {homeState.isRefreshing && (
-                <View style={styles.refreshRow}>
-                  <ActivityIndicator size="small" color="#00573d" />
-                  <Text style={styles.metaLine}>Refreshing</Text>
-                </View>
-              )}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Refresh activities"
-                onPress={() => void controller.refresh()}
-                style={styles.secondaryButton}
-              >
-                <Text style={styles.secondaryButtonText}>Refresh</Text>
-              </Pressable>
-              <ActivitySections activities={homeState.activities} onSelect={openActivityDetail} />
-            </>
+          {homePanel === "account" && (
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Account and privacy</Text>
+              <Text style={styles.metaLine}>Participant: {participantName || "Participant"}</Text>
+              <Text style={styles.metaLine}>Current study: {activeStudyTitle}</Text>
+              <Text style={styles.metaLine}>Consent status: {consentLabel}</Text>
+              {accountState.message ? <InlineMessage message={accountState.message} /> : null}
+
+              <View style={styles.actionRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open privacy policy"
+                  onPress={() => void openPolicyLink(env.privacyUrl)}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryButtonText}>Privacy policy</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open terms"
+                  onPress={() => void openPolicyLink(env.termsUrl)}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryButtonText}>Terms</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open support"
+                  onPress={() => void openPolicyLink(env.supportUrl)}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryButtonText}>Support</Text>
+                </Pressable>
+              </View>
+
+              <View style={styles.confirmPanel}>
+                <Text style={styles.body}>Withdraw from this study</Text>
+                <Text style={styles.metaLine}>This removes your active participation and signs you out.</Text>
+                {!accountState.confirmWithdraw ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Start withdrawal request"
+                    onPress={() => setAccountState((current) => ({ ...current, confirmWithdraw: true, confirmDelete: false }))}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>Request withdrawal</Text>
+                  </Pressable>
+                ) : (
+                  <View style={styles.actionRow}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancel withdrawal request"
+                      onPress={() => setAccountState((current) => ({ ...current, confirmWithdraw: false }))}
+                      style={styles.secondaryButton}
+                    >
+                      <Text style={styles.secondaryButtonText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Confirm withdrawal request"
+                      accessibilityState={{ disabled: accountState.withdrawing }}
+                      disabled={accountState.withdrawing}
+                      onPress={() => void submitWithdrawalRequest()}
+                      style={[styles.button, accountState.withdrawing ? styles.disabledPrimaryButton : null]}
+                    >
+                      <Text style={styles.buttonText}>{accountState.withdrawing ? "Submitting" : "Confirm withdrawal"}</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.confirmPanel}>
+                <Text style={styles.body}>Request account deletion</Text>
+                <Text style={styles.metaLine}>The research team will process deletion or anonymisation safely.</Text>
+                {!accountState.confirmDelete ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Start deletion request"
+                    onPress={() => setAccountState((current) => ({ ...current, confirmDelete: true, confirmWithdraw: false }))}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>Request deletion</Text>
+                  </Pressable>
+                ) : (
+                  <View style={styles.actionRow}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancel deletion request"
+                      onPress={() => setAccountState((current) => ({ ...current, confirmDelete: false }))}
+                      style={styles.secondaryButton}
+                    >
+                      <Text style={styles.secondaryButtonText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Confirm deletion request"
+                      accessibilityState={{ disabled: accountState.deleting }}
+                      disabled={accountState.deleting}
+                      onPress={() => void submitDeletionRequest()}
+                      style={[styles.button, accountState.deleting ? styles.disabledPrimaryButton : null]}
+                    >
+                      <Text style={styles.buttonText}>{accountState.deleting ? "Submitting" : "Confirm deletion"}</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            </View>
           )}
         </View>
       )}
@@ -1534,6 +1993,16 @@ function readableResponseStatus(status?: "draft" | "submitted"): string {
   return "Not started";
 }
 
+function readableConsentStatus(status: string): string {
+  if (status === "granted") {
+    return "Granted";
+  }
+  if (status === "withdrawn") {
+    return "Withdrawn";
+  }
+  return "Pending";
+}
+
 function isSubmittedResponse(status?: "draft" | "submitted"): boolean {
   return status === "submitted";
 }
@@ -1706,7 +2175,10 @@ function mapEvidenceActionError(error: unknown): string {
   return "We could not upload or verify this evidence right now. Please try again.";
 }
 
-function createIdempotencyKey(action: "draft" | "submit" | "evidence", activityId: number): string {
+function createIdempotencyKey(
+  action: "draft" | "submit" | "evidence" | "message" | "withdrawal" | "deletion",
+  activityId: number,
+): string {
   return `mob-${action}-${activityId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
@@ -1969,6 +2441,33 @@ const styles = StyleSheet.create({
   contentBlock: {
     gap: 16,
   },
+  panelTabs: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  panelTab: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#9fbfb2",
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minHeight: 40,
+    justifyContent: "center",
+  },
+  panelTabActive: {
+    borderColor: "#00573d",
+    backgroundColor: "#d8eee4",
+  },
+  panelTabText: {
+    color: "#1e4438",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  panelTabTextActive: {
+    color: "#0d3a2d",
+  },
   sectionGroup: {
     gap: 16,
   },
@@ -2028,6 +2527,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
     padding: 14,
     gap: 8,
+  },
+  messageRow: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#d1e2db",
+    backgroundColor: "#f9fcfa",
+    padding: 10,
+    gap: 6,
   },
   cardTitle: {
     color: "#0d3a2d",

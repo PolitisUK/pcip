@@ -18,6 +18,12 @@ type SubmittedResponseResult = components["schemas"]["SubmittedResponseResult"];
 type EvidenceUploadResponse = components["schemas"]["EvidenceUploadResponse"];
 type EvidenceStatusResponse = components["schemas"]["EvidenceStatusResponse"];
 type EvidenceMetadata = components["schemas"]["EvidenceMetadata"];
+type MessageListResponse = components["schemas"]["MessageListResponse"];
+type CreateMessageRequest = components["schemas"]["CreateMessageRequest"];
+type CreateMessageResponse = components["schemas"]["CreateMessageResponse"];
+type WithdrawalRequest = components["schemas"]["WithdrawalRequest"];
+type DeletionRequest = components["schemas"]["DeletionRequest"];
+type PrivacyRequestAcknowledgement = components["schemas"]["PrivacyRequestAcknowledgement"];
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -274,6 +280,59 @@ export async function getParticipantEvidenceStatus(
   });
 }
 
+export async function getParticipantMessages(
+  accessToken: string,
+  options?: RequestOptions,
+): Promise<MessageListResponse> {
+  return apiRequest<MessageListResponse>("/api/v1/participant/messages", {
+    method: "GET",
+    accessToken,
+    signal: options?.signal,
+  });
+}
+
+export async function createParticipantMessage(
+  accessToken: string,
+  payload: CreateMessageRequest,
+  options?: RequestOptions,
+): Promise<CreateMessageResponse> {
+  return apiRequest<CreateMessageResponse>("/api/v1/participant/messages", {
+    method: "POST",
+    accessToken,
+    body: payload,
+    headers: withIdempotencyHeader(options),
+    signal: options?.signal,
+  });
+}
+
+export async function requestParticipantWithdrawal(
+  accessToken: string,
+  payload: WithdrawalRequest,
+  options?: RequestOptions,
+): Promise<PrivacyRequestAcknowledgement> {
+  return apiRequest<PrivacyRequestAcknowledgement>("/api/v1/participant/privacy/withdrawal-requests", {
+    method: "POST",
+    accessToken,
+    body: payload,
+    headers: withIdempotencyHeader(options),
+    signal: options?.signal,
+  });
+}
+
+export async function requestParticipantDeletion(
+  accessToken: string,
+  payload: DeletionRequest,
+  options?: RequestOptions,
+): Promise<PrivacyRequestAcknowledgement> {
+  return apiRequest<PrivacyRequestAcknowledgement>("/api/v1/participant/privacy/deletion-requests", {
+    method: "POST",
+    accessToken,
+    body: payload,
+    headers: withIdempotencyHeader(options),
+    signal: options?.signal,
+  });
+}
+
 function parseJsonObject(raw: string): JsonObject | null {
   if (!raw) {
     return null;
@@ -325,4 +384,10 @@ export type {
   EvidenceUploadResponse,
   EvidenceStatusResponse,
   UploadEvidenceInput,
+  MessageListResponse,
+  CreateMessageRequest,
+  CreateMessageResponse,
+  WithdrawalRequest,
+  DeletionRequest,
+  PrivacyRequestAcknowledgement,
 };
