@@ -791,6 +791,9 @@ describe("HomeScreen", () => {
     await waitFor(() => {
       expect(mockedUploadParticipantActivityEvidence).toHaveBeenCalledTimes(1);
       expect(getByText("Evidence scan passed. Ready for draft save and submission.")).toBeTruthy();
+      expect(getByText("Evidence preview: evidence.txt")).toBeTruthy();
+      expect(getByLabelText("Replace attached evidence")).toBeTruthy();
+      expect(getByLabelText("Remove attached evidence")).toBeTruthy();
     });
 
     fireEvent.press(getByLabelText("Save draft response"));
@@ -917,6 +920,101 @@ describe("HomeScreen", () => {
 
     await waitFor(() => {
       expect(getByText("Evidence upload cancelled.")).toBeTruthy();
+    });
+  });
+
+  it("replaces and removes attached evidence safely", async () => {
+    mockedGetParticipantStudies.mockResolvedValue({
+      data: [
+        { study_id: 11, title: "Study One", description: null, status: "active", methodology: "survey", enrolled: true },
+      ],
+      pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
+    });
+    mockedGetParticipantActivities.mockResolvedValue({
+      data: [
+        {
+          activity_id: 5,
+          title: "Mood check",
+          prompt: null,
+          activity_type: "short_text",
+          required: true,
+          position: 1,
+          availability: { status: "open", release_at: null, due_at: null },
+        },
+      ],
+    });
+    mockedGetParticipantActivityDetail.mockResolvedValue({
+      activity: {
+        activity_id: 5,
+        title: "Mood check",
+        prompt: "Tell us how your week was.",
+        activity_type: "short_text",
+        required: true,
+        position: 1,
+        availability: { status: "open", release_at: null, due_at: null },
+      },
+    });
+
+    mockedUploadParticipantActivityEvidence
+      .mockResolvedValueOnce({
+        evidence: {
+          evidence_id: 901,
+          activity_id: 5,
+          original_name: "first.txt",
+          content_type: "text/plain",
+          size_bytes: 10,
+          scan_status: "clean",
+          scan_detail: "ok",
+          created_at: "2030-01-01T10:01:00Z",
+        },
+      })
+      .mockResolvedValueOnce({
+        evidence: {
+          evidence_id: 902,
+          activity_id: 5,
+          original_name: "second.txt",
+          content_type: "text/plain",
+          size_bytes: 12,
+          scan_status: "clean",
+          scan_detail: "ok",
+          created_at: "2030-01-01T10:02:00Z",
+        },
+      });
+
+    mockedDocumentPicker.getDocumentAsync
+      .mockResolvedValueOnce({
+        canceled: false,
+        assets: [{ uri: "file:///tmp/first.txt", name: "first.txt", mimeType: "text/plain", size: 10 }],
+      })
+      .mockResolvedValueOnce({
+        canceled: false,
+        assets: [{ uri: "file:///tmp/second.txt", name: "second.txt", mimeType: "text/plain", size: 12 }],
+      });
+
+    const { getByLabelText, getByText } = await renderHome();
+
+    await waitFor(() => {
+      expect(getByLabelText(/Mood check. Available./)).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText(/Mood check. Available./));
+    await waitFor(() => {
+      expect(getByLabelText("Select document or audio evidence")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Select document or audio evidence"));
+    await waitFor(() => {
+      expect(getByText("Evidence reference: #901")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Replace attached evidence"));
+    await waitFor(() => {
+      expect(getByText("Evidence reference: #902")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Remove attached evidence"));
+    await waitFor(() => {
+      expect(getByText("Evidence attachment removed from this draft.")).toBeTruthy();
     });
   });
 

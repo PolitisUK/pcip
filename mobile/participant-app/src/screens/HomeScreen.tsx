@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 
@@ -44,6 +44,12 @@ type EvidenceAsset = {
   size: number | null;
 };
 
+type EvidencePreview = {
+  kind: "image" | "video" | "audio" | "document";
+  uri: string;
+  label: string;
+};
+
 type EvidenceWorkflowState = {
   status: "idle" | "uploading" | "polling" | "clean" | "rejected" | "failed";
   progressRatio: number;
@@ -51,6 +57,7 @@ type EvidenceWorkflowState = {
   scanStatus: "pending" | "clean" | "infected" | "scan_failed" | null;
   scanDetail: string | null;
   selectedAsset: EvidenceAsset | null;
+  preview: EvidencePreview | null;
   uploadSignature: string | null;
 };
 
@@ -664,6 +671,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
           scanStatus: null,
           scanDetail: null,
           selectedAsset: asset,
+          preview: evidencePreviewFromAsset(asset),
           uploadSignature: signature,
         },
         draft: {
@@ -850,6 +858,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
           scanStatus: null,
           scanDetail: null,
           selectedAsset: null,
+          preview: null,
           uploadSignature: null,
         },
         message: { tone: "success", text: "Evidence attachment removed from this draft." },
@@ -869,6 +878,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
           progressRatio: 0,
           scanStatus: null,
           scanDetail: null,
+          preview: null,
         },
       },
     }));
@@ -992,6 +1002,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
               onRetryEvidenceStatus={() => void retryEvidenceStatusPolling()}
               onCancelEvidenceUpload={() => void cancelEvidenceUpload()}
               onRemoveAttachedEvidence={removeAttachedEvidence}
+              onReplaceEvidence={() => void pickDocumentOrAudioEvidence()}
             />
           </View>
         )}
@@ -1122,6 +1133,7 @@ function ActivityResponseEditor({
   onRetryEvidenceStatus,
   onCancelEvidenceUpload,
   onRemoveAttachedEvidence,
+  onReplaceEvidence,
 }: {
   detail: ActivityDetailResponse;
   editor: ActivityEditorState;
@@ -1140,6 +1152,7 @@ function ActivityResponseEditor({
   onRetryEvidenceStatus: () => void;
   onCancelEvidenceUpload: () => void;
   onRemoveAttachedEvidence: () => void;
+  onReplaceEvidence: () => void;
 }) {
   const isSubmitted = isSubmittedResponse(detail.response?.status);
   const supported = isSupportedResponseEntryType(detail.activity.activity_type);
@@ -1212,6 +1225,7 @@ function ActivityResponseEditor({
         <Text style={styles.metaLine}>{readableEvidenceStatus(editor.evidence)}</Text>
         {editor.evidence.selectedAsset ? <Text style={styles.metaLine}>Selected file: {editor.evidence.selectedAsset.filename}</Text> : null}
         {editor.evidence.evidenceId ? <Text style={styles.metaLine}>Evidence reference: #{editor.evidence.evidenceId}</Text> : null}
+        {editor.evidence.preview ? <EvidencePreviewCard preview={editor.evidence.preview} /> : null}
         {editor.evidence.status === "uploading" ? (
           <Text style={styles.metaLine}>Upload progress: {Math.round(editor.evidence.progressRatio * 100)}%</Text>
         ) : null}
@@ -1272,6 +1286,17 @@ function ActivityResponseEditor({
               style={styles.secondaryButton}
             >
               <Text style={styles.secondaryButtonText}>Retry status check</Text>
+            </Pressable>
+          ) : null}
+
+          {editor.draft.evidenceId ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Replace attached evidence"
+              onPress={onReplaceEvidence}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Replace evidence</Text>
             </Pressable>
           ) : null}
 
@@ -1381,6 +1406,24 @@ function ReadOnlyResponseValue({ draft }: { draft: EditableResponseDraft }) {
       {draft.answer ? <Text style={styles.body}>{draft.answer}</Text> : null}
       {draft.choices.length > 0 ? <Text style={styles.body}>Selected: {draft.choices.join(", ")}</Text> : null}
       {!draft.answer && draft.choices.length === 0 ? <Text style={styles.body}>No response content available.</Text> : null}
+    </View>
+  );
+}
+
+function EvidencePreviewCard({ preview }: { preview: EvidencePreview }) {
+  if (preview.kind === "image") {
+    return (
+      <View style={styles.previewCard}>
+        <Text style={styles.metaLine}>Evidence preview: {preview.label}</Text>
+        <Image accessibilityLabel="Selected image evidence preview" source={{ uri: preview.uri }} style={styles.previewImage} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.previewCard}>
+      <Text style={styles.metaLine}>Evidence preview: {preview.label}</Text>
+      <Text style={styles.metaLine}>Preview not available for this file type on this screen.</Text>
     </View>
   );
 }
@@ -1536,6 +1579,7 @@ function createActivityEditorState(detail: ActivityDetailResponse): ActivityEdit
       scanStatus: persisted.evidenceId ? "pending" : null,
       scanDetail: null,
       selectedAsset: null,
+      preview: null,
       uploadSignature: null,
     },
   };
@@ -1682,9 +1726,9 @@ function readableEvidenceStatus(state: EvidenceWorkflowState): string {
     case "clean":
       return "Evidence scan passed. Ready for draft save and submission.";
     case "rejected":
-      return "Evidence was rejected by malware scan. Please choose another file.";
+      return "Evidence was blocked by security screening. Please choose another file.";
     case "failed":
-      return "Evidence scan failed or could not be confirmed. Retry upload or status check.";
+      return "Evidence screening could not be confirmed. Retry upload or status check.";
     default:
       return "No evidence attached.";
   }
@@ -1699,6 +1743,36 @@ function mediaTypeToMime(type: string | null | undefined): string {
     return "video/mp4";
   }
   return "image/jpeg";
+}
+
+function evidencePreviewFromAsset(asset: EvidenceAsset): EvidencePreview {
+  const mediaType = asset.contentType.toLowerCase();
+  if (mediaType.startsWith("image/")) {
+    return {
+      kind: "image",
+      uri: asset.localUri,
+      label: asset.filename,
+    };
+  }
+  if (mediaType.startsWith("video/")) {
+    return {
+      kind: "video",
+      uri: asset.localUri,
+      label: asset.filename,
+    };
+  }
+  if (mediaType.startsWith("audio/")) {
+    return {
+      kind: "audio",
+      uri: asset.localUri,
+      label: asset.filename,
+    };
+  }
+  return {
+    kind: "document",
+    uri: asset.localUri,
+    label: asset.filename,
+  };
 }
 
 function readableActivityType(activityType: ActivitySummary["activity_type"]): string {
@@ -1807,6 +1881,20 @@ const styles = StyleSheet.create({
     backgroundColor: "#f7fbf9",
     padding: 12,
     gap: 10,
+  },
+  previewCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#d1e2db",
+    backgroundColor: "#ffffff",
+    padding: 10,
+    gap: 8,
+  },
+  previewImage: {
+    width: "100%",
+    height: 180,
+    borderRadius: 8,
+    backgroundColor: "#f1f7f4",
   },
   input: {
     minHeight: 48,
