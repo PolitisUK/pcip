@@ -144,6 +144,16 @@
       <h2>Privacy and control</h2>
       <p>You can ask the research team to delete or anonymise your Citizen Centric data. You can also withdraw from Citizen Centric research at any time.</p>
 
+      <div class="privacy-action">
+        <h3>Download your study data</h3>
+        <p>Get a JSON copy of your profile, responses, evidence details and visible messages for {{ study.title }}. Internal research notes, security records and file-storage details are not included.</p>
+        <form method="post" action="/participant-portal/privacy/data-export">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="secondary" type="submit" data-no-loading>Download my data</button>
+        </form>
+        <p class="muted">For a complete subject access request covering other studies or records, contact the research team through Messages.</p>
+      </div>
+
       <details>
         <summary>Request deletion or anonymisation</summary>
         <form method="post" action="/participant-portal/privacy/deletion-request" class="stack section">

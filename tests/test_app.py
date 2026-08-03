@@ -936,6 +936,157 @@ def test_participant_website_sign_out_revokes_session_and_clears_cookie():
         assert portal.headers['location'] == '/join-study'
 
 
+def test_participant_website_data_export_is_minimised_scoped_audited_and_no_store():
+    from app.models import ActivityResponse, AuditEvent, EvidenceFile, Participant, ParticipantMessage, Study
+
+    context = _prepare_participant_api_activity_response_context('website-data-export')
+
+    with client:
+        drafted = post_with_csrf(
+            f"/participant-portal/activity/{context['activity_id']}",
+            data={'action': 'draft', 'answer': 'My participant response'},
+            follow_redirects=False,
+        )
+        assert drafted.status_code == 303
+        messaged = post_with_csrf(
+            '/participant-portal/message',
+            data={'body': 'My visible participant message'},
+            follow_redirects=False,
+        )
+        assert messaged.status_code == 303
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        study_row = db.get(Study, context['study_id'])
+        assert participant_row is not None
+        assert study_row is not None
+        participant_row.tags = 'internal segmentation tag'
+        participant_row.notes = 'internal researcher note'
+        participant_row.demographics_json = '{"sensitive_internal_field": true}'
+        response_row = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == context['activity_id'],
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert response_row is not None
+        evidence_row = EvidenceFile(
+            organisation_id=participant_row.organisation_id,
+            study_id=context['study_id'],
+            activity_id=context['activity_id'],
+            participant_id=context['participant_id'],
+            response_id=response_row.id,
+            original_name='my-photo.jpg',
+            stored_name=f"private/storage/{unique_value('export-evidence')}.jpg",
+            content_type='image/jpeg',
+            size_bytes=1234,
+            sha256_hex='a' * 64,
+            scan_status='clean',
+            scan_detail='internal scanner detail',
+            storage_provider='azure_blob',
+            blob_uri='https://storage.example.invalid/private-object',
+        )
+        db.add(evidence_row)
+        db.add(
+            ParticipantMessage(
+                organisation_id=participant_row.organisation_id,
+                study_id=context['study_id'],
+                participant_id=context['participant_id'],
+                sender_type='researcher',
+                body='Internal note must not be exported',
+                internal_note=True,
+            )
+        )
+        other_study = Study(
+            organisation_id=study_row.organisation_id,
+            project_id=study_row.project_id,
+            title='Other study outside export scope',
+            code=unique_value('OTHER-EXPORT').upper(),
+            description='Outside current participant session scope.',
+            methodology=study_row.methodology,
+            status=study_row.status,
+            created_by_id=study_row.created_by_id,
+        )
+        db.add(other_study)
+        db.flush()
+        db.add(
+            ParticipantMessage(
+                organisation_id=participant_row.organisation_id,
+                study_id=other_study.id,
+                participant_id=context['participant_id'],
+                sender_type='researcher',
+                body='Other study message must not be exported',
+                internal_note=False,
+            )
+        )
+        other_participant = Participant(
+            organisation_id=participant_row.organisation_id,
+            reference=unique_value('OTHER-PARTICIPANT').upper(),
+            name='Other Participant Must Not Be Exported',
+            email=f"{unique_value('other-export')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=study_row.created_by_id,
+        )
+        db.add(other_participant)
+        db.flush()
+        db.add(
+            ParticipantMessage(
+                organisation_id=participant_row.organisation_id,
+                study_id=context['study_id'],
+                participant_id=other_participant.id,
+                sender_type='participant',
+                body='Other participant message must not be exported',
+                internal_note=False,
+            )
+        )
+        db.commit()
+
+    with client:
+        exported = post_with_csrf('/participant-portal/privacy/data-export', follow_redirects=False)
+        assert exported.status_code == 200
+        assert exported.headers.get('cache-control') == 'no-store'
+        assert exported.headers.get('content-disposition') == 'attachment; filename="citizen-centric-my-data.json"'
+        payload = exported.json()
+        assert payload['application_name'] == 'Citizen Centric'
+        assert payload['scope'] == 'current_study'
+        assert payload['study']['title'] != 'Other study outside export scope'
+        assert payload['activity_responses'][0]['answer'] == 'My participant response'
+        assert payload['evidence_files'][0]['filename'] == 'my-photo.jpg'
+        assert any(message['body'] == 'My visible participant message' for message in payload['messages'])
+
+    raw_export = exported.text
+    for excluded in [
+        'organisation_id',
+        'participant_id',
+        'stored_name',
+        'blob_uri',
+        'sha256_hex',
+        'scan_detail',
+        'internal researcher note',
+        'internal segmentation tag',
+        'sensitive_internal_field',
+        'Internal note must not be exported',
+        'Other study message must not be exported',
+        'Other Participant Must Not Be Exported',
+        'Other participant message must not be exported',
+    ]:
+        assert excluded not in raw_export
+
+    with SessionLocal() as db:
+        audit_row = db.scalar(
+            select(AuditEvent)
+            .where(
+                AuditEvent.action == 'privacy.participant_self_exported',
+                AuditEvent.entity_id == str(context['participant_id']),
+            )
+            .order_by(AuditEvent.id.desc())
+        )
+        assert audit_row is not None
+        assert audit_row.detail == str(context['study_id'])
+
+
 def test_participant_website_deletion_request_is_audited_without_deleting_account():
     from app.models import AuditEvent, Participant
 
