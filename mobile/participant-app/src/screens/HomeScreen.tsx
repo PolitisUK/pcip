@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
 
 import { ApiRequestError } from "../api/client";
 import {
+  getParticipantEvidenceStatus,
   getCurrentSession,
   getParticipantActivityDetail,
   saveParticipantActivityDraft,
   submitParticipantActivityResponse,
+  uploadParticipantActivityEvidence,
   type ActivityDetailResponse,
+  type EvidenceMetadata,
   type DraftResponseRequest,
 } from "../api/participantApi";
 import { CitizenCentricLogo } from "../components/CitizenCentricLogo";
@@ -32,12 +37,30 @@ type EditorMessage = {
   text: string;
 };
 
+type EvidenceAsset = {
+  localUri: string;
+  filename: string;
+  contentType: string;
+  size: number | null;
+};
+
+type EvidenceWorkflowState = {
+  status: "idle" | "uploading" | "polling" | "clean" | "rejected" | "failed";
+  progressRatio: number;
+  evidenceId: number | null;
+  scanStatus: "pending" | "clean" | "infected" | "scan_failed" | null;
+  scanDetail: string | null;
+  selectedAsset: EvidenceAsset | null;
+  uploadSignature: string | null;
+};
+
 type ActivityEditorState = {
   draft: EditableResponseDraft;
   persisted: EditableResponseDraft;
   actionStatus: "idle" | "saving" | "submitting";
   confirmingSubmit: boolean;
   message: EditorMessage | null;
+  evidence: EvidenceWorkflowState;
 };
 
 type ActivityDetailViewState =
@@ -63,6 +86,9 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
   const detailAbortController = useRef<AbortController | null>(null);
   const writeRequestVersion = useRef(0);
   const writeAbortController = useRef<AbortController | null>(null);
+  const evidenceRequestVersion = useRef(0);
+  const evidenceAbortController = useRef<AbortController | null>(null);
+  const evidencePollTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const unsubscribe = controller.subscribe((state) => {
@@ -140,6 +166,12 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
       detailAbortController.current = null;
       writeAbortController.current?.abort();
       writeAbortController.current = null;
+      evidenceAbortController.current?.abort();
+      evidenceAbortController.current = null;
+      if (evidencePollTimeout.current) {
+        clearTimeout(evidencePollTimeout.current);
+        evidencePollTimeout.current = null;
+      }
     };
   }, [controller, onSessionExpired, participantDisplayName]);
 
@@ -155,6 +187,211 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
     updater: (state: Extract<ActivityDetailViewState, { status: "ready" }>) => Extract<ActivityDetailViewState, { status: "ready" }>,
   ) => {
     setDetailState((current) => (current.status === "ready" ? updater(current) : current));
+  };
+
+  const clearEvidencePollTimer = () => {
+    if (evidencePollTimeout.current) {
+      clearTimeout(evidencePollTimeout.current);
+      evidencePollTimeout.current = null;
+    }
+  };
+
+  const beginEvidenceRequest = () => {
+    evidenceRequestVersion.current += 1;
+    const requestVersion = evidenceRequestVersion.current;
+    clearEvidencePollTimer();
+    evidenceAbortController.current?.abort();
+    const requestController = new AbortController();
+    evidenceAbortController.current = requestController;
+    return { requestVersion, signal: requestController.signal };
+  };
+
+  const cancelEvidenceOperations = (message?: EditorMessage) => {
+    evidenceRequestVersion.current += 1;
+    clearEvidencePollTimer();
+    evidenceAbortController.current?.abort();
+    evidenceAbortController.current = null;
+
+    if (!message) {
+      return;
+    }
+
+    updateReadyDetail((current) => ({
+      ...current,
+      editor: {
+        ...current.editor,
+        message,
+      },
+    }));
+  };
+
+  const applyEvidenceStatus = (
+    activityId: number,
+    metadata: EvidenceMetadata,
+    requestVersion: number,
+  ) => {
+    if (requestVersion !== evidenceRequestVersion.current) {
+      return;
+    }
+
+    const normalized = normalizeEvidenceScanStatus(metadata.scan_status);
+    updateReadyDetail((current) => {
+      if (current.activityId !== activityId) {
+        return current;
+      }
+
+      const currentEvidenceId = current.editor.draft.evidenceId;
+      const nextEvidenceId = normalized === "clean"
+        ? metadata.evidence_id
+        : (currentEvidenceId === metadata.evidence_id ? null : currentEvidenceId);
+
+      const nextStatus = normalized === "clean"
+        ? "clean"
+        : normalized === "infected"
+          ? "rejected"
+          : normalized === "scan_failed"
+            ? "failed"
+            : "polling";
+
+      return {
+        ...current,
+        editor: {
+          ...current.editor,
+          draft: {
+            ...current.editor.draft,
+            evidenceId: nextEvidenceId,
+          },
+          evidence: {
+            ...current.editor.evidence,
+            status: nextStatus,
+            progressRatio: nextStatus === "clean" ? 1 : current.editor.evidence.progressRatio,
+            evidenceId: metadata.evidence_id,
+            scanStatus: normalized,
+            scanDetail: metadata.scan_detail || null,
+          },
+          message: normalized === "clean"
+            ? { tone: "success", text: "Evidence scan is clean and ready to attach." }
+            : normalized === "infected"
+              ? { tone: "error", text: "Evidence was rejected by malware screening." }
+              : normalized === "scan_failed"
+                ? { tone: "error", text: "Evidence scan failed. Please retry the upload." }
+                : current.editor.message,
+        },
+      };
+    });
+  };
+
+  const pollEvidenceStatus = async (
+    activityId: number,
+    evidenceId: number,
+    requestVersion: number,
+    attempt: number,
+  ) => {
+    if (requestVersion !== evidenceRequestVersion.current) {
+      return;
+    }
+
+    if (attempt > 24) {
+      updateReadyDetail((current) => {
+        if (current.activityId !== activityId) {
+          return current;
+        }
+
+        return {
+          ...current,
+          editor: {
+            ...current.editor,
+            evidence: {
+              ...current.editor.evidence,
+              status: "failed",
+            },
+            message: {
+              tone: "error",
+              text: "Evidence scan is taking longer than expected. You can retry status check.",
+            },
+          },
+        };
+      });
+      return;
+    }
+
+    const accessToken = accessTokenRef.current;
+    if (!accessToken) {
+      return;
+    }
+
+    try {
+      const status = await getParticipantEvidenceStatus(accessToken, evidenceId, {
+        signal: evidenceAbortController.current?.signal,
+      });
+
+      if (requestVersion !== evidenceRequestVersion.current) {
+        return;
+      }
+
+      applyEvidenceStatus(activityId, status.evidence, requestVersion);
+      if (status.evidence.scan_status === "pending") {
+        clearEvidencePollTimer();
+        evidencePollTimeout.current = setTimeout(() => {
+          void pollEvidenceStatus(activityId, evidenceId, requestVersion, attempt + 1);
+        }, 2500);
+      }
+    } catch (error) {
+      if (requestVersion !== evidenceRequestVersion.current) {
+        return;
+      }
+
+      if (error instanceof ApiRequestError && error.status === 401) {
+        onSessionExpired();
+        return;
+      }
+
+      updateReadyDetail((current) => {
+        if (current.activityId !== activityId) {
+          return current;
+        }
+
+        return {
+          ...current,
+          editor: {
+            ...current.editor,
+            evidence: {
+              ...current.editor.evidence,
+              status: "failed",
+            },
+            message: {
+              tone: "error",
+              text: mapEvidenceActionError(error),
+            },
+          },
+        };
+      });
+    }
+  };
+
+  const refreshEvidenceStatus = async (activityId: number, evidenceId: number) => {
+    const { requestVersion } = beginEvidenceRequest();
+
+    updateReadyDetail((current) => {
+      if (current.activityId !== activityId) {
+        return current;
+      }
+
+      return {
+        ...current,
+        editor: {
+          ...current.editor,
+          evidence: {
+            ...current.editor.evidence,
+            status: "polling",
+            evidenceId,
+            scanStatus: "pending",
+          },
+        },
+      };
+    });
+
+    await pollEvidenceStatus(activityId, evidenceId, requestVersion, 0);
   };
 
   const openActivityDetail = async (activityId: number) => {
@@ -182,6 +419,12 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
       }
 
       setDetailState({ status: "ready", activityId, detail, editor: createActivityEditorState(detail) });
+      const existingEvidenceId = detail.response?.value?.evidence_id;
+      if (typeof existingEvidenceId === "number") {
+        void refreshEvidenceStatus(activityId, existingEvidenceId);
+      } else {
+        cancelEvidenceOperations();
+      }
     } catch (error) {
       if (requestVersion !== detailRequestVersion.current) {
         return;
@@ -389,6 +632,248 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
     }
   };
 
+  const uploadEvidenceAsset = async (asset: EvidenceAsset) => {
+    const accessToken = accessTokenRef.current;
+    if (!accessToken || detailState.status !== "ready" || isSubmittedResponse(detailState.detail.response?.status)) {
+      return;
+    }
+
+    const signature = evidenceAssetSignature(asset);
+    const currentEvidence = detailState.editor.evidence;
+    if (currentEvidence.uploadSignature === signature && ["uploading", "polling", "clean"].includes(currentEvidence.status)) {
+      updateReadyDetail((current) => ({
+        ...current,
+        editor: {
+          ...current.editor,
+          message: { tone: "error", text: "This evidence is already attached or uploading." },
+        },
+      }));
+      return;
+    }
+
+    const { requestVersion, signal } = beginEvidenceRequest();
+    updateReadyDetail((current) => ({
+      ...current,
+      editor: {
+        ...current.editor,
+        evidence: {
+          ...current.editor.evidence,
+          status: "uploading",
+          progressRatio: 0,
+          evidenceId: null,
+          scanStatus: null,
+          scanDetail: null,
+          selectedAsset: asset,
+          uploadSignature: signature,
+        },
+        draft: {
+          ...current.editor.draft,
+          evidenceId: null,
+        },
+        message: null,
+      },
+    }));
+
+    try {
+      const upload = await uploadParticipantActivityEvidence(accessToken, detailState.activityId, {
+        localUri: asset.localUri,
+        filename: asset.filename,
+        contentType: asset.contentType,
+        onProgress: (ratio) => {
+          if (requestVersion !== evidenceRequestVersion.current) {
+            return;
+          }
+          updateReadyDetail((current) => ({
+            ...current,
+            editor: {
+              ...current.editor,
+              evidence: {
+                ...current.editor.evidence,
+                progressRatio: ratio,
+              },
+            },
+          }));
+        },
+      }, {
+        signal,
+        idempotencyKey: createIdempotencyKey("evidence", detailState.activityId),
+        timeoutMs: 45000,
+      });
+
+      if (requestVersion !== evidenceRequestVersion.current) {
+        return;
+      }
+
+      applyEvidenceStatus(detailState.activityId, upload.evidence, requestVersion);
+      if (upload.evidence.scan_status === "pending") {
+        await pollEvidenceStatus(detailState.activityId, upload.evidence.evidence_id, requestVersion, 0);
+      }
+    } catch (error) {
+      if (requestVersion !== evidenceRequestVersion.current) {
+        return;
+      }
+
+      if (error instanceof ApiRequestError && error.status === 401) {
+        onSessionExpired();
+        return;
+      }
+
+      updateReadyDetail((current) => ({
+        ...current,
+        editor: {
+          ...current.editor,
+          evidence: {
+            ...current.editor.evidence,
+            status: "failed",
+          },
+          message: { tone: "error", text: mapEvidenceActionError(error) },
+        },
+      }));
+    }
+  };
+
+  const pickDocumentOrAudioEvidence = async () => {
+    const picked = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+      type: ["audio/*", "application/pdf", "text/plain", "text/csv", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    });
+    if (picked.canceled || picked.assets.length === 0) {
+      return;
+    }
+
+    const firstAsset = picked.assets[0];
+    await uploadEvidenceAsset({
+      localUri: firstAsset.uri,
+      filename: firstAsset.name,
+      contentType: firstAsset.mimeType || "application/octet-stream",
+      size: firstAsset.size ?? null,
+    });
+  };
+
+  const pickPhotoOrVideoFromLibrary = async () => {
+    const permissions = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permissions.granted) {
+      updateReadyDetail((current) => ({
+        ...current,
+        editor: {
+          ...current.editor,
+          message: { tone: "error", text: "Media library permission is required to select evidence." },
+        },
+      }));
+      return;
+    }
+
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: false,
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      quality: 0.8,
+    });
+    if (picked.canceled || picked.assets.length === 0) {
+      return;
+    }
+
+    const firstAsset = picked.assets[0];
+    await uploadEvidenceAsset({
+      localUri: firstAsset.uri,
+      filename: firstAsset.fileName || `library-${Date.now()}`,
+      contentType: firstAsset.mimeType || mediaTypeToMime(firstAsset.type),
+      size: firstAsset.fileSize ?? null,
+    });
+  };
+
+  const capturePhotoOrVideo = async (mode: "photo" | "video") => {
+    const permissions = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permissions.granted) {
+      updateReadyDetail((current) => ({
+        ...current,
+        editor: {
+          ...current.editor,
+          message: { tone: "error", text: "Camera permission is required to capture evidence." },
+        },
+      }));
+      return;
+    }
+
+    const captured = await ImagePicker.launchCameraAsync({
+      mediaTypes: mode === "photo" ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
+      quality: 0.8,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+    });
+    if (captured.canceled || captured.assets.length === 0) {
+      return;
+    }
+
+    const firstAsset = captured.assets[0];
+    await uploadEvidenceAsset({
+      localUri: firstAsset.uri,
+      filename: firstAsset.fileName || `${mode}-${Date.now()}`,
+      contentType: firstAsset.mimeType || mediaTypeToMime(firstAsset.type),
+      size: firstAsset.fileSize ?? null,
+    });
+  };
+
+  const retryEvidenceUpload = async () => {
+    if (detailState.status !== "ready") {
+      return;
+    }
+    if (!detailState.editor.evidence.selectedAsset) {
+      return;
+    }
+    await uploadEvidenceAsset(detailState.editor.evidence.selectedAsset);
+  };
+
+  const retryEvidenceStatusPolling = async () => {
+    if (detailState.status !== "ready") {
+      return;
+    }
+    if (!detailState.editor.evidence.evidenceId) {
+      return;
+    }
+    await refreshEvidenceStatus(detailState.activityId, detailState.editor.evidence.evidenceId);
+  };
+
+  const removeAttachedEvidence = () => {
+    updateDraft((draft) => ({
+      ...draft,
+      evidenceId: null,
+    }));
+    updateReadyDetail((current) => ({
+      ...current,
+      editor: {
+        ...current.editor,
+        evidence: {
+          ...current.editor.evidence,
+          status: "idle",
+          progressRatio: 0,
+          evidenceId: null,
+          scanStatus: null,
+          scanDetail: null,
+          selectedAsset: null,
+          uploadSignature: null,
+        },
+        message: { tone: "success", text: "Evidence attachment removed from this draft." },
+      },
+    }));
+  };
+
+  const cancelEvidenceUpload = () => {
+    cancelEvidenceOperations({ tone: "error", text: "Evidence upload cancelled." });
+    updateReadyDetail((current) => ({
+      ...current,
+      editor: {
+        ...current.editor,
+        evidence: {
+          ...current.editor.evidence,
+          status: "idle",
+          progressRatio: 0,
+          scanStatus: null,
+          scanDetail: null,
+        },
+      },
+    }));
+  };
+
   const showDetail = detailState.status !== "idle";
 
   if (showDetail) {
@@ -400,7 +885,10 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
             accessibilityRole="button"
             accessibilityLabel="Back to studies"
             style={styles.tertiaryButton}
-            onPress={() => setDetailState({ status: "idle" })}
+            onPress={() => {
+              cancelEvidenceOperations();
+              setDetailState({ status: "idle" });
+            }}
           >
             <Text style={styles.tertiaryButtonText}>Back</Text>
           </Pressable>
@@ -496,6 +984,14 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
                 }))
               }
               onConfirmSubmit={() => void submitResponse()}
+              onPickDocumentOrAudio={() => void pickDocumentOrAudioEvidence()}
+              onPickPhotoOrVideoFromLibrary={() => void pickPhotoOrVideoFromLibrary()}
+              onCapturePhoto={() => void capturePhotoOrVideo("photo")}
+              onCaptureVideo={() => void capturePhotoOrVideo("video")}
+              onRetryEvidenceUpload={() => void retryEvidenceUpload()}
+              onRetryEvidenceStatus={() => void retryEvidenceStatusPolling()}
+              onCancelEvidenceUpload={() => void cancelEvidenceUpload()}
+              onRemoveAttachedEvidence={removeAttachedEvidence}
             />
           </View>
         )}
@@ -568,6 +1064,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
                       accessibilityRole="button"
                       accessibilityLabel={`Select study ${study.title}`}
                       onPress={() => {
+                        cancelEvidenceOperations();
                         setDetailState({ status: "idle" });
                         void controller.selectStudy(study.study_id);
                       }}
@@ -617,6 +1114,14 @@ function ActivityResponseEditor({
   onReviewSubmit,
   onCancelSubmit,
   onConfirmSubmit,
+  onPickDocumentOrAudio,
+  onPickPhotoOrVideoFromLibrary,
+  onCapturePhoto,
+  onCaptureVideo,
+  onRetryEvidenceUpload,
+  onRetryEvidenceStatus,
+  onCancelEvidenceUpload,
+  onRemoveAttachedEvidence,
 }: {
   detail: ActivityDetailResponse;
   editor: ActivityEditorState;
@@ -627,12 +1132,21 @@ function ActivityResponseEditor({
   onReviewSubmit: () => void;
   onCancelSubmit: () => void;
   onConfirmSubmit: () => void;
+  onPickDocumentOrAudio: () => void;
+  onPickPhotoOrVideoFromLibrary: () => void;
+  onCapturePhoto: () => void;
+  onCaptureVideo: () => void;
+  onRetryEvidenceUpload: () => void;
+  onRetryEvidenceStatus: () => void;
+  onCancelEvidenceUpload: () => void;
+  onRemoveAttachedEvidence: () => void;
 }) {
   const isSubmitted = isSubmittedResponse(detail.response?.status);
   const supported = isSupportedResponseEntryType(detail.activity.activity_type);
   const dirty = isEditorDirty(editor);
   const choices = detail.activity.options || [];
   const actionBusy = editor.actionStatus !== "idle";
+  const evidenceBusy = editor.evidence.status === "uploading" || editor.evidence.status === "polling";
   const missingChoiceOptions = isChoiceActivity(detail.activity.activity_type) && choices.length === 0;
 
   if (isSubmitted) {
@@ -692,26 +1206,108 @@ function ActivityResponseEditor({
       )}
 
       {missingChoiceOptions ? <InlineMessage message={{ tone: "error", text: "Response options are unavailable right now." }} /> : null}
+
+      <View style={styles.evidencePanel}>
+        <Text style={styles.sectionTitle}>Evidence attachment</Text>
+        <Text style={styles.metaLine}>{readableEvidenceStatus(editor.evidence)}</Text>
+        {editor.evidence.selectedAsset ? <Text style={styles.metaLine}>Selected file: {editor.evidence.selectedAsset.filename}</Text> : null}
+        {editor.evidence.evidenceId ? <Text style={styles.metaLine}>Evidence reference: #{editor.evidence.evidenceId}</Text> : null}
+        {editor.evidence.status === "uploading" ? (
+          <Text style={styles.metaLine}>Upload progress: {Math.round(editor.evidence.progressRatio * 100)}%</Text>
+        ) : null}
+
+        <View style={styles.actionRow}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Capture photo evidence" onPress={onCapturePhoto} style={styles.secondaryButton}>
+            <Text style={styles.secondaryButtonText}>Capture photo</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Capture video evidence" onPress={onCaptureVideo} style={styles.secondaryButton}>
+            <Text style={styles.secondaryButtonText}>Capture video</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Select photo or video evidence"
+            onPress={onPickPhotoOrVideoFromLibrary}
+            style={styles.secondaryButton}
+          >
+            <Text style={styles.secondaryButtonText}>Choose media</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Select document or audio evidence"
+            onPress={onPickDocumentOrAudio}
+            style={styles.secondaryButton}
+          >
+            <Text style={styles.secondaryButtonText}>Choose document or audio</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.actionRow}>
+          {(editor.evidence.status === "uploading" || editor.evidence.status === "polling") ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Cancel evidence upload"
+              onPress={onCancelEvidenceUpload}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Cancel evidence upload</Text>
+            </Pressable>
+          ) : null}
+
+          {editor.evidence.status === "failed" ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Retry evidence upload"
+              onPress={onRetryEvidenceUpload}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Retry upload</Text>
+            </Pressable>
+          ) : null}
+
+          {(editor.evidence.status === "polling" || editor.evidence.status === "failed") && editor.evidence.evidenceId ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Retry evidence scan status"
+              onPress={onRetryEvidenceStatus}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Retry status check</Text>
+            </Pressable>
+          ) : null}
+
+          {editor.draft.evidenceId ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Remove attached evidence"
+              onPress={onRemoveAttachedEvidence}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Remove evidence</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
       {editor.message ? <InlineMessage message={editor.message} /> : null}
 
       <View style={styles.actionRow}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Save draft response"
-          accessibilityState={{ disabled: !dirty || actionBusy || missingChoiceOptions }}
-          disabled={!dirty || actionBusy || missingChoiceOptions}
+          accessibilityState={{ disabled: !dirty || actionBusy || evidenceBusy || missingChoiceOptions }}
+          disabled={!dirty || actionBusy || evidenceBusy || missingChoiceOptions}
           onPress={onSaveDraft}
-          style={[styles.secondaryButton, (!dirty || actionBusy || missingChoiceOptions) ? styles.disabledButton : null]}
+          style={[styles.secondaryButton, (!dirty || actionBusy || evidenceBusy || missingChoiceOptions) ? styles.disabledButton : null]}
         >
           <Text style={styles.secondaryButtonText}>{editor.actionStatus === "saving" ? "Saving draft" : "Save draft"}</Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Review response before submitting"
-          accessibilityState={{ disabled: actionBusy || missingChoiceOptions }}
-          disabled={actionBusy || missingChoiceOptions}
+          accessibilityState={{ disabled: actionBusy || evidenceBusy || missingChoiceOptions }}
+          disabled={actionBusy || evidenceBusy || missingChoiceOptions}
           onPress={onReviewSubmit}
-          style={[styles.button, (actionBusy || missingChoiceOptions) ? styles.disabledPrimaryButton : null]}
+          style={[styles.button, (actionBusy || evidenceBusy || missingChoiceOptions) ? styles.disabledPrimaryButton : null]}
         >
           <Text style={styles.buttonText}>{editor.actionStatus === "submitting" ? "Submitting" : "Submit response"}</Text>
         </Pressable>
@@ -933,6 +1529,15 @@ function createActivityEditorState(detail: ActivityDetailResponse): ActivityEdit
     actionStatus: "idle",
     confirmingSubmit: false,
     message: null,
+    evidence: {
+      status: persisted.evidenceId ? "polling" : "idle",
+      progressRatio: 0,
+      evidenceId: persisted.evidenceId,
+      scanStatus: persisted.evidenceId ? "pending" : null,
+      scanDetail: null,
+      selectedAsset: null,
+      uploadSignature: null,
+    },
   };
 }
 
@@ -1033,8 +1638,67 @@ function mapDetailActionError(error: unknown, action: "save" | "submit"): string
     : "We could not save your draft right now. Please try again.";
 }
 
-function createIdempotencyKey(action: "draft" | "submit", activityId: number): string {
+function mapEvidenceActionError(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Your session expired while uploading evidence.";
+    }
+    if (error.kind === "network" || error.kind === "timeout") {
+      return "Evidence upload failed because your connection dropped. Your response draft is still saved locally.";
+    }
+    if (error.status === 409) {
+      return "This activity was already submitted, so evidence can no longer be attached.";
+    }
+    if (error.status === 413) {
+      return "This file is too large to upload.";
+    }
+    if (error.status === 415 || error.status === 422) {
+      return "This file type is not supported for evidence upload.";
+    }
+    if (error.status === 429) {
+      return "Please wait briefly before uploading another evidence file.";
+    }
+  }
+  return "We could not upload or verify this evidence right now. Please try again.";
+}
+
+function createIdempotencyKey(action: "draft" | "submit" | "evidence", activityId: number): string {
   return `mob-${action}-${activityId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeEvidenceScanStatus(status: string | undefined): "pending" | "clean" | "infected" | "scan_failed" {
+  if (status === "clean" || status === "infected" || status === "scan_failed") {
+    return status;
+  }
+  return "pending";
+}
+
+function readableEvidenceStatus(state: EvidenceWorkflowState): string {
+  switch (state.status) {
+    case "uploading":
+      return "Uploading evidence file.";
+    case "polling":
+      return "Evidence uploaded. Security scan in progress.";
+    case "clean":
+      return "Evidence scan passed. Ready for draft save and submission.";
+    case "rejected":
+      return "Evidence was rejected by malware scan. Please choose another file.";
+    case "failed":
+      return "Evidence scan failed or could not be confirmed. Retry upload or status check.";
+    default:
+      return "No evidence attached.";
+  }
+}
+
+function evidenceAssetSignature(asset: EvidenceAsset): string {
+  return `${asset.localUri}|${asset.filename}|${asset.contentType}|${asset.size || 0}`;
+}
+
+function mediaTypeToMime(type: string | null | undefined): string {
+  if (type === "video") {
+    return "video/mp4";
+  }
+  return "image/jpeg";
 }
 
 function readableActivityType(activityType: ActivitySummary["activity_type"]): string {
@@ -1135,6 +1799,14 @@ const styles = StyleSheet.create({
   editorBlock: {
     gap: 12,
     marginTop: 8,
+  },
+  evidencePanel: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#d1e2db",
+    backgroundColor: "#f7fbf9",
+    padding: 12,
+    gap: 10,
   },
   input: {
     minHeight: 48,
