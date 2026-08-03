@@ -2,7 +2,6 @@ import logging
 
 from .config import Settings
 
-
 logger = logging.getLogger("pcip.observability")
 
 

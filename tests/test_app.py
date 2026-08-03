@@ -8,27 +8,27 @@ TEST_DATABASE_PATH.unlink(missing_ok=True)
 os.environ['DATABASE_URL'] = f"sqlite:///{TEST_DATABASE_PATH}"
 
 import re
-from glob import glob
-import pytest
-from types import SimpleNamespace
 from contextlib import contextmanager
-from fastapi.testclient import TestClient
-from app.main import app
 from datetime import timedelta
+from glob import glob
+from types import SimpleNamespace
+
+import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.config import settings
+from app.config import settings, validate_runtime_settings
 from app.db import SessionLocal
-from app.models import User
-from app.observability import configure_observability
 from app.main import (
     InMemoryRateLimiter,
     activity_window,
+    app,
     entra_identity_from_claims,
     now,
     rate_limiter,
 )
-from app.config import validate_runtime_settings
+from app.models import User
+from app.observability import configure_observability
 
 client = TestClient(app)
 
@@ -316,9 +316,10 @@ def test_researcher_invite_and_admin_pages():
             assert page.status_code == 200, (path, page.text)
 
 def test_participant_accepts_invitation():
+    from sqlalchemy import select
+
     from app.db import SessionLocal
     from app.models import OutboxEmail
-    from sqlalchemy import select
     with client:
         auth()
         p = post_with_csrf('/participants', data={'reference': 'P-202', 'name': 'Jamie Resident', 'email': 'jamie@example.org', 'phone': '', 'status_value': 'prospective', 'consent_status': 'pending', 'communication_preference': 'email', 'tags': '', 'notes': ''}, follow_redirects=False)
@@ -549,9 +550,10 @@ def test_invalid_status_and_activity_validation():
         auth()
         r = post_with_csrf('/projects', data={'title':'Invalid','code':'BAD-1','status_value':'nonsense'})
         assert r.status_code == 400
+        from sqlalchemy import select
+
         from app.db import SessionLocal
         from app.models import Project
-        from sqlalchemy import select
         with SessionLocal() as db:
             project_id = db.scalar(select(Project.id).order_by(Project.id.asc()))
         study = post_with_csrf(f'/projects/{project_id}/studies', data={'title':'Validation study','code':'VAL-1','methodology':'diary','status_value':'draft'}, follow_redirects=False)
@@ -601,10 +603,19 @@ def test_navigation_active_state_and_mobile_safe_markup():
 
 def test_participant_portal_draft_submit_and_message(monkeypatch):
     from io import BytesIO
+
+    from sqlalchemy import select
+
     import app.main as main_module
     from app.db import SessionLocal
-    from app.models import Activity, ActivityResponse, EvidenceFile, OutboxEmail, ParticipantMessage, Study
-    from sqlalchemy import select
+    from app.models import (
+        Activity,
+        ActivityResponse,
+        EvidenceFile,
+        OutboxEmail,
+        ParticipantMessage,
+        Study,
+    )
     with client:
         auth()
         p = post_with_csrf('/participants', data={'reference':'P-303','name':'Portal User','email':'portal@example.org','phone':'','status_value':'prospective','consent_status':'pending','communication_preference':'email','tags':'','notes':''}, follow_redirects=False)
@@ -695,6 +706,7 @@ def test_bulk_import_editing_and_password_reset_request():
 
 def test_bulk_import_rejects_invalid_email_and_oversized_file(monkeypatch):
     from io import BytesIO
+
     import app.main as main_module
 
     with client:
@@ -1002,10 +1014,11 @@ def test_templates_do_not_use_inline_scripts_or_inline_event_handlers():
 
 
 def test_study_access_assignment():
-    from app.db import SessionLocal
-    from app.models import OrganisationMembership, User, Study, StudyAccess
-    from app.security import hash_password
     from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.models import OrganisationMembership, Study, StudyAccess, User
+    from app.security import hash_password
     with client:
         auth()
         with SessionLocal() as db:
@@ -1027,8 +1040,9 @@ def test_study_access_assignment():
 
 def test_storage_limit_and_antivirus_test_signature(tmp_path):
     from io import BytesIO
-    from app.storage import LocalStorage
+
     from app.scanner import scan_file
+    from app.storage import LocalStorage
     local = LocalStorage(tmp_path)
     stored = local.save_stream(BytesIO(b'normal evidence'), 'note.txt', 100)
     assert stored.size == 15 and len(stored.sha256_hex) == 64
@@ -1123,26 +1137,6 @@ def create_evidence_with_status(scan_status: str) -> int:
         db.commit()
         db.refresh(row)
         return row.id
-
-
-def test_participant_detail_surfaces_evidence_file_and_scan_status():
-    from app.models import EvidenceFile
-
-    with client:
-        client.cookies.clear()
-        auth()
-        evidence_id = create_evidence_with_status('pending')
-        with SessionLocal() as db:
-            evidence = db.get(EvidenceFile, evidence_id)
-            participant_id = evidence.participant_id
-
-        response = client.get(f'/participants/{participant_id}')
-
-        assert response.status_code == 200
-        assert 'Evidence files' in response.text
-        assert 'blocked.txt' in response.text
-        assert 'Pending' in response.text
-        assert f'/evidence/{evidence_id}' in response.text
 
 
 @pytest.mark.parametrize('scan_status', ['not_scanned', 'pending', 'failed', 'not_configured', 'error'])
@@ -1501,7 +1495,7 @@ def test_restricted_researcher_cannot_access_unassigned_study_or_participant_rec
 
 
 def test_researcher_with_view_access_can_read_study_participant_but_not_edit_study():
-    from app.models import User, StudyAccess
+    from app.models import StudyAccess, User
     from app.security import hash_password
     with client:
         client.cookies.clear()

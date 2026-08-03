@@ -1,9 +1,12 @@
-from datetime import datetime, timezone
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
+
 from sqlalchemy.orm import Session
+
 from .config import settings
 from .models import AuditEvent, OutboxEmail
+
 
 def audit(db: Session, organisation_id: int, actor_user_id: int | None, action: str, entity_type: str, entity_id: str, detail: str = ""):
     db.add(AuditEvent(organisation_id=organisation_id, actor_user_id=actor_user_id, action=action, entity_type=entity_type, entity_id=str(entity_id), detail=detail))

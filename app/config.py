@@ -1,8 +1,8 @@
 import logging
 import os
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from urllib.parse import urlsplit
 
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 KNOWN_WEAK_SECRET_KEYS = {
     "",

@@ -1,19 +1,19 @@
 import os
 import re
 import time
-from uuid import uuid4
 from contextlib import contextmanager
+from uuid import uuid4
 
 os.environ.setdefault('DATABASE_URL', 'sqlite:///./data/perf_bench.db')
 os.environ.setdefault('SEED_DEMO_DATA', 'true')
 os.environ.setdefault('ENVIRONMENT', 'test')
 os.environ.setdefault('STARTUP_VALIDATE_MIGRATIONS', 'false')
 
-from sqlalchemy import event
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 
-from app.main import app
 from app.db import engine
+from app.main import app
 
 
 @contextmanager

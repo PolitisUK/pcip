@@ -1,6 +1,8 @@
 from __future__ import annotations
-from pathlib import Path
+
 import socket
+from pathlib import Path
+
 from .config import settings
 
 EICAR_MARKER = b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE"

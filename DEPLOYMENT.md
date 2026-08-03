@@ -116,7 +116,7 @@ revision and a tested staging/rollback route are established.
 | ACR | Basic, admin user disabled, App Service identity has `AcrPull` |
 | PostgreSQL | Version 16 Flexible Server, 32 GB, 14-day backup, no HA, no geo-redundant backup |
 | Blob Storage | Standard ZRS, public blob access disabled, shared-key access disabled, 14-day soft delete |
-| Defender for Storage | On-upload malware scanning, blob result tags, and a 10 GB default monthly cap |
+| Defender for Storage | On-upload malware scanning with blob result tags |
 | Key Vault | RBAC, soft delete, versioned secret references |
 | Monitoring | Workspace-based Application Insights and 30-day Log Analytics retention |
 
@@ -129,10 +129,9 @@ production network boundary.
 
 Non-secret settings are supplied as App Service application settings. Database,
 session, Defender webhook, and optional Entra client secrets are stored as Key
-Vault secrets and consumed through versioned Key Vault references. The app's system identity has Key Vault Secrets User and ACR Pull roles. It has
-Storage Blob Data Owner only on the evidence container so it can read Defender
-scan-result tags, plus Storage Blob Delegator at storage-account scope so it can
-issue short-lived user-delegation download links.
+Vault secrets and consumed through versioned Key Vault references. The app's
+system identity has Key Vault Secrets User, Blob Data Contributor, and ACR Pull
+roles.
 
 The Bicep template explicitly configures:
 

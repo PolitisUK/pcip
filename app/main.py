@@ -1,25 +1,32 @@
+import csv
+import io
+import json
+import logging
+import re
+import secrets
+import time
+from collections import OrderedDict, deque
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from contextlib import asynccontextmanager
-import re
-import logging
-import time
-import csv, io, json, secrets
-from collections import OrderedDict, deque
 from threading import Lock
-from .csrf import get_csrf_token, csrf_protect
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import func, or_, select, text
+from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import select, func, or_, text
-from sqlalchemy.orm import Session
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
 from .config import settings, validate_runtime_settings
-from .db import Base, engine, get_db, SessionLocal
+from .csrf import csrf_protect, get_csrf_token
+from .db import Base, SessionLocal, engine, get_db
+from .entra import configured as entra_configured
+from .entra import oauth
 from .models import (
     Activity,
     ActivityResponse,
@@ -46,12 +53,18 @@ from .models import (
     StudyStatus,
     User,
 )
-from .security import hash_password, verify_password, new_token, token_hash, encode_session, decode_session
+from .observability import configure_observability
+from .scanner import scan_file
+from .security import (
+    decode_session,
+    encode_session,
+    hash_password,
+    new_token,
+    token_hash,
+    verify_password,
+)
 from .services import audit, queue_email
 from .storage import storage
-from .scanner import scan_file
-from .entra import oauth, configured as entra_configured
-from .observability import configure_observability
 
 VERSION = "0.6.0"
 BASE = Path(__file__).resolve().parent
@@ -1787,9 +1800,8 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
         ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.participant_id==p.id,StudyEnrolment.organisation_id==u.organisation_id)).all()
         invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id).order_by(ParticipantInvitation.created_at.desc())).all()
         responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id).order_by(ActivityResponse.updated_at.desc())).all()
-        evidence_files=db.scalars(select(EvidenceFile).where(EvidenceFile.participant_id==p.id,EvidenceFile.organisation_id==u.organisation_id).order_by(EvidenceFile.created_at.desc())).all()
         messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id).order_by(ParticipantMessage.created_at)).all()
-        study_ids = {e.study_id for e in ens} | {i.study_id for i in invs} | {r.study_id for r in responses} | {e.study_id for e in evidence_files} | {m.study_id for m in messages}
+        study_ids = {e.study_id for e in ens} | {i.study_id for i in invs} | {r.study_id for r in responses} | {m.study_id for m in messages}
         studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id, Study.id.in_(study_ids))).all()} if study_ids else {}
     else:
         allowed_ids = set(db.scalars(study_scope_for_user(u)).all())
@@ -1799,11 +1811,10 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
         studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id,Study.id.in_(allowed_ids))).all()}
         invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id,ParticipantInvitation.study_id.in_(allowed_ids)).order_by(ParticipantInvitation.created_at.desc())).all()
         responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(allowed_ids)).order_by(ActivityResponse.updated_at.desc())).all()
-        evidence_files=db.scalars(select(EvidenceFile).where(EvidenceFile.participant_id==p.id,EvidenceFile.organisation_id==u.organisation_id,EvidenceFile.study_id.in_(allowed_ids)).order_by(EvidenceFile.created_at.desc())).all()
         messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id,ParticipantMessage.study_id.in_(allowed_ids)).order_by(ParticipantMessage.created_at)).all()
     privacy_counts = participant_related_counts(db, p.id, u.organisation_id) if u.role in {"owner", "admin"} else None
     privacy_workflow_token = request.session.get(privacy_workflow_key(p.id)) if u.role in {"owner", "admin"} else None
-    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
+    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
 
 
 @app.get("/participants/{participant_id}/export")

@@ -1,9 +1,12 @@
 from logging.config import fileConfig
+
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from app import models  # noqa: F401
 from app.config import settings
 from app.db import Base
-from app import models  # noqa: F401
+
 config = context.config
 # ConfigParser treats percent signs as interpolation markers. Database
 # credentials are URL-encoded, so preserve percent-encoded characters when
