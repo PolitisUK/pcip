@@ -63,16 +63,22 @@ class Settings(BaseSettings):
     clamav_host: str | None = None
     clamav_port: int = 3310
     environment: str = "development"
+    debug: bool = False
     seed_demo_data: bool = True
     local_login_enabled: bool = True
     entra_enabled: bool = False
     entra_tenant_id: str | None = None
     entra_client_id: str | None = None
     entra_client_secret: str | None = None
+    entra_redirect_uri: str | None = None
+    entra_post_logout_redirect_uri: str | None = None
     entra_default_organisation_slug: str | None = None
     entra_allowed_domains: str = ""
     entra_auto_provision: bool = False
     entra_default_role: str = "researcher"
+    entra_role_map: str = ""
+    entra_sync_roles: bool = False
+    entra_allow_role_elevation: bool = False
     applicationinsights_connection_string: str | None = None
     log_level: str = "INFO"
     key_vault_url: str | None = None
@@ -84,6 +90,17 @@ class Settings(BaseSettings):
     privacy_retention_days: int = 365
     privacy_retention_statuses: str = "withdrawn,completed"
     privacy_retention_action: str = "anonymise"
+    privacy_retention_policy_days: str = "standard:365,sensitive:730"
+    password_reset_token_minutes: int = 60
+    researcher_invitation_expiry_hours: int = 48
+    participant_invitation_expiry_hours: int = 720
+    public_auth_session_reset_minutes: int = 15
+    public_auth_session_researcher_invite_minutes: int = 60
+    public_auth_session_participant_portal_minutes: int = 720
+    csp_enabled: bool = True
+    require_redis_rate_limit_in_production: bool = True
+    redis_url: str | None = None
+    redis_prefix: str = "pcip:rl"
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
 
@@ -105,6 +122,15 @@ def _is_secret_strong(secret: str) -> bool:
 
 def _is_non_development(environment: str) -> bool:
     return environment.strip().lower() not in {"development", "dev", "test", "testing"}
+
+
+def _normalised_environment(environment: str) -> str:
+    token = environment.strip().lower()
+    aliases = {
+        "dev": "development",
+        "testing": "test",
+    }
+    return aliases.get(token, token)
 
 
 def apply_key_vault_overrides(runtime: Settings) -> None:
@@ -141,6 +167,10 @@ def apply_key_vault_overrides(runtime: Settings) -> None:
 
 
 def validate_runtime_settings(runtime: Settings) -> None:
+    environment = _normalised_environment(getattr(runtime, "environment", ""))
+    if environment not in {"development", "test", "staging", "production"}:
+        raise RuntimeError("ENVIRONMENT must be one of development, test, staging, production.")
+
     if not _is_non_development(runtime.environment):
         return
 
@@ -155,6 +185,9 @@ def validate_runtime_settings(runtime: Settings) -> None:
 
     if not runtime.session_cookie_secure:
         errors.append("SESSION_COOKIE_SECURE must be enabled outside development.")
+
+    if getattr(runtime, "debug", False):
+        errors.append("DEBUG must be disabled outside development.")
 
     base = urlsplit(runtime.base_url.strip())
     base_host = (base.hostname or "").lower()
@@ -198,18 +231,39 @@ def validate_runtime_settings(runtime: Settings) -> None:
     if database_url.strip().lower().startswith("sqlite"):
         errors.append("DATABASE_URL cannot use sqlite outside development; configure Azure SQL/PostgreSQL.")
 
-    if getattr(runtime, "seed_demo_data", False):
-        errors.append("SEED_DEMO_DATA must be disabled outside development.")
-
     backend = getattr(runtime, "storage_backend", "local").strip().lower()
+
     if backend == "azure_blob":
-        storage_account_url = getattr(runtime, "azure_storage_account_url", None)
-        storage_connection = getattr(runtime, "azure_storage_connection_string", None)
-        storage_container = getattr(runtime, "azure_storage_container", "")
-        if not ((storage_account_url or "").strip() or (storage_connection or "").strip()):
-            errors.append("AZURE_STORAGE_ACCOUNT_URL or AZURE_STORAGE_CONNECTION_STRING is required for STORAGE_BACKEND=azure_blob.")
-        if not (storage_container or "").strip():
-            errors.append("AZURE_STORAGE_CONTAINER is required for STORAGE_BACKEND=azure_blob.")
+        storage_account_url = (
+            getattr(runtime, "azure_storage_account_url", None) or ""
+        ).strip()
+        storage_connection = (
+            getattr(runtime, "azure_storage_connection_string", None) or ""
+        ).strip()
+        storage_container = (
+            getattr(runtime, "azure_storage_container", "") or ""
+        ).strip()
+
+        if not storage_container:
+            errors.append(
+                "AZURE_STORAGE_CONTAINER is required for STORAGE_BACKEND=azure_blob."
+            )
+
+        if environment == "production":
+            if not storage_account_url:
+                errors.append(
+                    "AZURE_STORAGE_ACCOUNT_URL is required in production."
+                )
+
+            if storage_connection:
+                errors.append(
+                    "AZURE_STORAGE_CONNECTION_STRING must not be configured in production."
+                )
+
+        elif not storage_account_url and not storage_connection:
+            errors.append(
+                "AZURE_STORAGE_ACCOUNT_URL or AZURE_STORAGE_CONNECTION_STRING is required for STORAGE_BACKEND=azure_blob."
+            )
 
     if getattr(runtime, "entra_enabled", False):
         missing_entra = [
@@ -223,6 +277,45 @@ def validate_runtime_settings(runtime: Settings) -> None:
         ]
         if missing_entra:
             errors.append("Missing Microsoft Entra configuration: " + ", ".join(missing_entra) + ".")
+
+        for name, value in [
+            ("ENTRA_REDIRECT_URI", getattr(runtime, "entra_redirect_uri", None)),
+            ("ENTRA_POST_LOGOUT_REDIRECT_URI", getattr(runtime, "entra_post_logout_redirect_uri", None)),
+        ]:
+            if not (value or "").strip():
+                continue
+            parsed = urlsplit(value.strip())
+            if parsed.scheme.lower() != "https" or not parsed.hostname:
+                errors.append(f"{name} must be a valid HTTPS URL when configured.")
+
+        role_map = (getattr(runtime, "entra_role_map", "") or "").strip()
+        if role_map:
+            allowed_roles = {"owner", "admin", "researcher", "observer"}
+            entries = [x.strip() for x in role_map.split(",") if x.strip()]
+            for entry in entries:
+                if ":" not in entry:
+                    errors.append("ENTRA_ROLE_MAP entries must use 'external_claim:app_role' format.")
+                    break
+                _, mapped_role = entry.split(":", 1)
+                if mapped_role.strip().lower() not in allowed_roles:
+                    errors.append("ENTRA_ROLE_MAP can only map to owner/admin/researcher/observer.")
+                    break
+
+    if environment == "production":
+        if not getattr(runtime, "csp_enabled", True):
+            errors.append("CSP_ENABLED must remain true in production.")
+        if backend != "azure_blob":
+            errors.append("STORAGE_BACKEND must be azure_blob in production.")
+        if getattr(runtime, "require_redis_rate_limit_in_production", True) and not (getattr(runtime, "redis_url", "") or "").strip():
+            errors.append("REDIS_URL must be configured in production for distributed rate limiting.")
+
+        if isinstance(runtime, Settings):
+            required_env_vars = ["SECRET_KEY", "DATABASE_URL", "AZURE_DEFENDER_WEBHOOK_SECRET"]
+            if getattr(runtime, "entra_enabled", False):
+                required_env_vars.append("ENTRA_CLIENT_SECRET")
+            missing_env = [name for name in required_env_vars if not (os.getenv(name) or "").strip()]
+            if missing_env:
+                errors.append("Production secrets must be supplied through environment variables: " + ", ".join(missing_env) + ".")
 
     key_vault_url = (getattr(runtime, "key_vault_url", None) or "").strip()
     if key_vault_url:

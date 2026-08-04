@@ -1,14 +1,11 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from contextlib import asynccontextmanager
 import re
 import logging
 import time
-import csv, io, json, secrets
-from collections import OrderedDict, deque
-from threading import Lock
+import csv, io, json, secrets, hashlib
 from .csrf import get_csrf_token, csrf_protect
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response, Query, Header, Path as ApiPath
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -16,120 +13,31 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import select, func, or_, and_, case, text, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select, func, or_, text
 from sqlalchemy.orm import Session
 from .config import settings, validate_runtime_settings
 from .db import Base, engine, get_db, SessionLocal
-from .models import (
-    Activity,
-    ActivityResponse,
-    AuditEvent,
-    ConsentStatus,
-    EvidenceFile,
-    Invitation,
-    Organisation,
-    OrganisationMembership,
-    OutboxEmail,
-    Participant,
-    ParticipantInvitation,
-    ParticipantMessage,
-    ParticipantStatus,
-    PasswordReset,
-    Project,
-    ProjectStatus,
-    PublicAuthSession,
-    PublicTokenExchange,
-    Role,
-    Study,
-    StudyAccess,
-    StudyEnrolment,
-    StudyStatus,
-    User,
-)
+from .models import *
+
 from .security import hash_password, verify_password, new_token, token_hash, encode_session, decode_session
 from .services import audit, queue_email
+from .services import redact_token_links
 from .storage import storage
 from .scanner import scan_file
-from .entra import oauth, configured as entra_configured
-from .observability import configure_observability
-from .participant_services import (
-    activity_window,
-    apply_response_action,
-    build_evidence_file,
-    create_participant_invitation,
-    create_participant_message,
-    create_researcher_message,
-    find_live_unaccepted_invitation,
-    grant_participant_consent,
-    is_evidence_downloadable,
-    list_participant_visible_messages,
-    mark_invitation_revoked,
-    resolve_org_scoped_evidence,
-    resolve_invitation_by_token,
-    resolve_or_create_activity_response,
-    resolve_org_scoped_invitation,
-    resolve_participant_invitation,
-    serialise_response_payload,
-)
-from .participant_api.auth import (
-    PARTICIPANT_API_SCOPE,
-    create_participant_api_session,
-    resolve_participant_api_session,
-)
-from .participant_api.schemas import (
-    ActivityAvailability,
-    ActivityDetailResponse,
-    ActivityDetailResponseItem,
-    EvidenceMetadata,
-    EvidenceStatusResponse,
-    EvidenceUploadResponse,
-    DraftResponseRequest,
-    DraftResponseResult,
-    ActivityListResponse,
-    ActivityResponseSummary,
-    ActivityResponseValue,
-    ActivitySummary,
-    BearerSession,
-    CreateMessageRequest,
-    CreateMessageResponse,
-    DeletionRequest,
-    InvitationContext,
-    LogoutResponse,
-    MessageListResponse,
-    Pagination,
-    ParticipantMessageSummary,
-    ParticipantSessionResponse,
-    ParticipantSummary,
-    PrivacyRequestAcknowledgement,
-    PortalResponseItem,
-    PortalSummaryResponse,
-    SessionExchangeRequest,
-    SessionExchangeResponse,
-    SessionInfo,
-    SubmitResponseRequest,
-    SubmittedResponseResult,
-    StudyListResponse,
-    StudySummary,
-    WithdrawalRequest,
+from .rate_limit import build_rate_limiter
+from .entra import (
+    EntraAuthError,
+    complete_login as complete_entra_login,
+    configured as entra_configured,
+    logout_url as entra_logout_url,
+    role_from_claims,
+    safe_role_assignment,
+    start_login as start_entra_login,
 )
 
 VERSION = "0.6.0"
 BASE = Path(__file__).resolve().parent
-configure_observability(settings)
-
-
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    startup()
-    yield
-
-
-app = FastAPI(
-    title=settings.app_name,
-    version=VERSION,
-    lifespan=lifespan,
-)
+app = FastAPI(title=settings.app_name, version=VERSION, debug=settings.debug)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.secret_key,
@@ -154,15 +62,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(self)"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "img-src 'self' data:; "
-            "style-src 'self'; "
-            f"script-src 'self' 'nonce-{csp_nonce}'; "
-            "form-action 'self'; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'"
-        )
+        if settings.csp_enabled:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "img-src 'self' data:; "
+                "style-src 'self'; "
+                f"script-src 'self' 'nonce-{csp_nonce}'; "
+                "form-action 'self'; "
+                "frame-ancestors 'none'; "
+                "base-uri 'self'"
+            )
         if settings.cookie_secure:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
@@ -170,20 +79,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
-
-
-@app.get("/service-worker.js", include_in_schema=False)
-def service_worker():
-    return FileResponse(
-        BASE / "static" / "service-worker.js",
-        media_type="application/javascript",
-        headers={
-            "Cache-Control": "no-cache",
-            "Service-Worker-Allowed": "/",
-        },
-    )
-
-
 logger = logging.getLogger("pcip.security")
 PUBLIC_AUTH_COOKIE = "public_auth_session"
 PUBLIC_SCOPE_PASSWORD_RESET = "password_reset"
@@ -196,41 +91,18 @@ def naive_now(): return now().replace(tzinfo=None)
 def unexpired(v): return bool(v and v.replace(tzinfo=None) > naive_now())
 
 
-
-class InMemoryRateLimiter:
-    def __init__(self, max_keys: int = 10_000):
-        self._hits: OrderedDict[str, deque[float]] = OrderedDict()
-        self._max_keys = max(1, max_keys)
-        self._lock = Lock()
-
-    def reset(self):
-        with self._lock:
-            self._hits.clear()
-
-    def check(self, key: str, limit: int, window_seconds: int) -> int | None:
-        if limit <= 0:
-            return 1
-        with self._lock:
-            now_seconds = time.monotonic()
-            window_start = now_seconds - window_seconds
-            if key not in self._hits and len(self._hits) >= self._max_keys:
-                self._hits.popitem(last=False)
-            bucket = self._hits.setdefault(key, deque())
-            self._hits.move_to_end(key)
-            while bucket and bucket[0] <= window_start:
-                bucket.popleft()
-            if len(bucket) >= limit:
-                retry_after = max(1, int(window_seconds - (now_seconds - bucket[0])) + 1)
-                return retry_after
-            bucket.append(now_seconds)
-            return None
+def as_naive_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-rate_limiter = InMemoryRateLimiter()
+rate_limiter = build_rate_limiter(settings.redis_url, settings.redis_prefix)
 
 
-def _rate_limit_key(scope: str, label: str, value: str):
-    return f"{scope}:{label}:{value}"
+def _rate_limit_key(scope: str, label: str, value: str, organisation_id: int | None):
+    tenant = str(organisation_id) if organisation_id is not None else "global"
+    return f"{tenant}:{scope}:{label}:{value}"
 
 
 def _enforce_rate_limit(
@@ -246,10 +118,10 @@ def _enforce_rate_limit(
     if not settings.rate_limit_enabled:
         return
     ip = request.client.host if request.client and request.client.host else "unknown"
-    retry = rate_limiter.check(_rate_limit_key(scope, "ip", ip), ip_limit, settings.rate_limit_window_seconds)
+    retry = rate_limiter.check(_rate_limit_key(scope, "ip", ip, organisation_id), ip_limit, settings.rate_limit_window_seconds)
     account_retry = None
     if account_key and account_limit is not None:
-        account_retry = rate_limiter.check(_rate_limit_key(scope, "account", account_key), account_limit, settings.rate_limit_window_seconds)
+        account_retry = rate_limiter.check(_rate_limit_key(scope, "account", account_key, organisation_id), account_limit, settings.rate_limit_window_seconds)
 
     retry_after = max(x for x in [retry, account_retry] if x is not None) if retry is not None or account_retry is not None else None
     if retry_after is None:
@@ -314,9 +186,7 @@ def normalise_scan_status(value: str | None) -> str:
     token = (value or "").strip().lower().replace(" ", "_")
     mapping = {
         "scan_failed": "failed",
-        "not_scanned": "failed",
-        "not_configured": "failed",
-        "error": "failed",
+        "not_scanned": "not_scanned",
     }
     return mapping.get(token, token)
 
@@ -326,23 +196,11 @@ def allow_unscanned_downloads() -> bool:
 
 
 def ensure_clean_scan_for_download(scan_status: str | None):
-    if is_evidence_downloadable(scan_status):
+    if normalise_scan_status(scan_status) == "clean":
         return
     if allow_unscanned_downloads():
         return
     raise HTTPException(423, "Evidence is blocked until malware scanning is explicitly CLEAN.")
-
-
-def delete_stored_object_safely(key: str, reason: str) -> None:
-    try:
-        storage.delete(key)
-    except Exception as exc:
-        logger.error(
-            "evidence_cleanup_failed key=%s reason=%s error=%s",
-            key,
-            reason,
-            exc.__class__.__name__,
-        )
 
 
 def log_webhook_rejection(request: Request, reason: str):
@@ -370,61 +228,6 @@ def nonblank(value: str, field: str, min_length: int = 1) -> str:
 
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-STUDY_METHODOLOGIES = {
-    "diary",
-    "walk_along",
-    "interview",
-    "focus_group",
-    "co_design",
-    "mixed_method",
-}
-ACTIVITY_TYPES = {
-    "short_text",
-    "long_text",
-    "single_choice",
-    "multiple_choice",
-    "rating",
-    "slider",
-    "photo",
-    "audio",
-    "video",
-    "gps",
-    "ranking",
-    "file",
-}
-COMMUNICATION_PREFERENCES = {"email", "sms", "phone", "none"}
-MAX_CSV_IMPORT_BYTES = 2 * 1024 * 1024
-MAX_CSV_IMPORT_ROWS = 10_000
-UPLOAD_CONTENT_TYPES = {
-    ".jpg": {"image/jpeg"},
-    ".jpeg": {"image/jpeg"},
-    ".png": {"image/png"},
-    ".webp": {"image/webp"},
-    ".mp3": {"audio/mpeg", "audio/mp3"},
-    ".wav": {"audio/wav", "audio/x-wav"},
-    ".m4a": {"audio/mp4", "audio/x-m4a"},
-    ".mp4": {"video/mp4"},
-    ".mov": {"video/quicktime"},
-    ".pdf": {"application/pdf"},
-    ".doc": {"application/msword"},
-    ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
-    ".txt": {"text/plain"},
-    ".csv": {"text/csv", "application/csv", "text/plain"},
-}
-
-
-def validate_evidence_upload_metadata(filename: str, content_type: str | None, activity_type: str | None = None):
-    extension = Path(filename).suffix.lower()
-    allowed_extensions = {x.strip().lower() for x in settings.allowed_upload_extensions.split(",") if x.strip()}
-    if extension not in allowed_extensions:
-        raise HTTPException(415, "This file type is not permitted.")
-    declared_type = (content_type or "application/octet-stream").split(";", 1)[0].strip().lower()
-    expected_types = UPLOAD_CONTENT_TYPES.get(extension)
-    if expected_types and declared_type not in expected_types and declared_type != "application/octet-stream":
-        raise HTTPException(415, "The file extension and content type do not match.")
-    required_prefix = {"photo": "image/", "audio": "audio/", "video": "video/"}.get(activity_type or "")
-    if required_prefix and not declared_type.startswith(required_prefix):
-        raise HTTPException(415, f"This activity requires a {activity_type} file.")
 
 
 def validated_email(value: str) -> str | None:
@@ -436,169 +239,47 @@ def validated_email(value: str) -> str | None:
     return cleaned
 
 
-def active_users_for_email(
-    db: Session,
-    email: str,
-    limit: int = 2,
-) -> list[User]:
-    return list(
-        db.scalars(
-            select(User)
-            .where(
-                User.email == email,
-                User.is_active == True,
-            )
-            .limit(limit)
-        ).all()
-    )
-
-
-def unique_active_user_for_email(
-    db: Session,
-    email: str,
-) -> User | None:
-    matches = active_users_for_email(db, email)
-    return matches[0] if len(matches) == 1 else None
-
-
-def entra_identity_from_claims(
-    claims: dict,
-) -> tuple[str, str, str] | None:
-    subject = claims.get("sub") or claims.get("oid")
-    email = (
-        claims.get("preferred_username")
-        or claims.get("email")
-        or ""
-    ).lower().strip()
-    name = claims.get("name") or email
-    tenant = claims.get("tid")
-    if (
-        not subject
-        or not email
-        or (
-            settings.entra_tenant_id
-            and tenant != settings.entra_tenant_id
-        )
-    ):
-        return None
-    return str(subject), email, str(name)
-
-
 def bump_session_version(user: User):
     user.session_version = int(user.session_version or 0) + 1
-
-
-class CurrentUser:
-    """A global identity viewed through one active organisation membership."""
-
-    def __init__(self, identity: User, membership: OrganisationMembership):
-        self.identity = identity
-        self.membership = membership
-
-    @property
-    def organisation_id(self):
-        return self.membership.organisation_id
-
-    @property
-    def organisation(self):
-        return self.membership.organisation
-
-    @property
-    def role(self):
-        return self.membership.role
-
-    @property
-    def is_active(self):
-        return self.identity.is_active and self.membership.is_active
-
-    @property
-    def available_memberships(self):
-        return [
-            membership
-            for membership in self.identity.memberships
-            if membership.is_active
-        ]
-
-    def __getattr__(self, name):
-        return getattr(self.identity, name)
-
-
-def add_organisation_membership(
-    db: Session,
-    user: User,
-    organisation_id: int,
-    role: str,
-) -> OrganisationMembership:
-    existing = db.scalar(
-        select(OrganisationMembership).where(
-            OrganisationMembership.user_id == user.id,
-            OrganisationMembership.organisation_id == organisation_id,
-        )
-    )
-    if existing:
-        return existing
-    membership = OrganisationMembership(
-        user_id=user.id,
-        organisation_id=organisation_id,
-        role=role,
-        is_active=True,
-    )
-    db.add(membership)
-    return membership
 
 
 def invalidate_session_cookie_user(request: Request, db: Session):
     identity = decode_session(request.cookies.get("session", ""))
     if not identity:
         return None
-    user = db.get(User, identity.user_id)
+    user_id = identity.get("user_id")
+    session_version = identity.get("session_version")
+    if user_id is None:
+        return None
+    user = db.get(User, int(user_id))
     if not user:
         return None
-    if user.session_version == identity.session_version:
+    if session_version is None or user.session_version == int(session_version):
         bump_session_version(user)
         db.commit()
         return user
     return None
 
-def optional_current_user(request: Request, db: Session = Depends(get_db)):
+def current_user(request: Request, db: Session = Depends(get_db)):
     identity = decode_session(request.cookies.get("session", ""))
 
     if not identity:
-        return None
+        raise HTTPException(303, headers={"Location": "/login"})
 
-    u = db.get(User, identity.user_id)
+    user_id = identity.get("user_id")
+    session_version = identity.get("session_version")
+    if user_id is None:
+        raise HTTPException(303, headers={"Location": "/login"})
+
+    u = db.get(User, int(user_id))
 
     if not u or not u.is_active:
-        return None
+        raise HTTPException(303, headers={"Location": "/login"})
 
-    if u.session_version != identity.session_version:
-        return None
+    if session_version is not None and u.session_version != int(session_version):
+        raise HTTPException(303, headers={"Location": "/login"})
 
-    organisation_id = identity.organisation_id or u.organisation_id
-    membership = db.scalar(
-        select(OrganisationMembership).where(
-            OrganisationMembership.user_id == u.id,
-            OrganisationMembership.organisation_id == organisation_id,
-            OrganisationMembership.is_active == True,
-        )
-    )
-    if membership:
-        return CurrentUser(u, membership)
-
-    # Compatibility only for local/test databases that have not run 0006.
-    if (
-        settings.environment in {"development", "test"}
-        and organisation_id == u.organisation_id
-    ):
-        return u
-    return None
-
-
-def current_user(request: Request, db: Session = Depends(get_db)):
-    u = optional_current_user(request, db)
-    if u:
-        return u
-    raise HTTPException(303, headers={"Location": "/login"})
+    return u
 
 def roles(*allowed):
     def dep(u=Depends(current_user)):
@@ -625,8 +306,6 @@ def consume_flash(request: Request) -> tuple[str | None, str | None]:
 
 
 def request_wants_html(request: Request) -> bool:
-    if request.url.path.startswith("/api/"):
-        return False
     accept = request.headers.get("accept", "").lower()
     return "text/html" in accept
 
@@ -674,8 +353,6 @@ def render_error(request: Request, status_code: int, title: str, detail: str):
 
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
-    if not request_wants_html(request):
-        return JSONResponse(status_code=404, content={"detail": "Not Found"})
     return render_error(request, 404, "Page not found", "The page you requested is not available.")
 
 
@@ -711,17 +388,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         else:
             detail = "Please review the submitted information and try again."
         return render_error(request, 422, "Please check your information", detail)
-    errors = []
-    for item in exc.errors():
-        errors.append({k: v for k, v in item.items() if k != "input"})
-    return JSONResponse(status_code=422, content={"detail": errors})
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("unhandled_exception path=%s", request.url.path)
-    if not request_wants_html(request):
-        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
     return render_error(request, 500, "Something went wrong", "An unexpected error occurred. Please try again.")
 
 def project(db,i,o):
@@ -771,6 +443,131 @@ def participant_has_related_data(counts: dict[str, int]) -> bool:
     return any(value > 0 for value in counts.values())
 
 
+def consent_wording() -> str:
+    return "I have read the study information and consent to participate."
+
+
+def consent_wording_hash() -> str:
+    return hashlib.sha256(consent_wording().encode("utf-8")).hexdigest()
+
+
+def record_consent_evidence(db: Session, organisation_id: int, participant_id: int, study_id: int):
+    db.add(
+        ConsentEvidence(
+            organisation_id=organisation_id,
+            participant_id=participant_id,
+            study_id=study_id,
+            consent_version="v1",
+            privacy_notice_version="v1",
+            consent_wording_hash=consent_wording_hash(),
+        )
+    )
+
+
+def mark_consent_withdrawn(db: Session, organisation_id: int, participant_id: int):
+    latest = db.scalar(
+        select(ConsentEvidence)
+        .where(
+            ConsentEvidence.organisation_id == organisation_id,
+            ConsentEvidence.participant_id == participant_id,
+        )
+        .order_by(ConsentEvidence.captured_at.desc())
+    )
+    if latest and not latest.withdrawn_at:
+        latest.withdrawn_at = now()
+
+
+def retention_policy_days_map() -> dict[str, int]:
+    values: dict[str, int] = {}
+    for raw in [x.strip() for x in settings.privacy_retention_policy_days.split(",") if x.strip()]:
+        if ":" not in raw:
+            continue
+        key, value = raw.split(":", 1)
+        key = key.strip().lower()
+        try:
+            values[key] = max(0, int(value.strip()))
+        except ValueError:
+            continue
+    # Keep compatibility with legacy PRIVACY_RETENTION_DAYS default for standard data.
+    values["standard"] = max(0, int(settings.privacy_retention_days))
+    return values
+
+
+def participant_retention_reference_date(db: Session, row: Participant) -> datetime:
+    closed_study_dates = db.scalars(
+        select(Study.end_at)
+        .join(StudyEnrolment, StudyEnrolment.study_id == Study.id)
+        .where(
+            StudyEnrolment.organisation_id == row.organisation_id,
+            StudyEnrolment.participant_id == row.id,
+            Study.status == StudyStatus.closed.value,
+            Study.end_at.is_not(None),
+        )
+    ).all()
+    dates = [as_naive_utc(x) for x in closed_study_dates if x is not None]
+    if row.withdrawn_at:
+        dates.append(as_naive_utc(row.withdrawn_at))
+    dates.append(as_naive_utc(row.created_at))
+    return max(dates)
+
+
+def build_retention_report(db: Session, organisation_id: int, mode: str, dry_run: bool) -> dict:
+    policy_days = retention_policy_days_map()
+    allowed_statuses = {x.strip() for x in settings.privacy_retention_statuses.split(",") if x.strip()}
+    participants = db.scalars(
+        select(Participant).where(Participant.organisation_id == organisation_id)
+    ).all()
+    report = {
+        "dry_run": dry_run,
+        "mode": mode,
+        "evaluated": 0,
+        "processed": 0,
+        "skipped_legal_hold": 0,
+        "scheduled": 0,
+        "deleted": 0,
+        "anonymised": 0,
+        "details": [],
+    }
+    now_value = as_naive_utc(now())
+    for p in participants:
+        if allowed_statuses and p.status not in allowed_statuses:
+            continue
+        report["evaluated"] += 1
+        report["processed"] += 1
+        if p.legal_hold:
+            report["skipped_legal_hold"] += 1
+            report["details"].append({"participant_id": p.id, "action": "skip_legal_hold"})
+            continue
+
+        days = policy_days.get((p.retention_category or "standard").strip().lower(), policy_days["standard"])
+        reference_date = participant_retention_reference_date(db, p)
+        scheduled_date = as_naive_utc(reference_date) + timedelta(days=days)
+        p.scheduled_deletion_at = scheduled_date
+        if scheduled_date > now_value:
+            report["details"].append({"participant_id": p.id, "action": "scheduled", "scheduled_deletion_at": scheduled_date.isoformat()})
+            report["scheduled"] += 1
+            continue
+
+        action = mode
+        counts = participant_related_counts(db, p.id, organisation_id)
+        if action == "delete" and participant_has_related_data(counts):
+            action = "anonymise"
+
+        if dry_run:
+            report["details"].append({"participant_id": p.id, "action": f"would_{action}", "scheduled_deletion_at": scheduled_date.isoformat()})
+            continue
+
+        if action == "delete":
+            db.delete(p)
+            report["deleted"] += 1
+            report["details"].append({"participant_id": p.id, "action": "deleted"})
+        else:
+            anonymise_participant_record(p)
+            report["anonymised"] += 1
+            report["details"].append({"participant_id": p.id, "action": "anonymised"})
+    return report
+
+
 def anonymise_participant_record(row: Participant):
     row.reference = f"ANON-{row.id}"
     row.name = f"Anonymised Participant {row.id}"
@@ -782,6 +579,7 @@ def anonymise_participant_record(row: Participant):
     row.communication_preference = "none"
     row.status = ParticipantStatus.withdrawn.value
     row.consent_status = ConsentStatus.withdrawn.value
+    row.withdrawn_at = row.withdrawn_at or now()
 
 
 def participant_export_payload(db: Session, row: Participant):
@@ -790,6 +588,7 @@ def participant_export_payload(db: Session, row: Participant):
     messages = db.scalars(select(ParticipantMessage).where(ParticipantMessage.organisation_id == row.organisation_id, ParticipantMessage.participant_id == row.id).order_by(ParticipantMessage.id.asc())).all()
     invitations = db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.organisation_id == row.organisation_id, ParticipantInvitation.participant_id == row.id).order_by(ParticipantInvitation.id.asc())).all()
     evidence = db.scalars(select(EvidenceFile).where(EvidenceFile.organisation_id == row.organisation_id, EvidenceFile.participant_id == row.id).order_by(EvidenceFile.id.asc())).all()
+    consent_rows = db.scalars(select(ConsentEvidence).where(ConsentEvidence.organisation_id == row.organisation_id, ConsentEvidence.participant_id == row.id).order_by(ConsentEvidence.captured_at.asc())).all()
     return {
         "application_name": "Citizen Centric",
         "branding": "Citizen Centric by Politis",
@@ -802,6 +601,10 @@ def participant_export_payload(db: Session, row: Participant):
             "phone": row.phone,
             "status": row.status,
             "consent_status": row.consent_status,
+            "retention_category": row.retention_category,
+            "legal_hold": row.legal_hold,
+            "withdrawn_at": _iso(row.withdrawn_at),
+            "scheduled_deletion_at": _iso(row.scheduled_deletion_at),
             "communication_preference": row.communication_preference,
             "tags": row.tags,
             "demographics_json": row.demographics_json,
@@ -871,6 +674,18 @@ def participant_export_payload(db: Session, row: Participant):
             }
             for x in evidence
         ],
+        "consent_evidence": [
+            {
+                "id": x.id,
+                "study_id": x.study_id,
+                "captured_at": _iso(x.captured_at),
+                "consent_version": x.consent_version,
+                "privacy_notice_version": x.privacy_notice_version,
+                "consent_wording_hash": x.consent_wording_hash,
+                "withdrawn_at": _iso(x.withdrawn_at),
+            }
+            for x in consent_rows
+        ],
     }
 
 
@@ -901,51 +716,6 @@ def study_scope_for_user(user: User):
         Study.organisation_id == user.organisation_id,
         or_(Study.created_by_id == user.id, Study.id.in_(access_ids)),
     )
-
-
-def project_scope_for_user(user: User):
-    accessible_studies = study_scope_for_user(user)
-    accessible_project_ids = select(Study.project_id).where(
-        Study.organisation_id == user.organisation_id,
-        Study.id.in_(accessible_studies),
-    )
-    return select(Project.id).where(
-        Project.organisation_id == user.organisation_id,
-        or_(
-            Project.created_by_id == user.id,
-            Project.id.in_(accessible_project_ids),
-        ),
-    )
-
-
-def project_permission(
-    db: Session,
-    user: User,
-    project_row: Project,
-) -> str | None:
-    if user.role in {"owner", "admin"}:
-        return "manage"
-    if user.role == "observer":
-        return "view"
-    if project_row.created_by_id == user.id:
-        return "manage"
-    visible_project = db.scalar(
-        project_scope_for_user(user).where(Project.id == project_row.id)
-    )
-    return "view" if visible_project else None
-
-
-def require_project_permission(
-    db: Session,
-    user: User,
-    project_row: Project,
-    edit: bool = False,
-):
-    permission = project_permission(db, user, project_row)
-    if not permission or (edit and permission != "manage"):
-        raise HTTPException(403, "You do not have access to this project.")
-    return permission
-
 
 def set_public_auth_cookie(response: RedirectResponse, value: str, max_age_seconds: int):
     response.set_cookie(
@@ -1008,42 +778,6 @@ def revoke_public_auth_session(request: Request, db: Session, scope: str):
     db.commit()
 
 
-def apply_participant_withdrawal(
-    db: Session,
-    invitation: ParticipantInvitation,
-    participant_row: Participant,
-    scope: str,
-):
-    enrolment_query = select(StudyEnrolment).where(
-        StudyEnrolment.organisation_id == invitation.organisation_id,
-        StudyEnrolment.participant_id == participant_row.id,
-    )
-    invitation_query = select(ParticipantInvitation.id).where(
-        ParticipantInvitation.organisation_id == invitation.organisation_id,
-        ParticipantInvitation.participant_id == participant_row.id,
-    )
-    if scope == "study":
-        enrolment_query = enrolment_query.where(StudyEnrolment.study_id == invitation.study_id)
-        invitation_query = invitation_query.where(ParticipantInvitation.study_id == invitation.study_id)
-    enrolments = list(db.scalars(enrolment_query))
-    for enrolment in enrolments:
-        enrolment.status = "withdrawn"
-    invitation_ids = list(db.scalars(invitation_query))
-    if invitation_ids:
-        db.execute(
-            update(PublicAuthSession)
-            .where(
-                PublicAuthSession.participant_invitation_id.in_(invitation_ids),
-                PublicAuthSession.revoked_at.is_(None),
-            )
-            .values(revoked_at=now())
-        )
-    if scope == "all":
-        participant_row.consent_status = ConsentStatus.withdrawn.value
-        participant_row.status = ParticipantStatus.withdrawn.value
-    return enrolments
-
-
 def token_already_redeemed(db: Session, scope: str, raw_token: str) -> bool:
     return db.scalar(
         select(PublicTokenExchange.id).where(
@@ -1065,50 +799,6 @@ def paginate(stmt, db, page, per=25):
     page=max(1,page); total=db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows=db.scalars(stmt.offset((page-1)*per).limit(per)).all()
     return rows,total,max(1,(total+per-1)//per)
-
-
-def _cache_control_no_store(response: Response):
-    response.headers["Cache-Control"] = "no-store"
-
-
-def _participant_api_unauthorised() -> HTTPException:
-    return HTTPException(
-        401,
-        "Invalid or expired participant API credentials.",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-
-def _participant_api_exchange_conflict() -> HTTPException:
-    return HTTPException(
-        409,
-        "A participant API session is already active for this invitation.",
-    )
-
-
-def _extract_bearer_token(request: Request) -> str:
-    header = (request.headers.get("authorization") or "").strip()
-    scheme, _, token = header.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        raise _participant_api_unauthorised()
-    return token.strip()
-
-
-def _resolve_participant_api_context(
-    request: Request,
-    db: Session,
-) -> tuple[PublicAuthSession, ParticipantInvitation, Participant]:
-    raw_token = _extract_bearer_token(request)
-    session_row = resolve_participant_api_session(db, raw_token=raw_token)
-    if not session_row:
-        raise _participant_api_unauthorised()
-    invitation = db.get(ParticipantInvitation, session_row.participant_invitation_id)
-    if not invitation or invitation.revoked_at or not unexpired(invitation.expires_at):
-        raise _participant_api_unauthorised()
-    participant_row = db.get(Participant, invitation.participant_id)
-    if not participant_row:
-        raise _participant_api_unauthorised()
-    return session_row, invitation, participant_row
 
 
 def create_pilot_sample_data(db: Session, user: User) -> dict[str, int]:
@@ -1216,11 +906,14 @@ def create_pilot_sample_data(db: Session, user: User) -> dict[str, int]:
     db.commit()
     return created
 
+@app.on_event("startup")
 def startup():
     configure_logging()
     validate_runtime_settings(settings)
+    if settings.environment.strip().lower() == "production" and settings.require_redis_rate_limit_in_production:
+        if rate_limiter.__class__.__name__ != "RedisRateLimiter":
+            raise RuntimeError("Production startup blocked: Redis-backed rate limiting is required and not available.")
     validate_startup_environment()
-    storage.ensure_ready()
     Base.metadata.create_all(engine)
     # Safe additive migration for databases created by v0.2.x.
     if settings.database_url.startswith("sqlite"):
@@ -1231,6 +924,14 @@ def startup():
             if "external_provider" not in user_cols: c.execute(text("ALTER TABLE users ADD COLUMN external_provider VARCHAR(40)"))
             if "external_subject" not in user_cols: c.execute(text("ALTER TABLE users ADD COLUMN external_subject VARCHAR(255)"))
             if "last_login_at" not in user_cols: c.execute(text("ALTER TABLE users ADD COLUMN last_login_at DATETIME"))
+            if "session_version" not in user_cols: c.execute(text("ALTER TABLE users ADD COLUMN session_version INTEGER DEFAULT 1"))
+            if "failed_login_count" not in user_cols: c.execute(text("ALTER TABLE users ADD COLUMN failed_login_count INTEGER DEFAULT 0"))
+            if "locked_until" not in user_cols: c.execute(text("ALTER TABLE users ADD COLUMN locked_until DATETIME"))
+            participant_cols={r[1] for r in c.execute(text("PRAGMA table_info(participants)"))}
+            if "retention_category" not in participant_cols: c.execute(text("ALTER TABLE participants ADD COLUMN retention_category VARCHAR(40) DEFAULT 'standard'"))
+            if "legal_hold" not in participant_cols: c.execute(text("ALTER TABLE participants ADD COLUMN legal_hold BOOLEAN DEFAULT 0"))
+            if "withdrawn_at" not in participant_cols: c.execute(text("ALTER TABLE participants ADD COLUMN withdrawn_at DATETIME"))
+            if "scheduled_deletion_at" not in participant_cols: c.execute(text("ALTER TABLE participants ADD COLUMN scheduled_deletion_at DATETIME"))
             evidence_cols={r[1] for r in c.execute(text("PRAGMA table_info(evidence_files)"))}
             if "sha256_hex" not in evidence_cols: c.execute(text("ALTER TABLE evidence_files ADD COLUMN sha256_hex VARCHAR(64) DEFAULT ''"))
             if "scan_status" not in evidence_cols: c.execute(text("ALTER TABLE evidence_files ADD COLUMN scan_status VARCHAR(30) DEFAULT 'pending'"))
@@ -1242,7 +943,6 @@ def startup():
         if settings.seed_demo_data and not db.scalar(select(func.count(User.id))):
             org=Organisation(name="Politis Demo Council",slug="politis-demo"); db.add(org); db.flush()
             u=User(organisation_id=org.id,name="Platform Owner",email="admin@politis.local",password_hash=hash_password("PolitisDemo!"),role="owner"); db.add(u); db.flush()
-            add_organisation_membership(db, u, org.id, "owner")
             p=Project(organisation_id=org.id,title="Town Centre Experience",code="TCX-001",description="Demonstration civic intelligence project.",status="live",created_by_id=u.id); db.add(p); db.flush()
             s=Study(organisation_id=org.id,project_id=p.id,title="Seven-day town centre diary",code="TCX-D01",description="A demonstration longitudinal diary study.",methodology="diary",status="recruiting",created_by_id=u.id); db.add(s); db.flush()
             db.add(Activity(organisation_id=org.id,study_id=s.id,title="First impressions",prompt="Tell us about your latest visit to the town centre.",activity_type="long_text",position=1))
@@ -1261,26 +961,9 @@ def health():
     return {
         "status": "ok",
         "version": VERSION,
+        "environment": settings.environment,
+        "storage_backend": settings.storage_backend,
     }
-
-
-@app.get("/health/ready")
-def readiness():
-    try:
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-    except Exception as exc:
-        logger.error(
-            "readiness_failed dependency=database error=%s",
-            exc.__class__.__name__,
-        )
-        return JSONResponse(
-            status_code=503,
-            content={"status": "unavailable"},
-        )
-    return {"status": "ready", "version": VERSION}
-
-
 @app.get("/login",response_class=HTMLResponse)
 def login_page(request:Request): return render(request,"login.html")
 @app.post("/login")
@@ -1299,7 +982,12 @@ def login(
         )
 
     normalised_email = email.lower().strip()
-    user = unique_active_user_for_email(db, normalised_email)
+    user = db.scalar(
+        select(User).where(
+            User.email == normalised_email,
+            User.is_active == True,
+        )
+    )
     _enforce_rate_limit(
         request,
         db,
@@ -1379,72 +1067,61 @@ def login(
     response = RedirectResponse("/", 303)
     response.set_cookie(
         "session",
-        encode_session(
-            user.id,
-            user.session_version,
-            user.organisation_id,
-        ),
+        encode_session(user.id, user.session_version),
         httponly=True,
         samesite="strict",
         secure=settings.cookie_secure,
         max_age=settings.session_max_age_seconds,
     )
+    request.session["auth_provider"] = "local"
     return response
 
 @app.get("/auth/entra/login")
 async def entra_login(request: Request):
     if not entra_configured():
         raise HTTPException(503, "Microsoft sign-in is not configured.")
-    redirect_uri = f"{settings.base_url.rstrip('/')}/auth/entra/callback"
-    return await oauth.entra.authorize_redirect(request, redirect_uri)
+    try:
+        return await start_entra_login(request)
+    except EntraAuthError as exc:
+        return render(request, "login.html", error=str(exc))
 
 @app.get("/auth/entra/callback")
 async def entra_callback(request: Request, db: Session = Depends(get_db)):
     if not entra_configured():
         raise HTTPException(503, "Microsoft sign-in is not configured.")
     try:
-        token = await oauth.entra.authorize_access_token(request)
-    except Exception:
-        return render(request, "login.html", error="Microsoft sign-in could not be completed.")
-    claims = token.get("userinfo") or {}
-    identity = entra_identity_from_claims(claims)
-    if not identity:
+        claims = await complete_entra_login(request)
+    except EntraAuthError as exc:
+        return render(request, "login.html", error=str(exc))
+    subject = claims.get("sub") or claims.get("oid")
+    email = (claims.get("preferred_username") or claims.get("email") or "").lower().strip()
+    name = claims.get("name") or email
+    tenant = claims.get("tid")
+    if not subject or not email or (settings.entra_tenant_id and tenant and tenant != settings.entra_tenant_id):
         return render(request, "login.html", error="Microsoft account details could not be verified.")
-    subject, email, name = identity
     allowed = {x.strip().lower() for x in settings.entra_allowed_domains.split(",") if x.strip()}
     domain = email.rsplit("@", 1)[-1] if "@" in email else ""
     if allowed and domain not in allowed:
         return render(request, "login.html", error="This Microsoft account is not permitted for this service.")
-    entra_matches = list(
-        db.scalars(
-            select(User)
-            .where(
-                User.external_provider == "entra",
-                User.external_subject == subject,
-                User.is_active == True,
-            )
-            .limit(2)
-        ).all()
-    )
-    if len(entra_matches) > 1:
-        return render(request, "login.html", error="Microsoft account details could not be verified.")
-    user = entra_matches[0] if entra_matches else None
+    user = db.scalar(select(User).where(User.external_provider == "entra", User.external_subject == subject, User.is_active == True))
     if not user:
-        email_matches = active_users_for_email(db, email)
-        if len(email_matches) > 1:
-            return render(request, "login.html", error="Your Microsoft account has not been invited to this workspace.")
-        user = email_matches[0] if email_matches else None
+        user = db.scalar(select(User).where(User.email == email, User.is_active == True))
         if user:
             user.external_provider = "entra"
             user.external_subject = subject
+            mapped_role = role_from_claims(claims)
+            if settings.entra_sync_roles and mapped_role:
+                user.role = safe_role_assignment(user.role, mapped_role) or user.role
         elif settings.entra_auto_provision and settings.entra_default_organisation_slug:
             org = db.scalar(select(Organisation).where(Organisation.slug == settings.entra_default_organisation_slug))
             if not org:
                 return render(request, "login.html", error="The configured organisation could not be found.")
-            role = settings.entra_default_role if settings.entra_default_role in {"owner","admin","researcher","observer"} else "researcher"
+            mapped_role = role_from_claims(claims)
+            role = mapped_role or settings.entra_default_role
+            if role not in {"owner", "admin", "researcher", "observer"}:
+                role = "researcher"
             user = User(organisation_id=org.id, name=name[:120], email=email, password_hash=None, role=role, is_active=True, external_provider="entra", external_subject=subject)
             db.add(user); db.flush()
-            add_organisation_membership(db, user, org.id, role)
         else:
             return render(request, "login.html", error="Your Microsoft account has not been invited to this workspace.")
     user.name = name[:120] or user.name
@@ -1452,48 +1129,23 @@ async def entra_callback(request: Request, db: Session = Depends(get_db)):
     audit(db, user.organisation_id, user.id, "auth.entra_login", "user", user.id)
     db.commit()
     response = RedirectResponse("/", 303)
-    response.set_cookie("session", encode_session(user.id, user.session_version, user.organisation_id), httponly=True, samesite="lax", secure=settings.cookie_secure, max_age=43200)
+    response.set_cookie("session", encode_session(user.id, user.session_version), httponly=True, samesite="lax", secure=settings.cookie_secure, max_age=43200)
+    request.session["auth_provider"] = "entra"
     return response
 
 @app.post("/logout")
 def logout(request: Request, csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
     invalidate_session_cookie_user(request, db)
-    r=RedirectResponse("/login",303); r.delete_cookie("session"); return r
-
-
-@app.post("/organisations/switch")
-def switch_organisation(
-    organisation_id: int = Form(...),
-    u=Depends(current_user),
-    csrf_ok: None = Depends(csrf_protect),
-    db: Session = Depends(get_db),
-):
-    membership = db.scalar(
-        select(OrganisationMembership).where(
-            OrganisationMembership.user_id == u.id,
-            OrganisationMembership.organisation_id == organisation_id,
-            OrganisationMembership.is_active == True,
-        )
-    )
-    if not membership:
-        raise HTTPException(403, "Organisation membership is unavailable.")
-    response = RedirectResponse("/", 303)
-    response.set_cookie(
-        "session",
-        encode_session(u.id, u.session_version, organisation_id),
-        httponly=True,
-        samesite="strict",
-        secure=settings.cookie_secure,
-        max_age=settings.session_max_age_seconds,
-    )
-    return response
+    auth_provider = request.session.pop("auth_provider", "")
+    redirect_target = entra_logout_url() if auth_provider == "entra" and entra_configured() else "/login"
+    r=RedirectResponse(redirect_target,303); r.delete_cookie("session"); return r
 
 @app.get("/forgot-password",response_class=HTMLResponse)
 def forgot_page(request:Request): return render(request,"forgot_password.html")
 @app.post("/forgot-password",response_class=HTMLResponse)
 def forgot(request:Request,email:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     normalised_email = email.lower().strip()
-    u=unique_active_user_for_email(db,normalised_email)
+    u=db.scalar(select(User).where(User.email==normalised_email,User.is_active==True))
     _enforce_rate_limit(
         request,
         db,
@@ -1505,8 +1157,25 @@ def forgot(request:Request,email:str=Form(...),csrf_ok: None = Depends(csrf_prot
         actor_user_id=u.id if u else None,
     )
     if u:
-        raw=new_token(); db.add(PasswordReset(user_id=u.id,token_hash=token_hash(raw),expires_at=now()+timedelta(hours=1)))
-        queue_email(db,u.organisation_id,u.email,"Citizen Centric by Politis: Reset your password",f"Reset your Citizen Centric password: {settings.base_url}/reset-password?token={raw}"); audit(db,u.organisation_id,u.id,"auth.password_reset_requested","user",u.id); db.commit()
+        raw = new_token()
+        reset_url = f"{settings.base_url}/reset-password?token={raw}"
+        db.add(
+            PasswordReset(
+                user_id=u.id,
+                token_hash=token_hash(raw),
+                expires_at=now()+timedelta(minutes=max(1, settings.password_reset_token_minutes)),
+            )
+        )
+        queue_email(
+            db,
+            u.organisation_id,
+            u.email,
+            "Citizen Centric by Politis: Reset your password",
+            f"Reset your Citizen Centric password: {reset_url}",
+            persisted_body=redact_token_links(f"Reset your Citizen Centric password: {reset_url}"),
+        )
+        audit(db,u.organisation_id,u.id,"auth.password_reset_requested","user",u.id)
+        db.commit()
     return render(request,"forgot_password.html",sent=True)
 @app.get("/reset-password",response_class=HTMLResponse)
 def reset_page(request:Request,token:str="",db:Session=Depends(get_db)):
@@ -1520,13 +1189,13 @@ def reset_page(request:Request,token:str="",db:Session=Depends(get_db)):
         raw_session = create_public_auth_session(
             db,
             scope=PUBLIC_SCOPE_PASSWORD_RESET,
-            ttl_seconds=15 * 60,
+            ttl_seconds=max(60, settings.public_auth_session_reset_minutes * 60),
             password_reset_id=row.id,
         )
         record_token_redemption(db, PUBLIC_SCOPE_PASSWORD_RESET, token)
         db.commit()
         response = RedirectResponse("/reset-password", 303)
-        set_public_auth_cookie(response, raw_session, 15 * 60)
+        set_public_auth_cookie(response, raw_session, max(60, settings.public_auth_session_reset_minutes * 60))
         return response
 
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PASSWORD_RESET)
@@ -1558,80 +1227,16 @@ def reset_password(request: Request, token:str=Form(""),password:str=Form(...),c
     user.password_hash=hash_password(password); row.used_at=now(); user.failed_login_count = 0; user.locked_until = None; bump_session_version(user); session_row.revoked_at = now(); audit(db,user.organisation_id,user.id,"auth.password_reset","user",user.id); db.commit(); response = RedirectResponse("/login",303); clear_public_auth_cookie(response); return response
 
 @app.get("/",response_class=HTMLResponse)
-def dashboard(request:Request,u=Depends(optional_current_user),db:Session=Depends(get_db)):
-    if not u:
-        return render(request, "public_home.html")
+def dashboard(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
     o=u.organisation_id
-    organisation_wide = u.role in {"owner", "admin", "observer"}
-    accessible_studies = (
-        select(Study.id).where(Study.organisation_id == o)
-        if organisation_wide
-        else study_scope_for_user(u)
-    )
-    accessible_participants = select(StudyEnrolment.participant_id).where(
-        StudyEnrolment.organisation_id == o,
-        StudyEnrolment.study_id.in_(accessible_studies),
-    )
-    accessible_projects = select(Study.project_id).where(
-        Study.organisation_id == o,
-        Study.id.in_(accessible_studies),
-    )
-    project_filter = (
-        Project.organisation_id == o
-        if organisation_wide
-        else (
-            (Project.organisation_id == o)
-            & or_(
-                Project.created_by_id == u.id,
-                Project.id.in_(accessible_projects),
-            )
-        )
-    )
     metrics_row = db.execute(
         select(
-            select(func.count(Project.id))
-            .where(project_filter)
-            .scalar_subquery()
-            .label("projects"),
-            select(func.count(Study.id))
-            .where(
-                Study.organisation_id == o,
-                Study.id.in_(accessible_studies),
-            )
-            .scalar_subquery()
-            .label("studies"),
-            select(func.count(Participant.id))
-            .where(
-                Participant.organisation_id == o,
-                Participant.id.in_(accessible_participants),
-            )
-            .scalar_subquery()
-            .label("participants"),
-            select(func.count(Participant.id))
-            .where(
-                Participant.organisation_id == o,
-                Participant.id.in_(accessible_participants),
-                Participant.status == "active",
-            )
-            .scalar_subquery()
-            .label("active"),
-            select(func.count(ParticipantInvitation.id))
-            .where(
-                ParticipantInvitation.organisation_id == o,
-                ParticipantInvitation.study_id.in_(accessible_studies),
-                ParticipantInvitation.accepted_at.is_(None),
-                ParticipantInvitation.revoked_at.is_(None),
-            )
-            .scalar_subquery()
-            .label("invitations"),
-            select(func.count(ActivityResponse.id))
-            .where(
-                ActivityResponse.organisation_id == o,
-                ActivityResponse.study_id.in_(accessible_studies),
-                ActivityResponse.status == "submitted",
-            )
-            .scalar_subquery()
-            .label("submissions"),
+            select(func.count(Project.id)).where(Project.organisation_id == o).scalar_subquery().label("projects"),
+            select(func.count(Study.id)).where(Study.organisation_id == o).scalar_subquery().label("studies"),
+            select(func.count(Participant.id)).where(Participant.organisation_id == o).scalar_subquery().label("participants"),
+            select(func.count(Participant.id)).where(Participant.organisation_id == o, Participant.status == "active").scalar_subquery().label("active"),
+            select(func.count(ParticipantInvitation.id)).where(ParticipantInvitation.organisation_id == o, ParticipantInvitation.accepted_at.is_(None), ParticipantInvitation.revoked_at.is_(None)).scalar_subquery().label("invitations"),
+            select(func.count(ActivityResponse.id)).where(ActivityResponse.organisation_id == o, ActivityResponse.status == "submitted").scalar_subquery().label("submissions"),
         )
     ).one()
     metrics={
@@ -1642,26 +1247,14 @@ def dashboard(request:Request,u=Depends(optional_current_user),db:Session=Depend
         "invitations": int(metrics_row.invitations or 0),
         "submissions": int(metrics_row.submissions or 0),
     }
-    studies=db.scalars(
-        select(Study)
-        .where(
-            Study.organisation_id == o,
-            Study.id.in_(accessible_studies),
-        )
-        .order_by(Study.updated_at.desc())
-        .limit(6)
-    ).all()
+    studies=db.scalars(select(Study).where(Study.organisation_id==o).order_by(Study.updated_at.desc()).limit(6)).all()
     project_ids = {s.project_id for s in studies}
     pmap={p.id:p for p in db.scalars(select(Project).where(Project.organisation_id==o, Project.id.in_(project_ids))).all()} if project_ids else {}
-    recent_events_stmt = select(AuditEvent).where(
-        AuditEvent.organisation_id == o
-    )
-    if not organisation_wide:
-        recent_events_stmt = recent_events_stmt.where(
-            AuditEvent.actor_user_id == u.id
-        )
     recent_events = db.scalars(
-        recent_events_stmt.order_by(AuditEvent.created_at.desc()).limit(5)
+        select(AuditEvent)
+        .where(AuditEvent.organisation_id == o)
+        .order_by(AuditEvent.created_at.desc())
+        .limit(5)
     ).all()
     onboarding={
         "has_project": metrics["projects"] > 0,
@@ -1696,7 +1289,7 @@ def first_project_wizard_page(request: Request, u=Depends(roles("owner", "admin"
         user=u,
         project_statuses=[x.value for x in ProjectStatus],
         study_statuses=[x.value for x in StudyStatus],
-        activity_types=sorted(ACTIVITY_TYPES),
+        activity_types=["short_text", "long_text", "single_choice", "multiple_choice", "rating", "slider", "photo", "audio", "video", "gps", "ranking", "file"],
     )
 
 
@@ -1720,7 +1313,8 @@ def first_project_wizard_submit(
     enum_value(project_status, ProjectStatus, "project status")
     enum_value(study_status, StudyStatus, "study status")
 
-    if study_methodology not in STUDY_METHODOLOGIES:
+    allowed_methods = {"diary", "walk_along", "interview", "focus_group", "co_design", "mixed_method"}
+    if study_methodology not in allowed_methods:
         raise HTTPException(400, "Please select a valid study methodology.")
 
     cleaned_project_title = project_title.strip()
@@ -1783,42 +1377,19 @@ def first_project_wizard_submit(
 
 @app.get("/projects",response_class=HTMLResponse)
 def projects(request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
-    stmt = select(Project).where(
-        Project.organisation_id == u.organisation_id
-    )
-    if u.role not in {"owner", "admin", "observer"}:
-        stmt = stmt.where(Project.id.in_(project_scope_for_user(u)))
-    rows = db.scalars(stmt.order_by(Project.updated_at.desc())).all()
-    project_ids = [row.id for row in rows]
-    counts = dict(
-        db.execute(
-            select(Study.project_id, func.count(Study.id))
-            .where(
-                Study.organisation_id == u.organisation_id,
-                Study.project_id.in_(project_ids),
-            )
-            .group_by(Study.project_id)
-        ).all()
-    ) if project_ids else {}
-    return render(request,"projects.html",user=u,projects=rows,counts=counts,statuses=[x.value for x in ProjectStatus])
+    rows=db.scalars(select(Project).where(Project.organisation_id==u.organisation_id).order_by(Project.updated_at.desc())).all(); counts=dict(db.execute(select(Study.project_id,func.count(Study.id)).where(Study.organisation_id==u.organisation_id).group_by(Study.project_id)).all()); return render(request,"projects.html",user=u,projects=rows,counts=counts,statuses=[x.value for x in ProjectStatus])
 @app.post("/projects")
-def create_project(title:str=Form(...),code:str=Form(...),description:str=Form(""),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def create_project(title:str=Form(""),code:str=Form(""),description:str=Form(""),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     enum_value(status_value,ProjectStatus,"project status"); cleaned_title=nonblank(title,"Project title",3); cleaned_code=nonblank(code,"Project code").upper(); row=Project(organisation_id=u.organisation_id,title=cleaned_title,code=cleaned_code,description=description.strip(),status=status_value,created_by_id=u.id); db.add(row)
     try: db.flush(); audit(db,u.organisation_id,u.id,"project.created","project",row.id,row.title); db.commit()
     except Exception: db.rollback(); raise HTTPException(400,"Project code must be unique.")
     return RedirectResponse(f"/projects/{row.id}",303)
 @app.get("/projects/{project_id}",response_class=HTMLResponse)
 def project_detail(project_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
-    p=project(db,project_id,u.organisation_id)
-    permission=require_project_permission(db,u,p)
-    studies_stmt=select(Study).where(Study.project_id==p.id,Study.organisation_id==u.organisation_id)
-    if u.role not in {"owner","admin","observer"}:
-        studies_stmt=studies_stmt.where(Study.id.in_(study_scope_for_user(u)))
-    studies=db.scalars(studies_stmt.order_by(Study.updated_at.desc())).all()
-    return render(request,"project_detail.html",user=u,project=p,studies=studies,statuses=[x.value for x in StudyStatus],can_edit=permission=="manage")
+    p=project(db,project_id,u.organisation_id); studies=db.scalars(select(Study).where(Study.project_id==p.id,Study.organisation_id==u.organisation_id).order_by(Study.updated_at.desc())).all(); return render(request,"project_detail.html",user=u,project=p,studies=studies,statuses=[x.value for x in StudyStatus])
 @app.post("/projects/{project_id}/edit")
 def edit_project(project_id:int,title:str=Form(...),description:str=Form(""),status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    p=project(db,project_id,u.organisation_id); require_project_permission(db,u,p,edit=True); enum_value(status_value,ProjectStatus,"project status"); p.title=title.strip(); p.description=description.strip(); p.status=status_value; audit(db,u.organisation_id,u.id,"project.updated","project",p.id,p.title); db.commit(); return RedirectResponse(f"/projects/{p.id}",303)
+    p=project(db,project_id,u.organisation_id); enum_value(status_value,ProjectStatus,"project status"); p.title=title.strip(); p.description=description.strip(); p.status=status_value; audit(db,u.organisation_id,u.id,"project.updated","project",p.id,p.title); db.commit(); return RedirectResponse(f"/projects/{p.id}",303)
 @app.post("/projects/{project_id}/status")
 def update_project_status(project_id:int,status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id)
@@ -1837,9 +1408,9 @@ def studies_page(request:Request,u=Depends(current_user),db:Session=Depends(get_
     counts=dict(db.execute(select(StudyEnrolment.study_id,func.count()).where(StudyEnrolment.organisation_id==u.organisation_id, StudyEnrolment.study_id.in_(study_ids)).group_by(StudyEnrolment.study_id)).all()) if study_ids else {}
     return render(request,"studies.html",user=u,studies=rows,projects=projects,enrolment_counts=counts)
 @app.post("/projects/{project_id}/studies")
-def create_study(project_id:int,title:str=Form(...),code:str=Form(...),description:str=Form(""),methodology:str=Form("diary"),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    p=project(db,project_id,u.organisation_id); require_project_permission(db,u,p,edit=True); enum_value(status_value,StudyStatus,"study status")
-    if methodology not in STUDY_METHODOLOGIES: raise HTTPException(400,"Invalid methodology.")
+def create_study(project_id:int,title:str=Form(""),code:str=Form(""),description:str=Form(""),methodology:str=Form("diary"),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    p=project(db,project_id,u.organisation_id); enum_value(status_value,StudyStatus,"study status"); allowed={"diary","walk_along","interview","focus_group","co_design","mixed_method"}
+    if methodology not in allowed: raise HTTPException(400,"Invalid methodology.")
     cleaned_title=nonblank(title,"Study title",3); cleaned_code=nonblank(code,"Study code").upper(); s=Study(organisation_id=u.organisation_id,project_id=p.id,title=cleaned_title,code=cleaned_code,description=description.strip(),methodology=methodology,status=status_value,created_by_id=u.id); db.add(s)
     try: db.flush(); audit(db,u.organisation_id,u.id,"study.created","study",s.id,s.title); db.commit()
     except Exception: db.rollback(); raise HTTPException(400,"Study code must be unique.")
@@ -1857,43 +1428,35 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
         available=[]
     response_counts=dict(db.execute(select(ActivityResponse.activity_id,func.count()).where(ActivityResponse.study_id==s.id,ActivityResponse.status=="submitted").group_by(ActivityResponse.activity_id)).all())
     if u.role in {"owner", "admin"}:
-        access_rows=db.scalars(select(StudyAccess).where(StudyAccess.study_id==s.id,StudyAccess.organisation_id==u.organisation_id)).all(); access_map={a.user_id:a for a in access_rows}; team=db.scalars(select(User).join(OrganisationMembership, OrganisationMembership.user_id==User.id).where(OrganisationMembership.organisation_id==u.organisation_id,OrganisationMembership.is_active==True,User.is_active==True).order_by(User.name)).all()
+        access_rows=db.scalars(select(StudyAccess).where(StudyAccess.study_id==s.id,StudyAccess.organisation_id==u.organisation_id)).all(); access_map={a.user_id:a for a in access_rows}; team=db.scalars(select(User).where(User.organisation_id==u.organisation_id,User.is_active==True).order_by(User.name)).all()
     else:
         access_map = {}
         team = []
-    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES))
+    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=["short_text","long_text","single_choice","multiple_choice","rating","slider","photo","audio","video","gps","ranking","file"])
 @app.post("/studies/{study_id}/edit")
 def edit_study(study_id:int,title:str=Form(...),description:str=Form(""),methodology:str=Form(...),status_value:str=Form(...),demographics_schema:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status")
-    if methodology not in STUDY_METHODOLOGIES: raise HTTPException(400,"Invalid methodology.")
-    s.title=nonblank(title,"Study title",3); s.description=description.strip(); s.methodology=methodology; s.status=status_value; s.demographics_schema_json=json.dumps([x.strip() for x in demographics_schema.splitlines() if x.strip()]); audit(db,u.organisation_id,u.id,"study.updated","study",s.id,s.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status"); s.title=title.strip(); s.description=description.strip(); s.methodology=methodology; s.status=status_value; s.demographics_schema_json=json.dumps([x.strip() for x in demographics_schema.splitlines() if x.strip()]); audit(db,u.organisation_id,u.id,"study.updated","study",s.id,s.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/studies/{study_id}/status")
 def study_status(study_id:int,status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status"); s.status=status_value; db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/studies/{study_id}/activities")
 def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form("long_text"),options:str=Form(""),required:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
-    if activity_type not in ACTIVITY_TYPES or release_offset_days<0: raise HTTPException(400,"Invalid activity configuration.")
-    try: due=int(due_offset_days) if due_offset_days.strip() else None
-    except ValueError: raise HTTPException(400,"Due day must be a whole number.")
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); allowed={"short_text","long_text","single_choice","multiple_choice","rating","slider","photo","audio","video","gps","ranking","file"}
+    if activity_type not in allowed or release_offset_days<0: raise HTTPException(400,"Invalid activity configuration.")
+    due=int(due_offset_days) if due_offset_days.strip() else None
     if due is not None and due<release_offset_days: raise HTTPException(400,"Due day cannot be earlier than release day.")
     opts=[x.strip() for x in options.splitlines() if x.strip()]
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts)<2: raise HTTPException(400,"Choice and ranking activities require at least two options.")
-    if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts) != len(set(opts)): raise HTTPException(400,"Activity options must be unique.")
-    pos=(db.scalar(select(func.max(Activity.position)).where(Activity.study_id==s.id)) or 0)+1; a=Activity(organisation_id=u.organisation_id,study_id=s.id,title=nonblank(title,"Activity title"),prompt=prompt.strip(),activity_type=activity_type,options_json=json.dumps(opts),position=pos,required=required,release_offset_days=release_offset_days,due_offset_days=due); db.add(a); db.flush(); audit(db,u.organisation_id,u.id,"activity.created","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
+    pos=(db.scalar(select(func.max(Activity.position)).where(Activity.study_id==s.id)) or 0)+1; a=Activity(organisation_id=u.organisation_id,study_id=s.id,title=title.strip(),prompt=prompt.strip(),activity_type=activity_type,options_json=json.dumps(opts),position=pos,required=required,release_offset_days=release_offset_days,due_offset_days=due); db.add(a); db.flush(); audit(db,u.organisation_id,u.id,"activity.created","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/activities/{activity_id}/edit")
 def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form(...),options:str=Form(""),required:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.organisation_id==u.organisation_id));
     if not a: raise HTTPException(404)
     require_study_permission(db,u,study(db,a.study_id,u.organisation_id),edit=True)
-    if activity_type not in ACTIVITY_TYPES or release_offset_days<0: raise HTTPException(400,"Invalid activity configuration.")
-    try: due=int(due_offset_days) if due_offset_days.strip() else None
-    except ValueError: raise HTTPException(400,"Due day must be a whole number.")
-    opts=[x.strip() for x in options.splitlines() if x.strip()]
+    due=int(due_offset_days) if due_offset_days.strip() else None; opts=[x.strip() for x in options.splitlines() if x.strip()]
     if due is not None and due<release_offset_days: raise HTTPException(400,"Invalid dates.")
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts)<2: raise HTTPException(400,"At least two options required.")
-    if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts) != len(set(opts)): raise HTTPException(400,"Activity options must be unique.")
-    a.title=nonblank(title,"Activity title"); a.prompt=prompt.strip(); a.activity_type=activity_type; a.options_json=json.dumps(opts); a.required=required; a.release_offset_days=release_offset_days; a.due_offset_days=due; audit(db,u.organisation_id,u.id,"activity.updated","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{a.study_id}",303)
+    a.title=title.strip(); a.prompt=prompt.strip(); a.activity_type=activity_type; a.options_json=json.dumps(opts); a.required=required; a.release_offset_days=release_offset_days; a.due_offset_days=due; audit(db,u.organisation_id,u.id,"activity.updated","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{a.study_id}",303)
 @app.post("/activities/{activity_id}/delete")
 def delete_activity(activity_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.organisation_id==u.organisation_id));
@@ -1918,7 +1481,6 @@ def participants_page(request:Request,q:str="",status_filter:str="",page:int=1,u
 @app.post("/participants")
 def create_participant(reference:str=Form(...),name:str=Form(...),email:str=Form(""),phone:str=Form(""),status_value:str=Form("prospective"),consent_status:str=Form("pending"),communication_preference:str=Form("email"),tags:str=Form(""),notes:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     enum_value(status_value,ParticipantStatus,"participant status"); enum_value(consent_status,ConsentStatus,"consent status")
-    if communication_preference not in COMMUNICATION_PREFERENCES: raise HTTPException(400,"Invalid communication preference.")
     cleaned_reference=nonblank(reference,"Participant reference").upper(); cleaned_name=nonblank(name,"Participant name",3); cleaned_email=validated_email(email)
     row=Participant(organisation_id=u.organisation_id,reference=cleaned_reference,name=cleaned_name,email=cleaned_email,phone=phone.strip() or None,status=status_value,consent_status=consent_status,communication_preference=communication_preference,tags=tags.strip(),notes=notes.strip(),created_by_id=u.id); db.add(row)
     try: db.flush(); audit(db,u.organisation_id,u.id,"participant.created","participant",row.id,row.reference); db.commit()
@@ -1926,27 +1488,11 @@ def create_participant(reference:str=Form(...),name:str=Form(...),email:str=Form
     return RedirectResponse(f"/participants/{row.id}",303)
 @app.post("/participants/import")
 def import_participants(file:UploadFile=File(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    raw=file.file.read(MAX_CSV_IMPORT_BYTES + 1)
-    if len(raw)>MAX_CSV_IMPORT_BYTES: raise HTTPException(413,"CSV import must be 2 MB or smaller.")
-    try: data=raw.decode("utf-8-sig")
-    except UnicodeDecodeError: raise HTTPException(400,"CSV import must use UTF-8 encoding.")
-    reader=csv.DictReader(io.StringIO(data))
-    if reader.fieldnames:
-        reader.fieldnames=[field.strip().lower() if field else field for field in reader.fieldnames]
-    if not reader.fieldnames or not {"reference","name"}.issubset(set(reader.fieldnames)):
-        raise HTTPException(400,"CSV import requires reference and name columns.")
-    created=0; seen_refs=set()
-    try:
-        for row_number,r in enumerate(reader,start=2):
-            if row_number>MAX_CSV_IMPORT_ROWS+1: raise HTTPException(413,f"CSV import cannot exceed {MAX_CSV_IMPORT_ROWS} data rows.")
-            ref=nonblank(r.get("reference") or "",f"Participant reference on row {row_number}").upper()
-            name=nonblank(r.get("name") or "",f"Participant name on row {row_number}",3)
-            cleaned_email=validated_email(r.get("email") or "")
-            if ref in seen_refs or db.scalar(select(Participant.id).where(Participant.organisation_id==u.organisation_id,Participant.reference==ref)): continue
-            seen_refs.add(ref)
-            db.add(Participant(organisation_id=u.organisation_id,reference=ref,name=name,email=cleaned_email,phone=(r.get("phone") or "").strip() or None,status="prospective",consent_status="pending",communication_preference="email",tags=(r.get("tags") or "").strip(),created_by_id=u.id)); created+=1
-    except csv.Error as exc:
-        raise HTTPException(400,f"CSV import is malformed: {exc}") from exc
+    data=file.file.read().decode("utf-8-sig"); reader=csv.DictReader(io.StringIO(data)); created=0
+    for r in reader:
+        ref=(r.get("reference") or "").strip().upper(); name=(r.get("name") or "").strip()
+        if not ref or not name or db.scalar(select(Participant.id).where(Participant.organisation_id==u.organisation_id,Participant.reference==ref)): continue
+        db.add(Participant(organisation_id=u.organisation_id,reference=ref,name=name,email=(r.get("email") or "").strip().lower() or None,phone=(r.get("phone") or "").strip() or None,status="prospective",consent_status="pending",communication_preference="email",tags=(r.get("tags") or "").strip(),created_by_id=u.id)); created+=1
     audit(db,u.organisation_id,u.id,"participant.bulk_imported","participant","bulk",str(created)); db.commit(); return RedirectResponse("/participants",303)
 @app.get("/participants/{participant_id}",response_class=HTMLResponse)
 def participant_detail(participant_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
@@ -1955,9 +1501,8 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
         ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.participant_id==p.id,StudyEnrolment.organisation_id==u.organisation_id)).all()
         invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id).order_by(ParticipantInvitation.created_at.desc())).all()
         responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id).order_by(ActivityResponse.updated_at.desc())).all()
-        evidence_files=db.scalars(select(EvidenceFile).where(EvidenceFile.participant_id==p.id,EvidenceFile.organisation_id==u.organisation_id).order_by(EvidenceFile.created_at.desc())).all()
         messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id).order_by(ParticipantMessage.created_at)).all()
-        study_ids = {e.study_id for e in ens} | {i.study_id for i in invs} | {r.study_id for r in responses} | {e.study_id for e in evidence_files} | {m.study_id for m in messages}
+        study_ids = {e.study_id for e in ens} | {i.study_id for i in invs} | {r.study_id for r in responses} | {m.study_id for m in messages}
         studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id, Study.id.in_(study_ids))).all()} if study_ids else {}
     else:
         allowed_ids = set(db.scalars(study_scope_for_user(u)).all())
@@ -1967,28 +1512,10 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
         studies={s.id:s for s in db.scalars(select(Study).where(Study.organisation_id==u.organisation_id,Study.id.in_(allowed_ids))).all()}
         invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.participant_id==p.id,ParticipantInvitation.organisation_id==u.organisation_id,ParticipantInvitation.study_id.in_(allowed_ids)).order_by(ParticipantInvitation.created_at.desc())).all()
         responses=db.scalars(select(ActivityResponse).where(ActivityResponse.participant_id==p.id,ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(allowed_ids)).order_by(ActivityResponse.updated_at.desc())).all()
-        evidence_files=db.scalars(select(EvidenceFile).where(EvidenceFile.participant_id==p.id,EvidenceFile.organisation_id==u.organisation_id,EvidenceFile.study_id.in_(allowed_ids)).order_by(EvidenceFile.created_at.desc())).all()
         messages=db.scalars(select(ParticipantMessage).where(ParticipantMessage.participant_id==p.id,ParticipantMessage.organisation_id==u.organisation_id,ParticipantMessage.study_id.in_(allowed_ids)).order_by(ParticipantMessage.created_at)).all()
-    unread_result = db.execute(
-        update(ParticipantMessage)
-        .where(
-            ParticipantMessage.organisation_id == u.organisation_id,
-            ParticipantMessage.participant_id == p.id,
-            ParticipantMessage.study_id.in_(studies.keys()),
-            ParticipantMessage.sender_type == "participant",
-            ParticipantMessage.internal_note == False,
-            ParticipantMessage.read_at.is_(None),
-        )
-        .values(read_at=now())
-    )
-    if unread_result.rowcount:
-        audit(db,u.organisation_id,u.id,"message.participant_messages_read","participant",p.id,str(unread_result.rowcount)); db.commit()
-        for message in messages:
-            if message.sender_type == "participant" and not message.internal_note and message.read_at is None:
-                message.read_at = now()
     privacy_counts = participant_related_counts(db, p.id, u.organisation_id) if u.role in {"owner", "admin"} else None
     privacy_workflow_token = request.session.get(privacy_workflow_key(p.id)) if u.role in {"owner", "admin"} else None
-    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=[m for m in messages if not m.internal_note],internal_notes=[m for m in messages if m.internal_note],statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
+    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,messages=messages,statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
 
 
 @app.get("/participants/{participant_id}/export")
@@ -2045,60 +1572,31 @@ def participant_delete_execute(participant_id:int,request:Request,workflow_token
 
 
 @app.post("/privacy/retention/apply")
-def apply_privacy_retention(request:Request,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    statuses = [x.strip() for x in settings.privacy_retention_statuses.split(",") if x.strip()]
-    if not statuses:
-        raise HTTPException(400, "No retention statuses configured.")
-    days = max(0, int(settings.privacy_retention_days))
-    cutoff = now() - timedelta(days=days)
+def apply_privacy_retention(request:Request,dry_run:bool=Form(False),u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     mode = settings.privacy_retention_action.strip().lower()
     if mode not in {"delete", "anonymise"}:
         raise HTTPException(400, "PRIVACY_RETENTION_ACTION must be delete or anonymise.")
 
-    rows = db.scalars(
-        select(Participant).where(
-            Participant.organisation_id == u.organisation_id,
-            Participant.status.in_(statuses),
-            Participant.created_at <= cutoff,
-        )
-    ).all()
-
-    processed = 0
-    deleted = 0
-    anonymised = 0
-    for p in rows:
-        counts = participant_related_counts(db, p.id, u.organisation_id)
-        has_related = participant_has_related_data(counts)
-        action = mode
-        if action == "delete" and has_related:
-            action = "anonymise"
-        processed += 1
-        if action == "delete":
-            pid = p.id
-            reference = p.reference
-            db.delete(p)
-            deleted += 1
-            audit(db,u.organisation_id,u.id,"privacy.participant_deleted","participant",pid,json.dumps({"reason": "retention", "reference": reference, "counts": counts}))
-        else:
-            anonymise_participant_record(p)
-            anonymised += 1
-            audit(db,u.organisation_id,u.id,"privacy.participant_anonymised","participant",p.id,json.dumps({"reason": "retention", "counts": counts}))
-
+    report = build_retention_report(db, u.organisation_id, mode, dry_run)
     audit(
         db,
         u.organisation_id,
         u.id,
-        "privacy.retention_applied",
+        "privacy.retention_reviewed" if dry_run else "privacy.retention_applied",
         "organisation",
         u.organisation_id,
-        json.dumps({"processed": processed, "deleted": deleted, "anonymised": anonymised, "days": days, "statuses": statuses, "configured_mode": mode}),
+        json.dumps(report),
     )
     db.commit()
+    set_flash(
+        request,
+        "notice",
+        f"Retention {'dry-run' if dry_run else 'execution'} complete: evaluated {report['evaluated']}, deleted {report['deleted']}, anonymised {report['anonymised']}.",
+    )
     return RedirectResponse("/participants",303)
 @app.post("/participants/{participant_id}/update")
 def update_participant(participant_id:int,name:str=Form(None),email:str=Form(None),phone:str=Form(None),status_value:str=Form(...),consent_status:str=Form(...),communication_preference:str=Form(...),tags:str=Form(""),notes:str=Form(""),demographics_json:str=Form("{}"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); enum_value(status_value,ParticipantStatus,"participant status"); enum_value(consent_status,ConsentStatus,"consent status")
-    if communication_preference not in COMMUNICATION_PREFERENCES: raise HTTPException(400,"Invalid communication preference.")
     if u.role == "researcher":
         visible = db.scalar(
             select(StudyEnrolment.id).where(
@@ -2109,10 +1607,21 @@ def update_participant(participant_id:int,name:str=Form(None),email:str=Form(Non
         )
         if p.created_by_id != u.id and not visible:
             raise HTTPException(403, "You do not have access to this participant.")
-    if name is not None: p.name=nonblank(name,"Participant name",3); p.email=validated_email(email or ""); p.phone=(phone or "").strip() or None
+    if name is not None: p.name=name.strip(); p.email=(email or "").strip().lower() or None; p.phone=(phone or "").strip() or None
     try: json.loads(demographics_json or "{}")
-    except json.JSONDecodeError: raise HTTPException(400,"Demographics must be valid JSON.")
-    p.status=status_value; p.consent_status=consent_status; p.communication_preference=communication_preference; p.tags=tags.strip(); p.notes=notes.strip(); p.demographics_json=demographics_json or "{}"; audit(db,u.organisation_id,u.id,"participant.updated","participant",p.id,p.reference); db.commit(); return RedirectResponse(f"/participants/{p.id}",303)
+    except: raise HTTPException(400,"Demographics must be valid JSON.")
+    p.status = status_value
+    p.consent_status = consent_status
+    if consent_status == ConsentStatus.withdrawn.value and not p.withdrawn_at:
+        p.withdrawn_at = now()
+        mark_consent_withdrawn(db, u.organisation_id, p.id)
+    p.communication_preference = communication_preference
+    p.tags = tags.strip()
+    p.notes = notes.strip()
+    p.demographics_json = demographics_json or "{}"
+    audit(db,u.organisation_id,u.id,"participant.updated","participant",p.id,p.reference)
+    db.commit()
+    return RedirectResponse(f"/participants/{p.id}",303)
 @app.post("/studies/{study_id}/enrol")
 def enrol(study_id:int,participant_id:int=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); p=participant(db,participant_id,u.organisation_id)
@@ -2120,77 +1629,87 @@ def enrol(study_id:int,participant_id:int=Form(...),u=Depends(roles("owner","adm
     return RedirectResponse(f"/studies/{s.id}",303)
 
 def send_participant_invite(db,u,s,p):
-    _, raw = create_participant_invitation(
-        db,
+    raw = new_token()
+    join_url = f"{settings.base_url}/join-study?token={raw}"
+    inv = ParticipantInvitation(
         organisation_id=u.organisation_id,
         participant_id=p.id,
         study_id=s.id,
+        token_hash=token_hash(raw),
+        expires_at=now()+timedelta(hours=max(1, settings.participant_invitation_expiry_hours)),
         invited_by_id=u.id,
-        expires_at=now() + timedelta(days=30),
     )
-    queue_email(db,u.organisation_id,p.email,f"Invitation: {s.title}",f"Join the study: {settings.base_url}/join-study?token={raw}"); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title); db.commit()
+    db.add(inv)
+    db.flush()
+    queue_email(
+        db,
+        u.organisation_id,
+        p.email,
+        f"Invitation: {s.title}",
+        f"Join the study: {join_url}",
+        persisted_body=redact_token_links(f"Join the study: {join_url}"),
+    )
+    p.status="invited"
+    audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title)
+    db.commit()
 @app.post("/studies/{study_id}/invite/{participant_id}")
 def invite_participant(study_id:int,participant_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); p=participant(db,participant_id,u.organisation_id)
     if not p.email: raise HTTPException(400,"Participant requires an email address.")
-    active = find_live_unaccepted_invitation(db, s.id, p.id, now())
+    active=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.study_id==s.id,ParticipantInvitation.participant_id==p.id,ParticipantInvitation.accepted_at.is_(None),ParticipantInvitation.revoked_at.is_(None),ParticipantInvitation.expires_at>now()))
     if active: raise HTTPException(400,"A live invitation already exists. Revoke it before resending.")
     send_participant_invite(db,u,s,p); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/participant-invitations/{invitation_id}/revoke")
 def revoke_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    inv = resolve_org_scoped_invitation(db, u.organisation_id, invitation_id)
+    inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.id==invitation_id,ParticipantInvitation.organisation_id==u.organisation_id));
     if not inv: raise HTTPException(404)
     require_study_permission(db,u,study(db,inv.study_id,u.organisation_id),edit=True)
-    mark_invitation_revoked(inv, now()); db.commit(); return RedirectResponse(f"/studies/{inv.study_id}",303)
+    inv.revoked_at=now(); db.commit(); return RedirectResponse(f"/studies/{inv.study_id}",303)
 @app.post("/participant-invitations/{invitation_id}/resend")
 def resend_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    inv = resolve_org_scoped_invitation(db, u.organisation_id, invitation_id)
+    inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.id==invitation_id,ParticipantInvitation.organisation_id==u.organisation_id));
     if not inv: raise HTTPException(404)
     require_study_permission(db,u,study(db,inv.study_id,u.organisation_id),edit=True)
-    mark_invitation_revoked(inv, now()); send_participant_invite(db,u,study(db,inv.study_id,u.organisation_id),participant(db,inv.participant_id,u.organisation_id)); return RedirectResponse(f"/studies/{inv.study_id}",303)
+    inv.revoked_at=now(); send_participant_invite(db,u,study(db,inv.study_id,u.organisation_id),participant(db,inv.participant_id,u.organisation_id)); return RedirectResponse(f"/studies/{inv.study_id}",303)
 
 @app.get("/join-study",response_class=HTMLResponse)
 def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
     if token:
-        inv = resolve_invitation_by_token(db, token)
+        if token_already_redeemed(db, PUBLIC_SCOPE_PARTICIPANT_PORTAL, token):
+            return render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
+        inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==token_hash(token)))
         valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at))
         if not valid:
-            response = render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
-            _cache_control_no_store(response)
-            return response
+            return render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
         if not inv.opened_at:
             inv.opened_at=now()
         raw_session = create_public_auth_session(
             db,
             scope=PUBLIC_SCOPE_PARTICIPANT_PORTAL,
-            ttl_seconds=12 * 60 * 60,
+            ttl_seconds=max(60, settings.public_auth_session_participant_portal_minutes * 60),
             participant_invitation_id=inv.id,
         )
+        record_token_redemption(db, PUBLIC_SCOPE_PARTICIPANT_PORTAL, token)
         db.commit()
         destination = "/participant-portal" if inv.accepted_at else "/join-study"
         response = RedirectResponse(destination, 303)
-        set_public_auth_cookie(response, raw_session, 12 * 60 * 60)
-        _cache_control_no_store(response)
+        set_public_auth_cookie(response, raw_session, max(60, settings.public_auth_session_participant_portal_minutes * 60))
         return response
 
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
     if not session_row:
-        response = render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
-        _cache_control_no_store(response)
-        return response
+        return render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
     inv = db.get(ParticipantInvitation, session_row.participant_invitation_id)
     valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at))
     s=db.get(Study,inv.study_id) if valid else None
     p=db.get(Participant,inv.participant_id) if valid else None
     if valid and inv.accepted_at:
         return RedirectResponse("/participant-portal",303)
-    response = render(request,"join_study.html",invitation=inv,study=s,participant=p,valid=valid)
-    _cache_control_no_store(response)
-    return response
+    return render(request,"join_study.html",invitation=inv,study=s,participant=p,valid=valid)
 @app.post("/join-study")
 def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = resolve_participant_invitation(db, session_row)
+    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
@@ -2203,273 +1722,45 @@ def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csr
     if not inv or inv.revoked_at or not unexpired(inv.expires_at):
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not consent: raise HTTPException(400,"Consent is required.")
-    p=db.get(Participant,inv.participant_id); grant_participant_consent(inv, p, now()); audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse("/participant-portal",303)
-
-
-def participant_portal_context(request: Request, db: Session):
-    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-    inv = resolve_participant_invitation(db, session_row)
-    if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
-        return None
-    participant_row = db.scalar(
-        select(Participant).where(
-            Participant.id == inv.participant_id,
-            Participant.organisation_id == inv.organisation_id,
-        )
+    p=db.get(Participant,inv.participant_id)
+    inv.accepted_at=inv.accepted_at or now()
+    p.status="active"
+    p.consent_status="granted"
+    record_consent_evidence(db, inv.organisation_id, p.id, inv.study_id)
+    if session_row:
+        session_row.revoked_at = now()
+    raw_session = create_public_auth_session(
+        db,
+        scope=PUBLIC_SCOPE_PARTICIPANT_PORTAL,
+        ttl_seconds=max(60, settings.public_auth_session_participant_portal_minutes * 60),
+        participant_invitation_id=inv.id,
     )
-    study_row = db.scalar(
-        select(Study).where(
-            Study.id == inv.study_id,
-            Study.organisation_id == inv.organisation_id,
-        )
-    )
-    enrolment = db.scalar(
-        select(StudyEnrolment).where(
-            StudyEnrolment.organisation_id == inv.organisation_id,
-            StudyEnrolment.study_id == inv.study_id,
-            StudyEnrolment.participant_id == inv.participant_id,
-        )
-    )
-    if (
-        not participant_row
-        or not study_row
-        or not enrolment
-        or enrolment.status == "withdrawn"
-        or participant_row.consent_status != ConsentStatus.granted.value
-    ):
-        return None
-    return session_row, inv, participant_row, study_row, enrolment
-
-
-def require_participant_portal_context(request: Request, db: Session):
-    context = participant_portal_context(request, db)
-    if not context:
-        raise HTTPException(401, "Your participant session is invalid, expired or no longer active.")
-    return context
-
-
+    audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id)
+    db.commit()
+    response = RedirectResponse("/participant-portal",303)
+    set_public_auth_cookie(response, raw_session, max(60, settings.public_auth_session_participant_portal_minutes * 60))
+    return response
 @app.get("/participant-portal",response_class=HTMLResponse)
 def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
     if token:
         return RedirectResponse(f"/join-study?token={token}",303)
-    context = participant_portal_context(request, db)
-    if not context:
-        response = RedirectResponse("/join-study",303)
-        clear_public_auth_cookie(response)
-        return response
-    _session_row, inv, p, s, _enrolment = context
-    acts=db.scalars(select(Activity).where(Activity.organisation_id==inv.organisation_id,Activity.study_id==s.id).order_by(Activity.position)).all(); activity_windows={a.id:activity_window(s,a) for a in acts}; responses={r.activity_id:r for r in db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id==inv.organisation_id,ActivityResponse.study_id==s.id,ActivityResponse.participant_id==p.id)).all()}; response_values={}
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
+    if not session_row:
+        return RedirectResponse("/join-study",303)
+    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id)
+    if not inv or inv.revoked_at or not unexpired(inv.expires_at):
+        return RedirectResponse("/join-study",303)
+    if not inv.accepted_at: return RedirectResponse("/join-study",303)
+    s=db.get(Study,inv.study_id); p=db.get(Participant,inv.participant_id); acts=db.scalars(select(Activity).where(Activity.study_id==s.id).order_by(Activity.position)).all(); responses={r.activity_id:r for r in db.scalars(select(ActivityResponse).where(ActivityResponse.study_id==s.id,ActivityResponse.participant_id==p.id)).all()}; response_values={}
     for activity_id,response in responses.items():
         try: response_values[activity_id]=json.loads(response.value_json or "{}")
         except json.JSONDecodeError: response_values[activity_id]={}
-    evidence_ids = {
-        value.get("evidence_id")
-        for value in response_values.values()
-        if isinstance(value.get("evidence_id"), int)
-    }
-    evidence_by_id = {}
-    if evidence_ids:
-        evidence_by_id = {
-            row.id: row
-            for row in db.scalars(
-                select(EvidenceFile).where(
-                    EvidenceFile.id.in_(evidence_ids),
-                    EvidenceFile.organisation_id == inv.organisation_id,
-                    EvidenceFile.study_id == s.id,
-                    EvidenceFile.participant_id == p.id,
-                )
-            ).all()
-        }
-    msgs = list_participant_visible_messages(db, study_id=s.id, participant_id=p.id)
-    participant_read_result = db.execute(
-        update(ParticipantMessage)
-        .where(
-            ParticipantMessage.organisation_id == inv.organisation_id,
-            ParticipantMessage.study_id == s.id,
-            ParticipantMessage.participant_id == p.id,
-            ParticipantMessage.sender_type == "researcher",
-            ParticipantMessage.internal_note == False,
-            ParticipantMessage.read_at.is_(None),
-        )
-        .values(read_at=now())
-    )
-    if participant_read_result.rowcount:
-        audit(db,inv.organisation_id,None,"participant.messages_read","participant",p.id,str(s.id)); db.commit()
-        for message in msgs:
-            if message.sender_type == "researcher" and message.read_at is None:
-                message.read_at = now()
-    response = render(
-        request,
-        "participant_portal.html",
-        study=s,
-        participant=p,
-        activities=acts,
-        activity_windows=activity_windows,
-        responses=responses,
-        response_values=response_values,
-        activity_options={a.id: _participant_activity_options(a) or [] for a in acts},
-        evidence_by_id=evidence_by_id,
-        messages=msgs,
-        max_upload_mb=settings.max_upload_mb,
-    )
-    _cache_control_no_store(response)
-    return response
-
-
-@app.get(
-    "/api/v1/participant/portal",
-    response_model=PortalSummaryResponse,
-    response_model_exclude_unset=True,
-)
-def participant_api_portal_summary(
-    request: Request,
-    response: Response,
-    study_id: int | None = Query(default=None, ge=1),
-    db: Session = Depends(get_db),
-):
-    _session_row, inv, participant_row = _resolve_participant_api_context(request, db)
-    if not inv.accepted_at:
-        raise HTTPException(403, "Participant consent has not been accepted.")
-    if participant_row.consent_status != ConsentStatus.granted.value:
-        raise HTTPException(403, "Participant consent is no longer active.")
-    if study_id is not None and study_id != inv.study_id:
-        raise HTTPException(403, "Requested study is outside participant scope.")
-
-    _enforce_rate_limit(
-        request,
-        db,
-        scope="participant_portal_read",
-        ip_limit=settings.rate_limit_portal_write_ip,
-        account_key=f"invitation:{inv.id}",
-        account_limit=settings.rate_limit_portal_write_token,
-    )
-
-    study_row = db.scalar(
-        select(Study).where(
-            Study.id == inv.study_id,
-            Study.organisation_id == inv.organisation_id,
-        )
-    )
-    if not study_row:
-        raise _participant_api_unauthorised()
-
-    enrolled = db.scalar(
-        select(StudyEnrolment.id).where(
-            StudyEnrolment.organisation_id == inv.organisation_id,
-            StudyEnrolment.study_id == inv.study_id,
-            StudyEnrolment.participant_id == participant_row.id,
-            StudyEnrolment.status != "withdrawn",
-        )
-    ) is not None
-    if not enrolled:
-        raise HTTPException(403, "Participant is not enrolled in this study.")
-
-    activity_rows = db.scalars(
-        select(Activity)
-        .where(
-            Activity.organisation_id == inv.organisation_id,
-            Activity.study_id == study_row.id,
-        )
-        .order_by(Activity.position)
-    ).all()
-    response_rows = db.scalars(
-        select(ActivityResponse).where(
-            ActivityResponse.organisation_id == inv.organisation_id,
-            ActivityResponse.study_id == study_row.id,
-            ActivityResponse.participant_id == participant_row.id,
-        )
-    ).all()
-    responses_by_activity = {row.activity_id: row for row in response_rows}
-
-    activity_summaries: list[ActivitySummary] = []
-    response_items: list[PortalResponseItem] = []
-    for activity in activity_rows:
-        availability = activity_window(study_row, activity)
-        response_row = responses_by_activity.get(activity.id)
-        response_summary = None
-        if response_row:
-            response_summary = ActivityResponseSummary(
-                status=response_row.status,
-                submitted_at=response_row.submitted_at,
-                updated_at=response_row.updated_at,
-            )
-
-            raw_value = {}
-            try:
-                raw_value = json.loads(response_row.value_json or "{}")
-            except json.JSONDecodeError:
-                raw_value = {}
-
-            response_items.append(
-                PortalResponseItem(
-                    activity_id=activity.id,
-                    status=response_row.status,
-                    value=ActivityResponseValue(
-                        answer=raw_value.get("answer"),
-                        choices=list(raw_value.get("choices") or []),
-                        evidence_id=raw_value.get("evidence_id"),
-                    ),
-                    submitted_at=response_row.submitted_at,
-                    updated_at=response_row.updated_at,
-                )
-            )
-
-        item = ActivitySummary(
-            activity_id=activity.id,
-            title=activity.title,
-            prompt=activity.prompt,
-            activity_type=activity.activity_type,
-            required=activity.required,
-            position=activity.position,
-            availability=ActivityAvailability(
-                status=availability["status"],
-                release_at=availability["release_at"],
-                due_at=availability["due_at"],
-            ),
-        )
-        if response_summary:
-            item.response = response_summary
-        activity_summaries.append(item)
-
-    messages = [
-        ParticipantMessageSummary(
-            message_id=row.id,
-            sender_type=row.sender_type,
-            body=row.body,
-            created_at=row.created_at,
-        )
-        for row in list_participant_visible_messages(
-            db,
-            study_id=study_row.id,
-            participant_id=participant_row.id,
-        )
-    ]
-
-    _cache_control_no_store(response)
-    return PortalSummaryResponse(
-        study=StudySummary(
-            study_id=study_row.id,
-            title=study_row.title,
-            description=study_row.description,
-            status=study_row.status,
-            methodology=study_row.methodology,
-            enrolled=True,
-        ),
-        participant=ParticipantSummary(
-            participant_id=participant_row.id,
-            display_name=participant_row.name,
-            consent_status=participant_row.consent_status,
-        ),
-        activities=activity_summaries,
-        responses=response_items,
-        messages=messages,
-    )
-
-
+    msgs=db.scalars(select(ParticipantMessage).where(ParticipantMessage.study_id==s.id,ParticipantMessage.participant_id==p.id,ParticipantMessage.internal_note==False).order_by(ParticipantMessage.created_at)).all(); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,responses=responses,response_values=response_values,messages=msgs)
 @app.post("/participant-portal/activity/{activity_id}")
-async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:list[str]=Form(default=[]),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    context = participant_portal_context(request, db)
-    inv = context[1] if context else None
+async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    form_data = await request.form()
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
+    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
@@ -2479,85 +1770,41 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
         account_key=account_key,
         account_limit=settings.rate_limit_portal_write_token,
     )
-    if not context or not inv:
+    if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
         raise HTTPException(400,"This participant link is invalid or expired.")
-    a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.organisation_id==inv.organisation_id,Activity.study_id==inv.study_id));
+    a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.study_id==inv.study_id));
     if not a: raise HTTPException(404)
-    s=db.get(Study,inv.study_id)
-    window=activity_window(s,a)
-    if window["status"] == "upcoming":
-        raise HTTPException(409,"This activity is not available yet.")
-    if window["status"] == "closed":
-        raise HTTPException(409,"The due date for this activity has passed.")
-    r = resolve_or_create_activity_response(
-        db,
-        organisation_id=inv.organisation_id,
-        study_id=inv.study_id,
-        activity_id=a.id,
-        participant_id=inv.participant_id,
-    )
-    if r.status == "submitted":
-        raise HTTPException(409, "This activity response has already been submitted.")
-    value, choice_list = serialise_response_payload(answer, choices)
-    value = _validate_activity_response_value(a, value, action)
-    choice_list = list(value.get("choices") or [])
-    stored_key = None
+    r=db.scalar(select(ActivityResponse).where(ActivityResponse.activity_id==a.id,ActivityResponse.participant_id==inv.participant_id))
+    if not r: r=ActivityResponse(organisation_id=inv.organisation_id,study_id=inv.study_id,activity_id=a.id,participant_id=inv.participant_id); db.add(r); db.flush()
+    choice_list=[x.strip() for x in choices.split("|") if x.strip()]; value={"answer":answer,"choices":choice_list}
     if upload and upload.filename:
         original=Path(upload.filename).name
-        validate_evidence_upload_metadata(original, upload.content_type, a.activity_type)
+        extension=Path(original).suffix.lower()
+        allowed_extensions={x.strip().lower() for x in settings.allowed_upload_extensions.split(",") if x.strip()}
+        if extension not in allowed_extensions:
+            raise HTTPException(400,"This file type is not permitted.")
         try:
             stored=storage.save_stream(upload.file,original,settings.max_upload_mb*1024*1024)
         except ValueError as exc:
             raise HTTPException(413,str(exc))
-        stored_key = stored.key
-        try:
-            if stored.provider == "local":
-                path=storage.path(stored.key)
-                scan_status,scan_detail=scan_file(path)
-                if scan_status=="infected":
-                    delete_stored_object_safely(stored.key, "infected")
-                    stored_key = None
-                    db.rollback()
-                    audit(db,inv.organisation_id,None,"evidence.rejected","activity",a.id,scan_detail)
-                    db.commit()
-                    raise HTTPException(400,"The uploaded file failed malware screening.")
-            else:
-                scan_status,scan_detail="pending","Awaiting Microsoft Defender for Storage on-upload scan."
-            ev = build_evidence_file(
-                organisation_id=inv.organisation_id,
-                study_id=inv.study_id,
-                activity_id=a.id,
-                participant_id=inv.participant_id,
-                response_id=r.id,
-                original_name=original,
-                stored_name=stored.key,
-                content_type=upload.content_type or "application/octet-stream",
-                size_bytes=stored.size,
-                sha256_hex=stored.sha256_hex,
-                scan_status=scan_status,
-                scan_detail=scan_detail,
-                storage_provider=stored.provider,
-                blob_uri=stored.uri,
-            ); db.add(ev); db.flush(); value["evidence_id"]=ev.id
-        except Exception:
-            if stored_key:
-                delete_stored_object_safely(stored_key, "upload_processing_failed")
-                stored_key = None
-            db.rollback()
-            raise
-    try:
-        if a.required and action=="submit" and not answer.strip() and not choice_list and not upload: raise HTTPException(400,"A response is required.")
-        apply_response_action(r, value, action, now()); audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit()
-    except Exception:
-        db.rollback()
-        if stored_key:
-            delete_stored_object_safely(stored_key, "database_write_failed")
-        raise
-    return RedirectResponse("/participant-portal",303)
+        if stored.provider == "local":
+            path=storage.path(stored.key)
+            scan_status,scan_detail=scan_file(path)
+            if scan_status=="infected":
+                storage.delete(stored.key)
+                audit(db,inv.organisation_id,None,"evidence.rejected","activity",a.id,scan_detail)
+                db.commit()
+                raise HTTPException(400,"The uploaded file failed malware screening.")
+        else:
+            scan_status,scan_detail="pending","Awaiting Microsoft Defender for Storage on-upload scan."
+        ev=EvidenceFile(organisation_id=inv.organisation_id,study_id=inv.study_id,activity_id=a.id,participant_id=inv.participant_id,response_id=r.id,original_name=original,stored_name=stored.key,content_type=upload.content_type or "application/octet-stream",size_bytes=stored.size,sha256_hex=stored.sha256_hex,scan_status=scan_status,scan_detail=scan_detail,storage_provider=stored.provider,blob_uri=stored.uri); db.add(ev); db.flush(); value["evidence_id"]=ev.id
+    if a.required and action=="submit" and not answer.strip() and not choice_list and not upload: raise HTTPException(400,"A response is required.")
+    r.value_json=json.dumps(value)
+    r.status="submitted" if action=="submit" else "draft"; r.submitted_at=now() if action=="submit" else None; audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit(); return RedirectResponse("/participant-portal",303)
 @app.post("/participant-portal/message")
-def participant_message(request: Request, token:str=Form(""),body:str=Form(..., max_length=10000),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    context = participant_portal_context(request, db)
-    inv = context[1] if context else None
+def participant_message(request: Request, token:str=Form(""),body:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
+    inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
     _enforce_rate_limit(
         request,
@@ -2567,1456 +1814,10 @@ def participant_message(request: Request, token:str=Form(""),body:str=Form(..., 
         account_key=account_key,
         account_limit=settings.rate_limit_portal_write_token,
     )
-    if not context or not inv:
+    if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
-    db.add(create_participant_message(inv, body=body)); audit(db,inv.organisation_id,None,"participant.message_created","participant",inv.participant_id,str(inv.study_id)); db.commit(); set_flash(request,"success","Your message was sent securely."); return RedirectResponse("/participant-portal#messages",303)
-
-
-@app.post("/participant-portal/sign-out")
-def participant_portal_sign_out(request: Request, csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
-    context = participant_portal_context(request, db)
-    if context:
-        session_row, inv, _participant_row, _study_row, _enrolment = context
-        session_row.revoked_at = now()
-        audit(db, inv.organisation_id, None, "participant.portal_session_revoked", "public_auth_session", session_row.id, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
-        db.commit()
-    response = RedirectResponse("/join-study", 303)
-    clear_public_auth_cookie(response)
-    return response
-
-
-@app.post("/participant-portal/privacy/deletion-request")
-def participant_portal_deletion_request(
-    request: Request,
-    reason: str = Form("", max_length=2000),
-    csrf_ok: None = Depends(csrf_protect),
-    db: Session = Depends(get_db),
-):
-    _session_row, inv, participant_row, _study_row, _enrolment = require_participant_portal_context(request, db)
-    audit_event = AuditEvent(
-        organisation_id=inv.organisation_id,
-        actor_user_id=None,
-        action="participant.deletion_requested",
-        entity_type="participant",
-        entity_id=str(participant_row.id),
-        detail=json.dumps({"mode_preference": "auto", "study_id": inv.study_id, "reason": reason.strip()}),
-    )
-    db.add(audit_event)
-    db.commit()
-    set_flash(request, "success", "Your data deletion request was received. The research team will review it securely.")
-    return RedirectResponse("/participant-portal#privacy", 303)
-
-
-def participant_self_export_payload(
-    db: Session,
-    invitation: ParticipantInvitation,
-    participant_row: Participant,
-    study_row: Study,
-    enrolment: StudyEnrolment,
-):
-    activities = list(
-        db.scalars(
-            select(Activity)
-            .where(
-                Activity.organisation_id == invitation.organisation_id,
-                Activity.study_id == study_row.id,
-            )
-            .order_by(Activity.position.asc(), Activity.id.asc())
-        )
-    )
-    activities_by_id = {row.id: row for row in activities}
-    responses = list(
-        db.scalars(
-            select(ActivityResponse)
-            .where(
-                ActivityResponse.organisation_id == invitation.organisation_id,
-                ActivityResponse.study_id == study_row.id,
-                ActivityResponse.participant_id == participant_row.id,
-            )
-            .order_by(ActivityResponse.id.asc())
-        )
-    )
-    evidence = list(
-        db.scalars(
-            select(EvidenceFile)
-            .where(
-                EvidenceFile.organisation_id == invitation.organisation_id,
-                EvidenceFile.study_id == study_row.id,
-                EvidenceFile.participant_id == participant_row.id,
-            )
-            .order_by(EvidenceFile.id.asc())
-        )
-    )
-    messages = list_participant_visible_messages(
-        db,
-        study_id=study_row.id,
-        participant_id=participant_row.id,
-    )
-
-    response_items = []
-    for response_row in responses:
-        value = {}
-        try:
-            value = json.loads(response_row.value_json or "{}")
-        except json.JSONDecodeError:
-            value = {}
-        activity_row = activities_by_id.get(response_row.activity_id)
-        response_items.append(
-            {
-                "activity": activity_row.title if activity_row else "Activity",
-                "activity_type": activity_row.activity_type if activity_row else None,
-                "status": response_row.status,
-                "answer": value.get("answer") if isinstance(value.get("answer"), str) else None,
-                "choices": [x for x in value.get("choices", []) if isinstance(x, str)]
-                if isinstance(value.get("choices"), list)
-                else [],
-                "submitted_at": _iso(response_row.submitted_at),
-                "updated_at": _iso(response_row.updated_at),
-            }
-        )
-
-    return {
-        "application_name": "Citizen Centric",
-        "generated_at": _iso(now()),
-        "scope": "current_study",
-        "participant_profile": {
-            "reference": participant_row.reference,
-            "name": participant_row.name,
-            "email": participant_row.email,
-            "phone": participant_row.phone,
-            "status": participant_row.status,
-            "consent_status": participant_row.consent_status,
-            "communication_preference": participant_row.communication_preference,
-            "created_at": _iso(participant_row.created_at),
-        },
-        "study": {
-            "title": study_row.title,
-            "description": study_row.description,
-            "status": study_row.status,
-            "enrolment_status": enrolment.status,
-            "enrolled_at": _iso(enrolment.enrolled_at),
-        },
-        "activity_responses": response_items,
-        "evidence_files": [
-            {
-                "activity": activities_by_id[row.activity_id].title if row.activity_id in activities_by_id else "Activity",
-                "filename": row.original_name,
-                "content_type": row.content_type,
-                "size_bytes": row.size_bytes,
-                "scan_status": _participant_evidence_scan_status(row.scan_status),
-                "created_at": _iso(row.created_at),
-            }
-            for row in evidence
-        ],
-        "messages": [
-            {
-                "sender": row.sender_type,
-                "body": row.body,
-                "created_at": _iso(row.created_at),
-            }
-            for row in messages
-        ],
-    }
-
-
-@app.post("/participant-portal/privacy/data-export")
-def participant_portal_data_export(
-    request: Request,
-    csrf_ok: None = Depends(csrf_protect),
-    db: Session = Depends(get_db),
-):
-    _session_row, inv, participant_row, study_row, enrolment = require_participant_portal_context(request, db)
-    payload = participant_self_export_payload(db, inv, participant_row, study_row, enrolment)
-    audit(
-        db,
-        inv.organisation_id,
-        None,
-        "privacy.participant_self_exported",
-        "participant",
-        participant_row.id,
-        str(study_row.id),
-    )
-    db.commit()
-    response = Response(
-        content=json.dumps(payload, ensure_ascii=False, indent=2),
-        media_type="application/json",
-        headers={"Content-Disposition": 'attachment; filename="citizen-centric-my-data.json"'},
-    )
-    _cache_control_no_store(response)
-    return response
-
-
-@app.post("/participant-portal/privacy/withdrawal-request")
-def participant_portal_withdrawal_request(
-    request: Request,
-    reason: str = Form("", max_length=2000),
-    contact_preference: str = Form("none"),
-    csrf_ok: None = Depends(csrf_protect),
-    db: Session = Depends(get_db),
-):
-    _session_row, inv, participant_row, study_row, _enrolment = require_participant_portal_context(request, db)
-    if contact_preference not in COMMUNICATION_PREFERENCES:
-        raise HTTPException(400, "Choose a valid contact preference.")
-    apply_participant_withdrawal(db, inv, participant_row, "all")
-    audit(
-        db,
-        inv.organisation_id,
-        None,
-        "participant.withdrawal_requested",
-        "participant",
-        participant_row.id,
-        json.dumps({"scope": "all", "study_id": study_row.id, "contact_preference": contact_preference, "reason": reason.strip()}),
-    )
-    db.commit()
-    set_flash(request, "success", "You have withdrawn from Citizen Centric research. The research team has been notified.")
-    response = RedirectResponse("/join-study", 303)
-    clear_public_auth_cookie(response)
-    return response
-
-
-def resolve_participant_portal_evidence(request: Request, db: Session, evidence_id: int):
-    _session_row, inv, participant_row, _study_row, _enrolment = require_participant_portal_context(request, db)
-    evidence_row = db.scalar(
-        select(EvidenceFile).where(
-            EvidenceFile.id == evidence_id,
-            EvidenceFile.organisation_id == inv.organisation_id,
-            EvidenceFile.study_id == inv.study_id,
-            EvidenceFile.participant_id == participant_row.id,
-        )
-    )
-    if not evidence_row:
-        raise HTTPException(404, "Evidence file was not found.")
-    return evidence_row
-
-
-def refresh_evidence_scan_status(db: Session, evidence_row: EvidenceFile):
-    if evidence_row.storage_provider != "azure_blob":
-        return
-    latest_status, latest_detail = storage.scan_result(evidence_row.stored_name)
-    if latest_status != "pending" or evidence_row.scan_status == "pending":
-        evidence_row.scan_status = latest_status
-        evidence_row.scan_detail = latest_detail
-        if latest_status in {"clean", "infected", "scan_failed"}:
-            evidence_row.scan_completed_at = now()
-        db.commit()
-
-
-@app.get("/participant-portal/evidence/{evidence_id}/status")
-def participant_portal_evidence_status(request: Request, evidence_id: int, db: Session = Depends(get_db)):
-    evidence_row = resolve_participant_portal_evidence(request, db, evidence_id)
-    refresh_evidence_scan_status(db, evidence_row)
-    response = JSONResponse(
-        {
-            "evidence_id": evidence_row.id,
-            "status": _participant_evidence_scan_status(evidence_row.scan_status),
-            "downloadable": is_evidence_downloadable(evidence_row.scan_status),
-        }
-    )
-    _cache_control_no_store(response)
-    return response
-
-
-@app.get("/participant-portal/evidence/{evidence_id}")
-def participant_portal_evidence_download(request: Request, evidence_id: int, db: Session = Depends(get_db)):
-    evidence_row = resolve_participant_portal_evidence(request, db, evidence_id)
-    refresh_evidence_scan_status(db, evidence_row)
-    ensure_clean_scan_for_download(evidence_row.scan_status)
-    if evidence_row.storage_provider == "azure_blob":
-        response = RedirectResponse(
-            storage.download_url(evidence_row.stored_name, evidence_row.original_name, evidence_row.content_type, settings.azure_sas_minutes),
-            303,
-        )
-        _cache_control_no_store(response)
-        return response
-    path = storage.path(evidence_row.stored_name)
-    if not path.exists():
-        raise HTTPException(404, "Stored evidence is unavailable.")
-    response = FileResponse(path, media_type=evidence_row.content_type, filename=evidence_row.original_name)
-    _cache_control_no_store(response)
-    return response
-
-
-@app.post("/api/v1/participant/session/exchange", response_model=SessionExchangeResponse)
-def participant_api_session_exchange(
-    payload: SessionExchangeRequest,
-    request: Request,
-    response: Response,
-    db: Session = Depends(get_db),
-):
-    account_key = token_hash(payload.invitation_token) if payload.invitation_token else "missing"
-    _enforce_rate_limit(
-        request,
-        db,
-        scope="participant_api_session_exchange",
-        ip_limit=settings.rate_limit_invitation_accept_ip,
-        account_key=account_key,
-        account_limit=settings.rate_limit_invitation_accept_token,
-    )
-
-    invitation = resolve_invitation_by_token(db, payload.invitation_token)
-    if not invitation or invitation.revoked_at or not unexpired(invitation.expires_at):
-        raise HTTPException(400, "This participant link is invalid or expired.")
-    participant_row = db.get(Participant, invitation.participant_id)
-    if not participant_row:
-        raise HTTPException(400, "This participant link is invalid or expired.")
-
-    existing_sessions = list(
-        db.scalars(
-            select(PublicAuthSession).where(
-                PublicAuthSession.scope == PARTICIPANT_API_SCOPE,
-                PublicAuthSession.participant_invitation_id == invitation.id,
-                PublicAuthSession.revoked_at.is_(None),
-            )
-        )
-    )
-    for row in existing_sessions:
-        if unexpired(row.expires_at):
-            raise _participant_api_exchange_conflict()
-        row.revoked_at = now()
-
-    try:
-        raw_token, session_row = create_participant_api_session(
-            db,
-            participant_invitation_id=invitation.id,
-            ttl_seconds=settings.session_max_age_seconds,
-        )
-    except IntegrityError:
-        db.rollback()
-        raise _participant_api_exchange_conflict()
-    next_action = "portal" if invitation.accepted_at else "consent_required"
-    invitation_status = "accepted" if invitation.accepted_at else "valid"
-    audit(
-        db,
-        invitation.organisation_id,
-        None,
-        "participant.api_session_exchanged",
-        "participant_invitation",
-        invitation.id,
-        next_action,
-    )
-    db.commit()
-    _cache_control_no_store(response)
-    return SessionExchangeResponse(
-        session=BearerSession(
-            access_token=raw_token,
-            token_type="Bearer",
-            expires_at=session_row.expires_at,
-            revocable=True,
-        ),
-        participant=ParticipantSummary(
-            participant_id=participant_row.id,
-            display_name=participant_row.name,
-            consent_status=participant_row.consent_status,
-        ),
-        invitation=InvitationContext(
-            study_id=invitation.study_id,
-            invitation_status=invitation_status,
-            expires_at=invitation.expires_at,
-            accepted_at=invitation.accepted_at,
-        ),
-        next_action=next_action,
-    )
-
-
-@app.get("/api/v1/participant/session", response_model=ParticipantSessionResponse)
-def participant_api_session(
-    request: Request,
-    response: Response,
-    db: Session = Depends(get_db),
-):
-    session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
-    _cache_control_no_store(response)
-    return ParticipantSessionResponse(
-        session=SessionInfo(
-            expires_at=session_row.expires_at,
-            revocable=True,
-        ),
-        participant=ParticipantSummary(
-            participant_id=participant_row.id,
-            display_name=participant_row.name,
-            consent_status=participant_row.consent_status,
-        ),
-        study_scope=[invitation.study_id],
-    )
-
-
-@app.get("/api/v1/participant/studies", response_model=StudyListResponse)
-def participant_api_studies(
-    request: Request,
-    response: Response,
-    cursor: str | None = Query(default=None, min_length=1),
-    limit: int = Query(default=25, ge=1, le=100),
-    db: Session = Depends(get_db),
-):
-    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
-    if not invitation.accepted_at:
-        raise HTTPException(403, "Participant consent has not been accepted.")
-    if participant_row.consent_status != ConsentStatus.granted.value:
-        raise HTTPException(403, "Participant consent is no longer active.")
-
-    _enforce_rate_limit(
-        request,
-        db,
-        scope="participant_portal_read",
-        ip_limit=settings.rate_limit_portal_write_ip,
-        account_key=f"invitation:{invitation.id}",
-        account_limit=settings.rate_limit_portal_write_token,
-    )
-
-    study_row = db.scalar(
-        select(Study).where(
-            Study.id == invitation.study_id,
-            Study.organisation_id == invitation.organisation_id,
-        )
-    )
-    if not study_row:
-        raise _participant_api_unauthorised()
-
-    enrolled = db.scalar(
-        select(StudyEnrolment.id).where(
-            StudyEnrolment.organisation_id == invitation.organisation_id,
-            StudyEnrolment.study_id == invitation.study_id,
-            StudyEnrolment.participant_id == participant_row.id,
-            StudyEnrolment.status != "withdrawn",
-        )
-    ) is not None
-
-    _cache_control_no_store(response)
-    return StudyListResponse(
-        data=[
-            StudySummary(
-                study_id=study_row.id,
-                title=study_row.title,
-                description=study_row.description,
-                status=study_row.status,
-                methodology=study_row.methodology,
-                enrolled=enrolled,
-            )
-        ],
-        pagination=Pagination(
-            cursor=cursor,
-            next_cursor=None,
-            limit=limit,
-            has_more=False,
-        ),
-    )
-
-
-@app.get(
-    "/api/v1/participant/activities",
-    response_model=ActivityListResponse,
-    response_model_exclude_unset=True,
-)
-def participant_api_activities(
-    request: Request,
-    response: Response,
-    study_id: int | None = Query(default=None, ge=1),
-    db: Session = Depends(get_db),
-):
-    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
-    if not invitation.accepted_at:
-        raise HTTPException(403, "Participant consent has not been accepted.")
-    if participant_row.consent_status != ConsentStatus.granted.value:
-        raise HTTPException(403, "Participant consent is no longer active.")
-    if study_id is not None and study_id != invitation.study_id:
-        raise HTTPException(403, "Requested study is outside participant scope.")
-
-    _enforce_rate_limit(
-        request,
-        db,
-        scope="participant_portal_read",
-        ip_limit=settings.rate_limit_portal_write_ip,
-        account_key=f"invitation:{invitation.id}",
-        account_limit=settings.rate_limit_portal_write_token,
-    )
-
-    study_row = db.scalar(
-        select(Study).where(
-            Study.id == invitation.study_id,
-            Study.organisation_id == invitation.organisation_id,
-        )
-    )
-    if not study_row:
-        raise _participant_api_unauthorised()
-
-    enrolled = db.scalar(
-        select(StudyEnrolment.id).where(
-            StudyEnrolment.organisation_id == invitation.organisation_id,
-            StudyEnrolment.study_id == invitation.study_id,
-            StudyEnrolment.participant_id == participant_row.id,
-            StudyEnrolment.status != "withdrawn",
-        )
-    ) is not None
-    if not enrolled:
-        raise HTTPException(403, "Participant is not enrolled in this study.")
-
-    activities = list(
-        db.scalars(
-            select(Activity)
-            .where(
-                Activity.organisation_id == invitation.organisation_id,
-                Activity.study_id == invitation.study_id,
-            )
-            .order_by(Activity.position.asc(), Activity.id.asc())
-        )
-    )
-
-    response_rows = list(
-        db.scalars(
-            select(ActivityResponse).where(
-                ActivityResponse.organisation_id == invitation.organisation_id,
-                ActivityResponse.study_id == invitation.study_id,
-                ActivityResponse.participant_id == participant_row.id,
-            )
-        )
-    )
-    response_by_activity_id = {row.activity_id: row for row in response_rows}
-
-    data: list[ActivitySummary] = []
-    for activity_row in activities:
-        window = activity_window(study_row, activity_row, now())
-        response_row = response_by_activity_id.get(activity_row.id)
-        response_summary = (
-            ActivityResponseSummary(
-                status=response_row.status,
-                submitted_at=response_row.submitted_at,
-                updated_at=response_row.updated_at,
-            )
-            if response_row
-            else None
-        )
-        item = _participant_activity_summary(activity_row, window)
-        if response_summary:
-            item.response = response_summary
-        data.append(item)
-
-    _cache_control_no_store(response)
-    return ActivityListResponse(data=data)
-
-
-def _response_value_from_json(value_json: str | None) -> ActivityResponseValue | None:
-    try:
-        payload = json.loads(value_json or "{}")
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-
-    value = ActivityResponseValue()
-    if "answer" in payload and isinstance(payload["answer"], str):
-        value.answer = payload["answer"]
-    if "choices" in payload and isinstance(payload["choices"], list):
-        value.choices = [x for x in payload["choices"] if isinstance(x, str)]
-    if "evidence_id" in payload and isinstance(payload["evidence_id"], int) and payload["evidence_id"] > 0:
-        value.evidence_id = payload["evidence_id"]
-    if not value.model_fields_set:
-        return None
-    return value
-
-
-def _participant_activity_options(activity_row: Activity) -> list[str] | None:
-    if activity_row.activity_type not in {"single_choice", "multiple_choice", "ranking"}:
-        return None
-
-    try:
-        payload = json.loads(activity_row.options_json or "[]")
-    except json.JSONDecodeError:
-        return []
-
-    if not isinstance(payload, list):
-        return []
-
-    return [option.strip() for option in payload if isinstance(option, str) and option.strip()]
-
-
-def _validate_activity_response_value(
-    activity_row: Activity,
-    value: dict[str, object],
-    action: str,
-) -> dict[str, object]:
-    if action not in {"draft", "submit"}:
-        raise HTTPException(400, "Invalid response action.")
-
-    answer = str(value.get("answer") or "")
-    raw_choices = value.get("choices") or []
-    choices = [x.strip() for x in raw_choices if isinstance(x, str) and x.strip()]
-    value["answer"] = answer
-    value["choices"] = choices
-
-    if activity_row.activity_type not in {"single_choice", "multiple_choice", "ranking"}:
-        return value
-
-    if answer.strip():
-        raise HTTPException(400, "Choice activities must use the available options.")
-
-    options = _participant_activity_options(activity_row) or []
-    if len(options) < 2:
-        raise HTTPException(409, "This activity does not have enough configured options.")
-    if len(choices) != len(set(choices)):
-        raise HTTPException(400, "Each option may only be selected once.")
-    if any(choice not in options for choice in choices):
-        raise HTTPException(400, "The response contains an option that is not available.")
-
-    if activity_row.activity_type == "single_choice" and len(choices) > 1:
-        raise HTTPException(400, "Select one option only.")
-    if activity_row.activity_type == "ranking" and action == "submit" and choices and len(choices) != len(options):
-        raise HTTPException(400, "Rank every option before submitting.")
-    if action == "submit" and activity_row.required and not choices:
-        raise HTTPException(400, "A response is required.")
-
-    return value
-
-
-def _participant_activity_summary(activity_row: Activity, window: dict[str, object]) -> ActivitySummary:
-    item = ActivitySummary(
-        activity_id=activity_row.id,
-        title=activity_row.title,
-        prompt=activity_row.prompt or None,
-        activity_type=activity_row.activity_type,
-        required=bool(activity_row.required),
-        position=activity_row.position,
-        availability=ActivityAvailability(
-            status=str(window.get("status") or "open"),
-            release_at=window.get("release_at"),
-            due_at=window.get("due_at"),
-        ),
-    )
-
-    options = _participant_activity_options(activity_row)
-    if options is not None:
-        item.options = options
-
-    return item
-
-
-@app.get(
-    "/api/v1/participant/activities/{activity_id}",
-    response_model=ActivityDetailResponse,
-    response_model_exclude_unset=True,
-)
-def participant_api_activity_detail(
-    request: Request,
-    response: Response,
-    activity_id: int = ApiPath(..., ge=1),
-    db: Session = Depends(get_db),
-):
-    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
-    if not invitation.accepted_at:
-        raise HTTPException(403, "Participant consent has not been accepted.")
-    if participant_row.consent_status != ConsentStatus.granted.value:
-        raise HTTPException(403, "Participant consent is no longer active.")
-
-    _enforce_rate_limit(
-        request,
-        db,
-        scope="participant_portal_read",
-        ip_limit=settings.rate_limit_portal_write_ip,
-        account_key=f"invitation:{invitation.id}",
-        account_limit=settings.rate_limit_portal_write_token,
-    )
-
-    study_row = db.scalar(
-        select(Study).where(
-            Study.id == invitation.study_id,
-            Study.organisation_id == invitation.organisation_id,
-        )
-    )
-    if not study_row:
-        raise _participant_api_unauthorised()
-
-    enrolled = db.scalar(
-        select(StudyEnrolment.id).where(
-            StudyEnrolment.organisation_id == invitation.organisation_id,
-            StudyEnrolment.study_id == invitation.study_id,
-            StudyEnrolment.participant_id == participant_row.id,
-            StudyEnrolment.status != "withdrawn",
-        )
-    ) is not None
-    if not enrolled:
-        raise HTTPException(403, "Participant is not enrolled in this study.")
-
-    activity_row = db.scalar(
-        select(Activity).where(
-            Activity.id == activity_id,
-            Activity.organisation_id == invitation.organisation_id,
-            Activity.study_id == invitation.study_id,
-        )
-    )
-    if not activity_row:
-        raise HTTPException(404, "Activity not found.")
-
-    response_row = db.scalar(
-        select(ActivityResponse).where(
-            ActivityResponse.organisation_id == invitation.organisation_id,
-            ActivityResponse.study_id == invitation.study_id,
-            ActivityResponse.activity_id == activity_row.id,
-            ActivityResponse.participant_id == participant_row.id,
-        )
-    )
-
-    window = activity_window(study_row, activity_row, now())
-    result = ActivityDetailResponse(activity=_participant_activity_summary(activity_row, window))
-
-    if response_row:
-        response_item = ActivityDetailResponseItem(
-            response_id=response_row.id,
-            status=response_row.status,
-        )
-        value = _response_value_from_json(response_row.value_json)
-        if value is not None:
-            response_item.value = value
-        if response_row.submitted_at is not None:
-            response_item.submitted_at = response_row.submitted_at
-        if response_row.updated_at is not None:
-            response_item.updated_at = response_row.updated_at
-        result.response = response_item
-
-    _cache_control_no_store(response)
-    return result
-
-
-def _resolve_participant_api_activity_scope(
-    request: Request,
-    db: Session,
-    activity_id: int,
-) -> tuple[ParticipantInvitation, Participant, Study, Activity]:
-    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
-    if not invitation.accepted_at:
-        raise HTTPException(403, "Participant consent has not been accepted.")
-    if participant_row.consent_status != ConsentStatus.granted.value:
-        raise HTTPException(403, "Participant consent is no longer active.")
-
-    _enforce_rate_limit(
-        request,
-        db,
-        scope="participant_portal_write",
-        ip_limit=settings.rate_limit_portal_write_ip,
-        account_key=f"invitation:{invitation.id}",
-        account_limit=settings.rate_limit_portal_write_token,
-    )
-
-    study_row = db.scalar(
-        select(Study).where(
-            Study.id == invitation.study_id,
-            Study.organisation_id == invitation.organisation_id,
-        )
-    )
-    if not study_row:
-        raise _participant_api_unauthorised()
-
-    enrolled = db.scalar(
-        select(StudyEnrolment.id).where(
-            StudyEnrolment.organisation_id == invitation.organisation_id,
-            StudyEnrolment.study_id == invitation.study_id,
-            StudyEnrolment.participant_id == participant_row.id,
-            StudyEnrolment.status != "withdrawn",
-        )
-    ) is not None
-    if not enrolled:
-        raise HTTPException(403, "Participant is not enrolled in this study.")
-
-    activity_row = db.scalar(
-        select(Activity).where(
-            Activity.id == activity_id,
-            Activity.organisation_id == invitation.organisation_id,
-            Activity.study_id == invitation.study_id,
-        )
-    )
-    if not activity_row:
-        raise HTTPException(404, "Activity not found.")
-
-    window = activity_window(study_row, activity_row, now())
-    if window["status"] == "upcoming":
-        raise HTTPException(409, "This activity is not available yet.")
-    if window["status"] == "closed":
-        raise HTTPException(409, "The due date for this activity has passed.")
-
-    return invitation, participant_row, study_row, activity_row
-
-
-def _participant_response_value_from_payload(
-    payload: DraftResponseRequest,
-    activity_row: Activity,
-    action: str,
-) -> dict[str, object]:
-    cleaned_choices = [x.strip() for x in payload.choices if isinstance(x, str) and x.strip()]
-    value: dict[str, object] = {
-        "answer": payload.answer or "",
-        "choices": cleaned_choices,
-    }
-    if payload.evidence_id is not None:
-        value["evidence_id"] = payload.evidence_id
-    return _validate_activity_response_value(activity_row, value, action)
-
-
-def _participant_evidence_scan_status(scan_status: str | None) -> str:
-    token = (scan_status or "").strip().lower().replace(" ", "_")
-    if token in {"pending", "clean", "infected", "scan_failed"}:
-        return token
-    if token in {"error", "failed", "not_scanned", "not_configured"}:
-        return "scan_failed"
-    return "pending"
-
-
-def _participant_evidence_metadata(evidence_row: EvidenceFile) -> EvidenceMetadata:
-    return EvidenceMetadata(
-        evidence_id=evidence_row.id,
-        activity_id=evidence_row.activity_id,
-        original_name=evidence_row.original_name,
-        content_type=evidence_row.content_type,
-        size_bytes=evidence_row.size_bytes,
-        scan_status=_participant_evidence_scan_status(evidence_row.scan_status),
-        scan_detail=evidence_row.scan_detail or None,
-        created_at=evidence_row.created_at,
-    )
-
-
-def _resolve_participant_api_evidence_scope(
-    request: Request,
-    db: Session,
-    evidence_id: int,
-) -> tuple[ParticipantInvitation, Participant, Study, EvidenceFile]:
-    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
-    if not invitation.accepted_at:
-        raise HTTPException(403, "Participant consent has not been accepted.")
-    if participant_row.consent_status != ConsentStatus.granted.value:
-        raise HTTPException(403, "Participant consent is no longer active.")
-
-    _enforce_rate_limit(
-        request,
-        db,
-        scope="participant_portal_read",
-        ip_limit=settings.rate_limit_portal_write_ip,
-        account_key=f"invitation:{invitation.id}",
-        account_limit=settings.rate_limit_portal_write_token,
-    )
-
-    study_row = db.scalar(
-        select(Study).where(
-            Study.id == invitation.study_id,
-            Study.organisation_id == invitation.organisation_id,
-        )
-    )
-    if not study_row:
-        raise _participant_api_unauthorised()
-
-    enrolled = db.scalar(
-        select(StudyEnrolment.id).where(
-            StudyEnrolment.organisation_id == invitation.organisation_id,
-            StudyEnrolment.study_id == invitation.study_id,
-            StudyEnrolment.participant_id == participant_row.id,
-            StudyEnrolment.status != "withdrawn",
-        )
-    ) is not None
-    if not enrolled:
-        raise HTTPException(403, "Participant is not enrolled in this study.")
-
-    evidence_row = db.scalar(
-        select(EvidenceFile).where(
-            EvidenceFile.id == evidence_id,
-            EvidenceFile.organisation_id == invitation.organisation_id,
-            EvidenceFile.study_id == invitation.study_id,
-            EvidenceFile.participant_id == participant_row.id,
-        )
-    )
-    if not evidence_row:
-        raise HTTPException(404, "Evidence not found.")
-
-    return invitation, participant_row, study_row, evidence_row
-
-
-def _resolve_participant_api_study_scope(
-    request: Request,
-    db: Session,
-    *,
-    write_scope: bool,
-) -> tuple[ParticipantInvitation, Participant, Study]:
-    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
-    if not invitation.accepted_at:
-        raise HTTPException(403, "Participant consent has not been accepted.")
-    if participant_row.consent_status != ConsentStatus.granted.value:
-        raise HTTPException(403, "Participant consent is no longer active.")
-
-    _enforce_rate_limit(
-        request,
-        db,
-        scope="participant_portal_write" if write_scope else "participant_portal_read",
-        ip_limit=settings.rate_limit_portal_write_ip,
-        account_key=f"invitation:{invitation.id}",
-        account_limit=settings.rate_limit_portal_write_token,
-    )
-
-    study_row = db.scalar(
-        select(Study).where(
-            Study.id == invitation.study_id,
-            Study.organisation_id == invitation.organisation_id,
-        )
-    )
-    if not study_row:
-        raise _participant_api_unauthorised()
-
-    enrolled = db.scalar(
-        select(StudyEnrolment.id).where(
-            StudyEnrolment.organisation_id == invitation.organisation_id,
-            StudyEnrolment.study_id == invitation.study_id,
-            StudyEnrolment.participant_id == participant_row.id,
-            StudyEnrolment.status != "withdrawn",
-        )
-    ) is not None
-    if not enrolled:
-        raise HTTPException(403, "Participant is not enrolled in this study.")
-
-    return invitation, participant_row, study_row
-
-
-def _record_participant_idempotency(
-    db: Session,
-    invitation_id: int,
-    action: str,
-    idempotency_key: str | None,
-) -> None:
-    if not idempotency_key:
-        return
-    scoped_key = f"participant:{invitation_id}:{action}:{idempotency_key}"
-    if token_already_redeemed(db, "participant_api_idempotency", scoped_key):
-        raise HTTPException(409, "Duplicate request was already processed.")
-    record_token_redemption(db, "participant_api_idempotency", scoped_key)
-
-
-def _update_activity_response_if_not_submitted(
-    db: Session,
-    response_id: int,
-    value: dict[str, object],
-    action: str,
-) -> bool:
-    submitted_at = now() if action == "submit" else None
-    status = "submitted" if action == "submit" else "draft"
-    result = db.execute(
-        update(ActivityResponse)
-        .where(
-            ActivityResponse.id == response_id,
-            ActivityResponse.status != "submitted",
-        )
-        .values(
-            value_json=json.dumps(value),
-            status=status,
-            submitted_at=submitted_at,
-            updated_at=now(),
-        )
-    )
-    return result.rowcount == 1
-
-
-def _require_json_content_type(request: Request) -> None:
-    content_type = (request.headers.get("content-type") or "").strip().lower()
-    if not content_type.startswith("application/json"):
-        raise HTTPException(415, "Unsupported content type.")
-    return None
-
-
-@app.put("/api/v1/participant/activities/{activity_id}/draft", response_model=DraftResponseResult)
-def participant_api_activity_response_draft(
-    payload: DraftResponseRequest,
-    request: Request,
-    response: Response,
-    activity_id: int = ApiPath(..., ge=1),
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
-    _content_type_ok: None = Depends(_require_json_content_type),
-    db: Session = Depends(get_db),
-):
-    del idempotency_key
-    invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
-    value = _participant_response_value_from_payload(payload, activity_row, "draft")
-
-    existing = db.scalar(
-        select(ActivityResponse).where(
-            ActivityResponse.organisation_id == invitation.organisation_id,
-            ActivityResponse.study_id == invitation.study_id,
-            ActivityResponse.activity_id == activity_row.id,
-            ActivityResponse.participant_id == participant_row.id,
-        )
-    )
-    if existing and existing.status == "submitted":
-        raise HTTPException(409, "Activity response has already been submitted.")
-
-    if payload.evidence_id is not None:
-        evidence_ok = db.scalar(
-            select(EvidenceFile.id).where(
-                EvidenceFile.id == payload.evidence_id,
-                EvidenceFile.organisation_id == invitation.organisation_id,
-                EvidenceFile.study_id == invitation.study_id,
-                EvidenceFile.activity_id == activity_row.id,
-                EvidenceFile.participant_id == participant_row.id,
-            )
-        ) is not None
-        if not evidence_ok:
-            raise HTTPException(400, "Evidence reference is invalid for this activity.")
-
-    try:
-        response_row = existing or resolve_or_create_activity_response(
-            db,
-            organisation_id=invitation.organisation_id,
-            study_id=invitation.study_id,
-            activity_id=activity_row.id,
-            participant_id=participant_row.id,
-        )
-        if existing:
-            if not _update_activity_response_if_not_submitted(db, response_row.id, value, "draft"):
-                raise HTTPException(409, "Activity response has already been submitted.")
-            db.refresh(response_row)
-        else:
-            apply_response_action(response_row, value, "draft", now())
-        audit(
-            db,
-            invitation.organisation_id,
-            None,
-            "activity.draft",
-            "activity_response",
-            response_row.id,
-            str(activity_row.id),
-        )
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(409, "Activity response state conflict.")
-    except Exception:
-        db.rollback()
-        raise
-
-    _cache_control_no_store(response)
-    return DraftResponseResult(
-        response_id=response_row.id,
-        status="draft",
-        updated_at=response_row.updated_at,
-    )
-
-
-@app.post("/api/v1/participant/activities/{activity_id}/submit", response_model=SubmittedResponseResult)
-def participant_api_activity_response_submit(
-    payload: SubmitResponseRequest,
-    request: Request,
-    response: Response,
-    activity_id: int = ApiPath(..., ge=1),
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
-    _content_type_ok: None = Depends(_require_json_content_type),
-    db: Session = Depends(get_db),
-):
-    del idempotency_key
-    invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
-    value = _participant_response_value_from_payload(payload, activity_row, "submit")
-    has_answer = bool((payload.answer or "").strip())
-    has_choices = bool(value.get("choices"))
-    has_evidence = payload.evidence_id is not None
-    if activity_row.required and not has_answer and not has_choices and not has_evidence:
-        raise HTTPException(400, "A response is required.")
-
-    if payload.evidence_id is not None:
-        evidence_ok = db.scalar(
-            select(EvidenceFile.id).where(
-                EvidenceFile.id == payload.evidence_id,
-                EvidenceFile.organisation_id == invitation.organisation_id,
-                EvidenceFile.study_id == invitation.study_id,
-                EvidenceFile.activity_id == activity_row.id,
-                EvidenceFile.participant_id == participant_row.id,
-            )
-        ) is not None
-        if not evidence_ok:
-            raise HTTPException(400, "Evidence reference is invalid for this activity.")
-
-    existing = db.scalar(
-        select(ActivityResponse).where(
-            ActivityResponse.organisation_id == invitation.organisation_id,
-            ActivityResponse.study_id == invitation.study_id,
-            ActivityResponse.activity_id == activity_row.id,
-            ActivityResponse.participant_id == participant_row.id,
-        )
-    )
-    if existing and existing.status == "submitted":
-        existing_value = json.loads(existing.value_json or "{}")
-        if existing_value != value:
-            raise HTTPException(409, "Activity response has already been submitted.")
-        _cache_control_no_store(response)
-        return SubmittedResponseResult(
-            response_id=existing.id,
-            status="submitted",
-            submitted_at=existing.submitted_at or existing.updated_at,
-            updated_at=existing.updated_at,
-        )
-
-    try:
-        response_row = existing or resolve_or_create_activity_response(
-            db,
-            organisation_id=invitation.organisation_id,
-            study_id=invitation.study_id,
-            activity_id=activity_row.id,
-            participant_id=participant_row.id,
-        )
-        if existing:
-            if not _update_activity_response_if_not_submitted(db, response_row.id, value, "submit"):
-                raise HTTPException(409, "Activity response has already been submitted.")
-            db.refresh(response_row)
-        else:
-            apply_response_action(response_row, value, "submit", now())
-        audit(
-            db,
-            invitation.organisation_id,
-            None,
-            "activity.submitted",
-            "activity_response",
-            response_row.id,
-            str(activity_row.id),
-        )
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(409, "Activity response state conflict.")
-    except Exception:
-        db.rollback()
-        raise
-
-    _cache_control_no_store(response)
-    return SubmittedResponseResult(
-        response_id=response_row.id,
-        status="submitted",
-        submitted_at=response_row.submitted_at or response_row.updated_at,
-        updated_at=response_row.updated_at,
-    )
-
-
-@app.post(
-    "/api/v1/participant/activities/{activity_id}/evidence-uploads",
-    response_model=EvidenceUploadResponse,
-    status_code=201,
-)
-def participant_api_activity_evidence_upload(
-    request: Request,
-    response: Response,
-    activity_id: int = ApiPath(..., ge=1),
-    form_activity_id: int = Form(..., alias="activity_id", ge=1),
-    file: UploadFile = File(...),
-    note: str | None = Form(default=None, max_length=2000),
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
-    db: Session = Depends(get_db),
-):
-    del note, idempotency_key
-    if form_activity_id != activity_id:
-        raise HTTPException(400, "Form activity_id does not match path activity_id.")
-
-    invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
-    existing_response = db.scalar(
-        select(ActivityResponse).where(
-            ActivityResponse.organisation_id == invitation.organisation_id,
-            ActivityResponse.study_id == invitation.study_id,
-            ActivityResponse.activity_id == activity_row.id,
-            ActivityResponse.participant_id == participant_row.id,
-        )
-    )
-    if existing_response and existing_response.status == "submitted":
-        raise HTTPException(409, "Activity response has already been submitted.")
-
-    original = Path(file.filename or "").name
-    if not original:
-        raise HTTPException(400, "A file is required.")
-    validate_evidence_upload_metadata(original, file.content_type, activity_row.activity_type)
-
-    try:
-        stored = storage.save_stream(file.file, original, settings.max_upload_mb * 1024 * 1024)
-    except ValueError as exc:
-        raise HTTPException(413, str(exc))
-
-    stored_key = stored.key
-    try:
-        if stored.provider == "local":
-            local_path = storage.path(stored.key)
-            scan_status, scan_detail = scan_file(local_path)
-            if scan_status == "infected":
-                delete_stored_object_safely(stored.key, "infected")
-                audit(db, invitation.organisation_id, None, "evidence.rejected", "activity", activity_row.id, scan_detail)
-                db.commit()
-                raise HTTPException(400, "The uploaded file failed malware screening.")
-        else:
-            scan_status, scan_detail = "pending", "Awaiting Microsoft Defender for Storage on-upload scan."
-
-        evidence_row = build_evidence_file(
-            organisation_id=invitation.organisation_id,
-            study_id=invitation.study_id,
-            activity_id=activity_row.id,
-            participant_id=participant_row.id,
-            response_id=existing_response.id if existing_response else None,
-            original_name=original,
-            stored_name=stored.key,
-            content_type=file.content_type or "application/octet-stream",
-            size_bytes=stored.size,
-            sha256_hex=stored.sha256_hex,
-            scan_status=scan_status,
-            scan_detail=scan_detail,
-            storage_provider=stored.provider,
-            blob_uri=stored.uri,
-        )
-        db.add(evidence_row)
-        db.flush()
-        audit(db, invitation.organisation_id, None, "evidence.uploaded", "evidence_file", evidence_row.id, str(activity_row.id))
-        db.commit()
-    except HTTPException:
-        db.rollback()
-        raise
-    except Exception:
-        db.rollback()
-        delete_stored_object_safely(stored_key, "upload_processing_failed")
-        raise
-
-    _cache_control_no_store(response)
-    return EvidenceUploadResponse(evidence=_participant_evidence_metadata(evidence_row))
-
-
-@app.get(
-    "/api/v1/participant/evidence/{evidence_id}/status",
-    response_model=EvidenceStatusResponse,
-)
-def participant_api_evidence_status(
-    request: Request,
-    response: Response,
-    evidence_id: int = ApiPath(..., ge=1),
-    db: Session = Depends(get_db),
-):
-    _invitation, _participant_row, _study_row, evidence_row = _resolve_participant_api_evidence_scope(request, db, evidence_id)
-
-    if evidence_row.storage_provider == "azure_blob":
-        latest_status, latest_detail = storage.scan_result(evidence_row.stored_name)
-        if latest_status != "pending" or evidence_row.scan_status == "pending":
-            evidence_row.scan_status = latest_status
-            evidence_row.scan_detail = latest_detail
-            if latest_status in {"clean", "infected", "scan_failed"}:
-                evidence_row.scan_completed_at = now()
-            db.commit()
-
-    _cache_control_no_store(response)
-    return EvidenceStatusResponse(
-        evidence=_participant_evidence_metadata(evidence_row),
-        downloadable=is_evidence_downloadable(evidence_row.scan_status),
-    )
-
-
-@app.get("/api/v1/participant/messages", response_model=MessageListResponse)
-def participant_api_messages(
-    request: Request,
-    response: Response,
-    cursor: str | None = Query(default=None, min_length=1),
-    limit: int = Query(default=25, ge=1, le=100),
-    db: Session = Depends(get_db),
-):
-    invitation, participant_row, study_row = _resolve_participant_api_study_scope(request, db, write_scope=False)
-    del invitation
-    rows = list_participant_visible_messages(
-        db,
-        study_id=study_row.id,
-        participant_id=participant_row.id,
-    )
-    data = [
-        ParticipantMessageSummary(
-            message_id=row.id,
-            sender_type=row.sender_type,
-            body=row.body,
-            created_at=row.created_at,
-        )
-        for row in rows[:limit]
-    ]
-    _cache_control_no_store(response)
-    return MessageListResponse(
-        data=data,
-        pagination=Pagination(
-            cursor=cursor,
-            next_cursor=None,
-            limit=limit,
-            has_more=False,
-        ),
-    )
-
-
-@app.post("/api/v1/participant/messages", response_model=CreateMessageResponse, status_code=201)
-def participant_api_message_create(
-    payload: CreateMessageRequest,
-    request: Request,
-    response: Response,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
-    _content_type_ok: None = Depends(_require_json_content_type),
-    db: Session = Depends(get_db),
-):
-    invitation, participant_row, study_row = _resolve_participant_api_study_scope(request, db, write_scope=True)
-    body = payload.body.strip()
-    if not body:
-        raise HTTPException(400, "Message body is required.")
-
-    try:
-        _record_participant_idempotency(db, invitation.id, "messages_create", idempotency_key)
-        row = create_participant_message(
-            invitation,
-            body=body,
-        )
-        db.add(row)
-        db.flush()
-        audit(
-            db,
-            invitation.organisation_id,
-            None,
-            "participant.message_created",
-            "participant_message",
-            row.id,
-            str(study_row.id),
-        )
-        db.commit()
-    except HTTPException:
-        db.rollback()
-        raise
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(409, "Message state conflict.")
-    except Exception:
-        db.rollback()
-        raise
-
-    _cache_control_no_store(response)
-    return CreateMessageResponse(
-        message=ParticipantMessageSummary(
-            message_id=row.id,
-            sender_type=row.sender_type,
-            body=row.body,
-            created_at=row.created_at,
-        )
-    )
-
-
-@app.post("/api/v1/participant/privacy/withdrawal-requests", response_model=PrivacyRequestAcknowledgement, status_code=202)
-def participant_api_withdrawal_request(
-    payload: WithdrawalRequest,
-    request: Request,
-    response: Response,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
-    _content_type_ok: None = Depends(_require_json_content_type),
-    db: Session = Depends(get_db),
-):
-    invitation, participant_row, study_row = _resolve_participant_api_study_scope(request, db, write_scope=True)
-    target_study_id = payload.study_id or invitation.study_id
-    if payload.scope == "study" and target_study_id != invitation.study_id:
-        raise HTTPException(403, "Requested study is outside participant scope.")
-
-    try:
-        _record_participant_idempotency(db, invitation.id, "privacy_withdrawal", idempotency_key)
-        apply_participant_withdrawal(db, invitation, participant_row, payload.scope)
-        audit_event = AuditEvent(
-            organisation_id=invitation.organisation_id,
-            actor_user_id=None,
-            action="participant.withdrawal_requested",
-            entity_type="participant",
-            entity_id=str(participant_row.id),
-            detail=json.dumps(
-                {
-                    "scope": payload.scope,
-                    "study_id": study_row.id,
-                    "contact_preference": payload.contact_preference,
-                    "reason": payload.reason or "",
-                }
-            ),
-        )
-        db.add(audit_event)
-        db.flush()
-        request_id = int(audit_event.id)
-        db.commit()
-    except HTTPException:
-        db.rollback()
-        raise
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(409, "Withdrawal request conflict.")
-    except Exception:
-        db.rollback()
-        raise
-
-    _cache_control_no_store(response)
-    return PrivacyRequestAcknowledgement(
-        request_id=request_id,
-        request_type="withdrawal",
-        status="received",
-        submitted_at=now(),
-        message="Withdrawal request received.",
-    )
-
-
-@app.post("/api/v1/participant/privacy/deletion-requests", response_model=PrivacyRequestAcknowledgement, status_code=202)
-def participant_api_deletion_request(
-    payload: DeletionRequest,
-    request: Request,
-    response: Response,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
-    _content_type_ok: None = Depends(_require_json_content_type),
-    db: Session = Depends(get_db),
-):
-    invitation, participant_row, _study_row = _resolve_participant_api_study_scope(request, db, write_scope=True)
-    if payload.study_id is not None and payload.study_id != invitation.study_id:
-        raise HTTPException(403, "Requested study is outside participant scope.")
-
-    try:
-        _record_participant_idempotency(db, invitation.id, "privacy_deletion", idempotency_key)
-        audit_event = AuditEvent(
-            organisation_id=invitation.organisation_id,
-            actor_user_id=None,
-            action="participant.deletion_requested",
-            entity_type="participant",
-            entity_id=str(participant_row.id),
-            detail=json.dumps(
-                {
-                    "mode_preference": payload.mode_preference,
-                    "study_id": invitation.study_id,
-                    "reason": payload.reason or "",
-                }
-            ),
-        )
-        db.add(audit_event)
-        db.flush()
-        request_id = int(audit_event.id)
-        db.commit()
-    except HTTPException:
-        db.rollback()
-        raise
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(409, "Deletion request conflict.")
-    except Exception:
-        db.rollback()
-        raise
-
-    _cache_control_no_store(response)
-    return PrivacyRequestAcknowledgement(
-        request_id=request_id,
-        request_type="deletion",
-        status="received",
-        submitted_at=now(),
-        message="Deletion request received.",
-    )
-
-@app.delete("/api/v1/participant/session", response_model=LogoutResponse)
-def participant_api_session_logout(
-    request: Request,
-    response: Response,
-    db: Session = Depends(get_db),
-):
-    session_row, invitation, _participant_row = _resolve_participant_api_context(request, db)
-    session_row.revoked_at = now()
-    audit(
-        db,
-        invitation.organisation_id,
-        None,
-        "participant.api_session_revoked",
-        "public_auth_session",
-        session_row.id,
-        PARTICIPANT_API_SCOPE,
-    )
-    db.commit()
-    _cache_control_no_store(response)
-    return LogoutResponse(revoked=True, revoked_at=session_row.revoked_at)
-
-
+    db.add(ParticipantMessage(organisation_id=inv.organisation_id,study_id=inv.study_id,participant_id=inv.participant_id,sender_type="participant",body=body.strip())); db.commit(); return RedirectResponse("/participant-portal#messages",303)
 @app.post("/participants/{participant_id}/message")
 def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(...),internal_note:bool=Form(False),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
@@ -4024,247 +1825,10 @@ def researcher_message(participant_id:int,study_id:int=Form(...),body:str=Form(.
     if not enrolment:
         raise HTTPException(400,"Participant is not enrolled in this study.")
     if not body.strip(): raise HTTPException(400,"Message cannot be empty.")
-    db.add(create_researcher_message(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id,sender_user_id=u.id,body=body,internal_note=internal_note)); audit(db,u.organisation_id,u.id,"message.created","participant",p.id,"internal" if internal_note else s.title); db.commit(); return RedirectResponse(f"/participants/{p.id}#messages",303)
-
-
-def _conversation_scope(db: Session, user: User, study_id: int, participant_id: int):
-    study_row = study(db, study_id, user.organisation_id)
-    permission = require_study_permission(db, user, study_row)
-    participant_row = participant(db, participant_id, user.organisation_id)
-    enrolment = db.scalar(
-        select(StudyEnrolment).where(
-            StudyEnrolment.organisation_id == user.organisation_id,
-            StudyEnrolment.study_id == study_row.id,
-            StudyEnrolment.participant_id == participant_row.id,
-        )
-    )
-    if not enrolment:
-        raise HTTPException(404, "Conversation not found.")
-    return study_row, participant_row, enrolment, permission
-
-
-@app.get("/messages", response_class=HTMLResponse)
-def researcher_conversations(
-    request: Request,
-    q: str = "",
-    study_id: int | None = None,
-    status_filter: str = "",
-    page: int = 1,
-    u=Depends(current_user),
-    db: Session = Depends(get_db),
-):
-    if status_filter not in {"", "unread"}:
-        raise HTTPException(400, "Invalid message status filter.")
-    accessible_studies = (
-        select(Study.id).where(Study.organisation_id == u.organisation_id)
-        if u.role in {"owner", "admin", "observer"}
-        else study_scope_for_user(u)
-    )
-    unread_count = func.sum(
-        case(
-            (
-                and_(
-                    ParticipantMessage.sender_type == "participant",
-                    ParticipantMessage.internal_note == False,
-                    ParticipantMessage.read_at.is_(None),
-                ),
-                1,
-            ),
-            else_=0,
-        )
-    )
-    latest_at = func.max(ParticipantMessage.created_at)
-    stmt = (
-        select(
-            StudyEnrolment.study_id.label("study_id"),
-            StudyEnrolment.participant_id.label("participant_id"),
-            Study.title.label("study_title"),
-            Participant.name.label("participant_name"),
-            Participant.reference.label("participant_reference"),
-            latest_at.label("latest_at"),
-            unread_count.label("unread_count"),
-        )
-        .join(Study, Study.id == StudyEnrolment.study_id)
-        .join(Participant, Participant.id == StudyEnrolment.participant_id)
-        .outerjoin(
-            ParticipantMessage,
-            and_(
-                ParticipantMessage.organisation_id == StudyEnrolment.organisation_id,
-                ParticipantMessage.study_id == StudyEnrolment.study_id,
-                ParticipantMessage.participant_id == StudyEnrolment.participant_id,
-                ParticipantMessage.internal_note == False,
-            ),
-        )
-        .where(
-            StudyEnrolment.organisation_id == u.organisation_id,
-            StudyEnrolment.status != "withdrawn",
-            StudyEnrolment.study_id.in_(accessible_studies),
-        )
-        .group_by(
-            StudyEnrolment.study_id,
-            StudyEnrolment.participant_id,
-            Study.title,
-            Participant.name,
-            Participant.reference,
-        )
-    )
-    if study_id is not None:
-        if not db.scalar(accessible_studies.where(Study.id == study_id)):
-            raise HTTPException(403, "You do not have access to this study.")
-        stmt = stmt.where(StudyEnrolment.study_id == study_id)
-    if q.strip():
-        term = f"%{q.strip()}%"
-        stmt = stmt.where(
-            or_(
-                Participant.name.ilike(term),
-                Participant.reference.ilike(term),
-                Study.title.ilike(term),
-            )
-        )
-    if status_filter == "unread":
-        stmt = stmt.having(unread_count > 0)
-    stmt = stmt.order_by(latest_at.desc(), Participant.name.asc())
-    page = max(1, page)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = db.execute(stmt.offset((page - 1) * 25).limit(25)).all()
-    pages = max(1, (total + 24) // 25)
-    available_studies = db.scalars(
-        select(Study)
-        .where(Study.organisation_id == u.organisation_id, Study.id.in_(accessible_studies))
-        .order_by(Study.title)
-    ).all()
-    return render(
-        request,
-        "messages.html",
-        user=u,
-        conversations=rows,
-        q=q,
-        study_id=study_id,
-        status_filter=status_filter,
-        studies=available_studies,
-        page=page,
-        pages=pages,
-        total=total,
-    )
-
-
-@app.get("/messages/{study_id}/{participant_id}", response_class=HTMLResponse)
-def researcher_conversation(
-    study_id: int,
-    participant_id: int,
-    request: Request,
-    u=Depends(current_user),
-    db: Session = Depends(get_db),
-):
-    study_row, participant_row, enrolment, permission = _conversation_scope(db, u, study_id, participant_id)
-    rows = db.scalars(
-        select(ParticipantMessage)
-        .where(
-            ParticipantMessage.organisation_id == u.organisation_id,
-            ParticipantMessage.study_id == study_row.id,
-            ParticipantMessage.participant_id == participant_row.id,
-        )
-        .order_by(ParticipantMessage.created_at, ParticipantMessage.id)
-    ).all()
-    visible_messages = [row for row in rows if not row.internal_note]
-    internal_notes = [row for row in rows if row.internal_note]
-    read_result = db.execute(
-        update(ParticipantMessage)
-        .where(
-            ParticipantMessage.organisation_id == u.organisation_id,
-            ParticipantMessage.study_id == study_row.id,
-            ParticipantMessage.participant_id == participant_row.id,
-            ParticipantMessage.sender_type == "participant",
-            ParticipantMessage.internal_note == False,
-            ParticipantMessage.read_at.is_(None),
-        )
-        .values(read_at=now())
-    )
-    if read_result.rowcount:
-        audit(db,u.organisation_id,u.id,"message.participant_messages_read","participant",participant_row.id,str(study_row.id)); db.commit()
-        read_time = now()
-        for message in visible_messages:
-            if message.sender_type == "participant" and message.read_at is None:
-                message.read_at = read_time
-    return render(
-        request,
-        "message_conversation.html",
-        user=u,
-        study=study_row,
-        participant=participant_row,
-        enrolment=enrolment,
-        messages=visible_messages,
-        internal_notes=internal_notes,
-        can_send=permission in {"edit", "manage"} and enrolment.status != "withdrawn",
-    )
-
-
-def _create_researcher_conversation_entry(
-    *,
-    db: Session,
-    user: User,
-    study_id: int,
-    participant_id: int,
-    body: str,
-    internal_note: bool,
-):
-    study_row, participant_row, enrolment, permission = _conversation_scope(db, user, study_id, participant_id)
-    if permission not in {"edit", "manage"}:
-        raise HTTPException(403, "You do not have permission to update this conversation.")
-    if not internal_note and enrolment.status == "withdrawn":
-        raise HTTPException(409, "Messages cannot be sent to a withdrawn participant.")
-    cleaned_body = body.strip()
-    if not cleaned_body:
-        raise HTTPException(400, "Message cannot be empty.")
-    row = create_researcher_message(
-        organisation_id=user.organisation_id,
-        study_id=study_row.id,
-        participant_id=participant_row.id,
-        sender_user_id=user.id,
-        body=cleaned_body,
-        internal_note=internal_note,
-    )
-    db.add(row)
-    db.flush()
-    audit(
-        db,
-        user.organisation_id,
-        user.id,
-        "message.internal_note_created" if internal_note else "message.participant_visible_created",
-        "participant_message",
-        row.id,
-        str(study_row.id),
-    )
-    db.commit()
-
-
-@app.post("/messages/{study_id}/{participant_id}")
-def researcher_conversation_send(
-    study_id: int,
-    participant_id: int,
-    body: str = Form(..., max_length=10000),
-    u=Depends(roles("owner", "admin", "researcher")),
-    csrf_ok: None = Depends(csrf_protect),
-    db: Session = Depends(get_db),
-):
-    _create_researcher_conversation_entry(db=db,user=u,study_id=study_id,participant_id=participant_id,body=body,internal_note=False)
-    return RedirectResponse(f"/messages/{study_id}/{participant_id}#conversation", 303)
-
-
-@app.post("/messages/{study_id}/{participant_id}/notes")
-def researcher_conversation_note(
-    study_id: int,
-    participant_id: int,
-    body: str = Form(..., max_length=10000),
-    u=Depends(roles("owner", "admin", "researcher")),
-    csrf_ok: None = Depends(csrf_protect),
-    db: Session = Depends(get_db),
-):
-    _create_researcher_conversation_entry(db=db,user=u,study_id=study_id,participant_id=participant_id,body=body,internal_note=True)
-    return RedirectResponse(f"/messages/{study_id}/{participant_id}#internal-notes", 303)
+    db.add(ParticipantMessage(organisation_id=u.organisation_id,study_id=s.id,participant_id=p.id,sender_type="researcher",sender_user_id=u.id,body=body.strip(),internal_note=internal_note)); audit(db,u.organisation_id,u.id,"message.created","participant",p.id,"internal" if internal_note else s.title); db.commit(); return RedirectResponse(f"/participants/{p.id}#messages",303)
 @app.get("/evidence/{evidence_id}")
 def evidence(evidence_id:int,u=Depends(current_user),db:Session=Depends(get_db)):
-    e = resolve_org_scoped_evidence(db, u.organisation_id, evidence_id)
+    e=db.scalar(select(EvidenceFile).where(EvidenceFile.id==evidence_id,EvidenceFile.organisation_id==u.organisation_id));
     if not e: raise HTTPException(404)
     require_study_permission(db,u,study(db,e.study_id,u.organisation_id))
     if e.storage_provider == "azure_blob":
@@ -4324,7 +1888,7 @@ async def defender_storage_webhook(request: Request, db: Session = Depends(get_d
 @app.post("/studies/{study_id}/access")
 def set_study_access(study_id:int,user_id:int=Form(...),permission:str=Form(...),u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id)
-    target=db.scalar(select(User).join(OrganisationMembership, OrganisationMembership.user_id==User.id).where(User.id==user_id,OrganisationMembership.organisation_id==u.organisation_id,OrganisationMembership.is_active==True,User.is_active==True))
+    target=db.scalar(select(User).where(User.id==user_id,User.organisation_id==u.organisation_id,User.is_active==True))
     if not target: raise HTTPException(404,"Researcher not found.")
     if permission not in {"none","view","edit"}: raise HTTPException(400,"Invalid study permission.")
     row=db.scalar(select(StudyAccess).where(StudyAccess.study_id==s.id,StudyAccess.user_id==target.id))
@@ -4340,27 +1904,47 @@ def set_study_access(study_id:int,user_id:int=Form(...),permission:str=Form(...)
 
 @app.get("/researchers",response_class=HTMLResponse)
 def researchers(request:Request,u=Depends(roles("owner","admin")),db:Session=Depends(get_db)):
-    membership_rows=db.execute(select(User,OrganisationMembership).join(OrganisationMembership,OrganisationMembership.user_id==User.id).where(OrganisationMembership.organisation_id==u.organisation_id).order_by(User.name)).all(); users=[CurrentUser(identity,membership) for identity,membership in membership_rows]; invs=db.scalars(select(Invitation).where(Invitation.organisation_id==u.organisation_id).order_by(Invitation.created_at.desc())).all(); return render(request,"researchers.html",user=u,users=users,invitations=invs,roles=[x.value for x in Role])
+    users=db.scalars(select(User).where(User.organisation_id==u.organisation_id).order_by(User.name)).all(); invs=db.scalars(select(Invitation).where(Invitation.organisation_id==u.organisation_id).order_by(Invitation.created_at.desc())).all(); return render(request,"researchers.html",user=u,users=users,invitations=invs,roles=[x.value for x in Role])
 @app.post("/researchers/invite")
 def invite_researcher(name:str=Form(...),email:str=Form(...),role:str=Form("researcher"),u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     enum_value(role,Role,"role"); email=email.lower().strip()
-    existing_user=db.scalar(select(User).where(func.lower(User.email)==email))
-    if existing_user and db.scalar(select(OrganisationMembership.id).where(OrganisationMembership.user_id==existing_user.id,OrganisationMembership.organisation_id==u.organisation_id)): raise HTTPException(400,"This person already belongs to the organisation.")
+    if db.scalar(select(User.id).where(User.organisation_id==u.organisation_id,User.email==email)): raise HTTPException(400,"A user already exists.")
     live=db.scalar(select(Invitation.id).where(Invitation.organisation_id==u.organisation_id,Invitation.email==email,Invitation.accepted_at.is_(None),Invitation.revoked_at.is_(None),Invitation.expires_at>now()))
     if live: raise HTTPException(400,"A live invitation already exists.")
-    raw=new_token(); inv=Invitation(organisation_id=u.organisation_id,email=email,name=name.strip(),role=role,token_hash=token_hash(raw),expires_at=now()+timedelta(hours=48),invited_by_id=u.id); db.add(inv); db.flush(); queue_email(db,u.organisation_id,email,"Citizen Centric by Politis: Activate your account",f"Activate your Citizen Centric account: {settings.base_url}/accept-invitation?token={raw}"); db.commit(); return RedirectResponse("/researchers",303)
+    raw = new_token()
+    accept_url = f"{settings.base_url}/accept-invitation?token={raw}"
+    inv = Invitation(
+        organisation_id=u.organisation_id,
+        email=email,
+        name=name.strip(),
+        role=role,
+        token_hash=token_hash(raw),
+        expires_at=now()+timedelta(hours=max(1, settings.researcher_invitation_expiry_hours)),
+        invited_by_id=u.id,
+    )
+    db.add(inv)
+    db.flush()
+    queue_email(
+        db,
+        u.organisation_id,
+        email,
+        "Citizen Centric by Politis: Activate your account",
+        f"Activate your Citizen Centric account: {accept_url}",
+        persisted_body=redact_token_links(f"Activate your Citizen Centric account: {accept_url}"),
+    )
+    db.commit()
+    return RedirectResponse("/researchers",303)
 
 
 @app.post("/researchers/{user_id}/disable")
 def disable_researcher_account(user_id:int,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    row = db.execute(select(User,OrganisationMembership).join(OrganisationMembership,OrganisationMembership.user_id==User.id).where(User.id==user_id,OrganisationMembership.organisation_id==u.organisation_id)).first()
-    if not row:
+    target = db.scalar(select(User).where(User.id==user_id,User.organisation_id==u.organisation_id))
+    if not target:
         raise HTTPException(404, "User not found.")
-    target, membership = row
     if target.id == u.id:
         raise HTTPException(400, "You cannot disable your own account.")
-    if membership.is_active:
-        membership.is_active = False
+    if target.is_active:
+        target.is_active = False
         bump_session_version(target)
         audit(db,u.organisation_id,u.id,"auth.account_disabled","user",target.id,target.email)
     db.commit()
@@ -4369,22 +1953,24 @@ def disable_researcher_account(user_id:int,u=Depends(roles("owner","admin")),csr
 
 @app.post("/researchers/{user_id}/reset-password")
 def admin_reset_researcher_password(user_id:int,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    target = db.scalar(select(User).join(OrganisationMembership,OrganisationMembership.user_id==User.id).where(User.id==user_id,OrganisationMembership.organisation_id==u.organisation_id,OrganisationMembership.is_active==True))
+    target = db.scalar(select(User).where(User.id==user_id,User.organisation_id==u.organisation_id))
     if not target:
         raise HTTPException(404, "User not found.")
     if not target.is_active:
         raise HTTPException(400, "Disabled accounts cannot receive reset links.")
     raw = new_token()
-    db.add(PasswordReset(user_id=target.id, token_hash=token_hash(raw), expires_at=now()+timedelta(hours=1)))
+    reset_url = f"{settings.base_url}/reset-password?token={raw}"
+    db.add(PasswordReset(user_id=target.id, token_hash=token_hash(raw), expires_at=now()+timedelta(minutes=max(1, settings.password_reset_token_minutes))))
     target.failed_login_count = 0
     target.locked_until = None
     bump_session_version(target)
     queue_email(
         db,
-        u.organisation_id,
+        target.organisation_id,
         target.email,
         "Citizen Centric by Politis: Reset your password",
-        f"Reset your Citizen Centric password: {settings.base_url}/reset-password?token={raw}",
+                f"Reset your Citizen Centric password: {reset_url}",
+                persisted_body=redact_token_links(f"Reset your Citizen Centric password: {reset_url}"),
     )
     audit(db,u.organisation_id,u.id,"auth.admin_password_reset","user",target.id,target.email)
     db.commit()
@@ -4401,13 +1987,13 @@ def accept_page(request:Request,token:str="",db:Session=Depends(get_db)):
         raw_session = create_public_auth_session(
             db,
             scope=PUBLIC_SCOPE_RESEARCHER_INVITE,
-            ttl_seconds=60 * 60,
+            ttl_seconds=max(60, settings.public_auth_session_researcher_invite_minutes * 60),
             invitation_id=inv.id,
         )
         record_token_redemption(db, PUBLIC_SCOPE_RESEARCHER_INVITE, token)
         db.commit()
         response = RedirectResponse("/accept-invitation", 303)
-        set_public_auth_cookie(response, raw_session, 60 * 60)
+        set_public_auth_cookie(response, raw_session, max(60, settings.public_auth_session_researcher_invite_minutes * 60))
         return response
 
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_RESEARCHER_INVITE)
@@ -4415,21 +2001,7 @@ def accept_page(request:Request,token:str="",db:Session=Depends(get_db)):
         return render(request,"accept.html",invitation=None,valid=False)
     inv = db.get(Invitation, session_row.invitation_id)
     valid = bool(inv and not inv.accepted_at and not inv.revoked_at and unexpired(inv.expires_at))
-    existing_identity = bool(
-        valid
-        and db.scalar(
-            select(User.id).where(
-                func.lower(User.email) == inv.email.lower()
-            )
-        )
-    )
-    return render(
-        request,
-        "accept.html",
-        invitation=inv,
-        valid=valid,
-        existing_identity=existing_identity,
-    )
+    return render(request,"accept.html",invitation=inv,valid=valid)
 @app.post("/accept-invitation")
 def accept_invitation(request: Request, token:str=Form(""),password:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_RESEARCHER_INVITE)
@@ -4449,16 +2021,7 @@ def accept_invitation(request: Request, token:str=Form(""),password:str=Form(...
     inv = db.get(Invitation, session_row.invitation_id)
     if not inv or inv.accepted_at or inv.revoked_at or not unexpired(inv.expires_at): raise HTTPException(400,"Invitation invalid or expired.")
     if len(password)<10: raise HTTPException(400,"Password must contain at least 10 characters.")
-    u=db.scalar(select(User).where(func.lower(User.email)==inv.email.lower()))
-    if u:
-        if not u.is_active or not u.password_hash or not verify_password(password,u.password_hash):
-            raise HTTPException(400,"Use the password for your existing account.")
-        if db.scalar(select(OrganisationMembership.id).where(OrganisationMembership.user_id==u.id,OrganisationMembership.organisation_id==inv.organisation_id)):
-            raise HTTPException(400,"This account already belongs to the organisation.")
-    else:
-        u=User(organisation_id=inv.organisation_id,name=inv.name,email=inv.email,password_hash=hash_password(password),role=inv.role); db.add(u); db.flush()
-    add_organisation_membership(db,u,inv.organisation_id,inv.role)
-    inv.accepted_at=now(); session_row.revoked_at = now(); db.commit(); r=RedirectResponse("/",303); r.set_cookie("session",encode_session(u.id, u.session_version, inv.organisation_id),httponly=True,samesite="strict",secure=settings.cookie_secure,max_age=43200); clear_public_auth_cookie(r); return r
+    u=User(organisation_id=inv.organisation_id,name=inv.name,email=inv.email,password_hash=hash_password(password),role=inv.role); db.add(u); db.flush(); inv.accepted_at=now(); session_row.revoked_at = now(); db.commit(); r=RedirectResponse("/",303); r.set_cookie("session",encode_session(u.id, u.session_version),httponly=True,samesite="strict",secure=settings.cookie_secure,max_age=43200); clear_public_auth_cookie(r); return r
 @app.post("/invitations/{invitation_id}/revoke")
 def revoke_researcher_invite(invitation_id:int,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     inv=db.scalar(select(Invitation).where(Invitation.id==invitation_id,Invitation.organisation_id==u.organisation_id));

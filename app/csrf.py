@@ -1,34 +1,32 @@
+from __future__ import annotations
+
 import secrets
+from typing import Any
 
-from fastapi import Form, HTTPException, Request
-
-CSRF_SESSION_KEY = "_csrf_token"
+from fastapi import HTTPException, Request
 
 
 def get_csrf_token(request: Request) -> str:
-    token = request.session.get(CSRF_SESSION_KEY)
+    token = request.session.get("csrf_token")
     if not token:
         token = secrets.token_urlsafe(32)
-        request.session[CSRF_SESSION_KEY] = token
+        request.session["csrf_token"] = token
     return token
 
 
-def validate_csrf(request: Request, submitted: str | None) -> None:
-    expected = request.session.get(CSRF_SESSION_KEY)
+async def csrf_protect(request: Request, form_data: object | None = None) -> None:
+    expected = request.session.get("csrf_token")
+    payload = form_data or await request.form()
+    token = payload.get("csrf_token") if hasattr(payload, "get") else None
+    if not expected:
+        if token:
+            raise HTTPException(status_code=403, detail="Invalid CSRF token.")
+        raise HTTPException(status_code=422, detail="CSRF token missing")
 
-    if (
-        not expected
-        or not submitted
-        or submitted != expected
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid CSRF token.",
-        )
+    if not token or token != expected:
+        if token:
+            raise HTTPException(status_code=403, detail="Invalid CSRF token.")
+        raise HTTPException(status_code=422, detail="CSRF token missing")
 
 
-async def csrf_protect(
-    request: Request,
-    csrf_token: str = Form(...),
-) -> None:
-    validate_csrf(request, csrf_token)
+__all__ = ["get_csrf_token", "csrf_protect"]
