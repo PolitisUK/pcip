@@ -939,6 +939,8 @@ def startup():
             if "storage_provider" not in evidence_cols: c.execute(text("ALTER TABLE evidence_files ADD COLUMN storage_provider VARCHAR(30) DEFAULT 'local'"))
             if "blob_uri" not in evidence_cols: c.execute(text("ALTER TABLE evidence_files ADD COLUMN blob_uri TEXT DEFAULT ''"))
             if "scan_completed_at" not in evidence_cols: c.execute(text("ALTER TABLE evidence_files ADD COLUMN scan_completed_at DATETIME"))
+            response_cols={r[1] for r in c.execute(text("PRAGMA table_info(activity_responses)"))}
+            if "hashtags_json" not in response_cols: c.execute(text("ALTER TABLE activity_responses ADD COLUMN hashtags_json TEXT DEFAULT '[]'"))
     with SessionLocal() as db:
         if settings.seed_demo_data and not db.scalar(select(func.count(User.id))):
             org=Organisation(name="Politis Demo Council",slug="politis-demo"); db.add(org); db.flush()
@@ -1757,7 +1759,7 @@ def participant_portal(request:Request,token:str="",db:Session=Depends(get_db)):
         except json.JSONDecodeError: response_values[activity_id]={}
     msgs=db.scalars(select(ParticipantMessage).where(ParticipantMessage.study_id==s.id,ParticipantMessage.participant_id==p.id,ParticipantMessage.internal_note==False).order_by(ParticipantMessage.created_at)).all(); return render(request,"participant_portal.html",study=s,participant=p,activities=acts,responses=responses,response_values=response_values,messages=msgs)
 @app.post("/participant-portal/activity/{activity_id}")
-async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+async def submit_activity(request: Request, activity_id:int,token:str=Form(""),action:str=Form("submit"),answer:str=Form(""),choices:str=Form(""),hashtags:str=Form(""),upload:UploadFile|None=File(None),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     form_data = await request.form()
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
     inv = db.get(ParticipantInvitation, session_row.participant_invitation_id) if session_row else None
@@ -1777,6 +1779,15 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
     r=db.scalar(select(ActivityResponse).where(ActivityResponse.activity_id==a.id,ActivityResponse.participant_id==inv.participant_id))
     if not r: r=ActivityResponse(organisation_id=inv.organisation_id,study_id=inv.study_id,activity_id=a.id,participant_id=inv.participant_id); db.add(r); db.flush()
     choice_list=[x.strip() for x in choices.split("|") if x.strip()]; value={"answer":answer,"choices":choice_list}
+    existing_hashtags = r.hashtags if r.hashtags else []
+    if "hashtags" in form_data:
+        provided_hashtags = form_data.get("hashtags")
+        if provided_hashtags is None or str(provided_hashtags).strip() == "":
+            value["hashtags"] = []
+        else:
+            value["hashtags"] = list(dict.fromkeys(existing_hashtags + normalise_hashtags(str(provided_hashtags))))
+    else:
+        value["hashtags"] = existing_hashtags[:]
     if upload and upload.filename:
         original=Path(upload.filename).name
         extension=Path(original).suffix.lower()
@@ -1799,7 +1810,7 @@ async def submit_activity(request: Request, activity_id:int,token:str=Form(""),a
             scan_status,scan_detail="pending","Awaiting Microsoft Defender for Storage on-upload scan."
         ev=EvidenceFile(organisation_id=inv.organisation_id,study_id=inv.study_id,activity_id=a.id,participant_id=inv.participant_id,response_id=r.id,original_name=original,stored_name=stored.key,content_type=upload.content_type or "application/octet-stream",size_bytes=stored.size,sha256_hex=stored.sha256_hex,scan_status=scan_status,scan_detail=scan_detail,storage_provider=stored.provider,blob_uri=stored.uri); db.add(ev); db.flush(); value["evidence_id"]=ev.id
     if a.required and action=="submit" and not answer.strip() and not choice_list and not upload: raise HTTPException(400,"A response is required.")
-    r.value_json=json.dumps(value)
+    r.value_json=json.dumps(value); r.hashtags = value.get("hashtags", [])
     r.status="submitted" if action=="submit" else "draft"; r.submitted_at=now() if action=="submit" else None; audit(db,inv.organisation_id,None,f"activity.{r.status}","activity_response",r.id,str(a.id)); db.commit(); return RedirectResponse("/participant-portal",303)
 @app.post("/participant-portal/message")
 def participant_message(request: Request, token:str=Form(""),body:str=Form(...),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
