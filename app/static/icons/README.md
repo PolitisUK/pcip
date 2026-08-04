@@ -1,18 +1,13 @@
-# Citizen Centric mobile application icons
+# Mobile application icons
 
-Production application icons are intentionally absent until branding and the
-final application identity are approved.
+Production icons are intentionally not committed until branding is approved.
 
-Future assets are expected to include:
+The following assets will eventually be required:
 
-- 192 × 192 PNG web application icon;
-- 512 × 512 PNG web application icon;
-- a separate maskable web application icon;
-- Apple application icon asset catalogue;
-- Android adaptive foreground and background assets;
-- launch and splash-screen artwork where required.
+- icon-192.png
+- icon-512.png
+- Apple touch icons
+- Android adaptive icons
+- Splash screen assets
 
-Do not upscale a small existing logo or permanently register application
-identifiers merely to generate placeholder assets.
-
-The web-app manifest must reference only files that actually exist.
+Placeholder references are used only during development.

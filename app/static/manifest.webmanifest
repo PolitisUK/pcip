@@ -2,16 +2,29 @@
   "name": "Citizen Centric Participant",
   "short_name": "Citizen Centric",
   "description": "Secure participant application for invited civic and public-service research participants.",
-  "start_url": "/participant-portal",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "any",
-  "background_color": "#f4f7fb",
-  "theme_color": "#215bb3",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#0f4c81",
   "lang": "en-GB",
   "categories": [
     "productivity",
     "education"
   ],
-  "icons": []
+  "icons": [
+    {
+      "src": "/static/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
 }
