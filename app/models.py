@@ -182,6 +182,31 @@ class Activity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+def normalise_hashtags(value: object) -> list[str]:
+    if isinstance(value, str):
+        raw_items = re.split(r"[\s,]+", value.strip())
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        return []
+
+    tags: list[str] = []
+    for item in raw_items:
+        if not isinstance(item, str):
+            continue
+        cleaned = item.strip().lstrip("#").strip()
+        if not cleaned:
+            continue
+        slug = re.sub(r"[^a-z0-9]+", "-", cleaned.lower()).strip("-")
+        if not slug:
+            continue
+        if slug not in tags:
+            tags.append(slug)
+        if len(tags) >= 8:
+            break
+    return tags
+
+
 class ActivityResponse(Base):
     __tablename__ = "activity_responses"
     __table_args__ = (UniqueConstraint("activity_id", "participant_id"),)
@@ -191,9 +216,24 @@ class ActivityResponse(Base):
     activity_id: Mapped[int] = mapped_column(ForeignKey("activities.id"), index=True)
     participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id"), index=True)
     value_json: Mapped[str] = mapped_column(Text, default="{}")
+    hashtags_json: Mapped[str] = mapped_column(Text, default="[]")
     status: Mapped[str] = mapped_column(String(30), default="draft")
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    @property
+    def hashtags(self) -> list[str]:
+        try:
+            payload = json.loads(self.hashtags_json or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if isinstance(payload, list):
+            return [str(item) for item in payload if str(item).strip()]
+        return []
+
+    @hashtags.setter
+    def hashtags(self, value: object) -> None:
+        self.hashtags_json = json.dumps(normalise_hashtags(value))
 
 
 class EvidenceFile(Base):
