@@ -3,10 +3,11 @@ import { CitizenCentricLogo } from "../components/CitizenCentricLogo";
 
 type ConsentRequiredScreenProps = {
   participantDisplayName?: string;
+  onCheckAgain: () => void;
   onSignOut: () => void;
 };
 
-export function ConsentRequiredScreen({ participantDisplayName, onSignOut }: ConsentRequiredScreenProps) {
+export function ConsentRequiredScreen({ participantDisplayName, onCheckAgain, onSignOut }: ConsentRequiredScreenProps) {
   return (
     <View style={styles.container}>
       <CitizenCentricLogo variant="full" />
@@ -21,11 +22,19 @@ export function ConsentRequiredScreen({ participantDisplayName, onSignOut }: Con
       <Text style={styles.body}>Please complete consent with your research team using your invitation guidance.</Text>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Sign out"
-        onPress={onSignOut}
+        accessibilityLabel="Check consent again"
+        onPress={onCheckAgain}
         style={styles.button}
       >
-        <Text style={styles.buttonText}>Sign out</Text>
+        <Text style={styles.buttonText}>Check again</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Sign out"
+        onPress={onSignOut}
+        style={styles.secondaryButton}
+      >
+        <Text style={styles.secondaryButtonText}>Sign out</Text>
       </Pressable>
     </View>
   );
@@ -59,6 +68,19 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  secondaryButton: {
+    alignSelf: "flex-start",
+    borderRadius: 12,
+    borderColor: "#00573d",
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  secondaryButtonText: {
+    color: "#00573d",
     fontSize: 15,
     fontWeight: "600",
   },

@@ -244,6 +244,14 @@ export class AuthController {
     await this.restoreSession();
   }
 
+  async refreshConsent(): Promise<void> {
+    if (this.state.status !== "consent_required") {
+      return;
+    }
+
+    await this.restoreSession();
+  }
+
   async signOut(): Promise<void> {
     const operationVersion = this.beginOperation();
     this.lastInvitationUrl = null;

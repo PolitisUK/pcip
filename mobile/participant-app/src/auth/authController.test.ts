@@ -147,6 +147,59 @@ describe("AuthController", () => {
     expect(mockedSaveSessionMaterial.mock.calls[0]?.[0]).not.toHaveProperty("invitation_token");
   });
 
+  it("refreshes a pending session into authenticated state after consent is granted", async () => {
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    mockedLoadSessionMaterial.mockResolvedValue({
+      accessToken: "token-abc",
+      expiresAt,
+      participantId: 12,
+      participantDisplayName: "Pat",
+      consentStatus: "pending",
+      studyScope: [22],
+    });
+    mockedGetCurrentSession
+      .mockResolvedValueOnce({
+        session: { expires_at: expiresAt, revocable: true },
+        participant: {
+          participant_id: 12,
+          display_name: "Pat",
+          consent_status: "pending",
+        },
+        study_scope: [22],
+      })
+      .mockResolvedValueOnce({
+        session: { expires_at: expiresAt, revocable: true },
+        participant: {
+          participant_id: 12,
+          display_name: "Pat",
+          consent_status: "granted",
+        },
+        study_scope: [22],
+      });
+
+    const { controller } = createControllerWithStates();
+    await controller.initialise();
+    expect(controller.getState()).toEqual({
+      status: "consent_required",
+      participantDisplayName: "Pat",
+      studyId: 22,
+    });
+
+    await controller.refreshConsent();
+
+    expect(mockedGetCurrentSession).toHaveBeenCalledTimes(2);
+    expect(mockedGetCurrentSession).toHaveBeenLastCalledWith("token-abc");
+    expect(mockedSaveSessionMaterial).toHaveBeenLastCalledWith(
+      expect.objectContaining({ consentStatus: "granted" }),
+    );
+    expect(controller.getState()).toEqual({
+      status: "authenticated",
+      participantDisplayName: "Pat",
+      participantId: 12,
+      studyScope: [22],
+    });
+  });
+
   it("maps invalid invitation error", async () => {
     mockedLinking.getInitialURL.mockResolvedValue(
       "https://participant.staging.politis.co.uk/join-study?token=bad"

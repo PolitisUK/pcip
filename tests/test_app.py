@@ -4721,6 +4721,49 @@ def test_participant_api_exchange_creates_hashed_bearer_session_without_cookie_a
         assert raw_api_token not in (event.detail or '')
 
 
+def test_participant_api_existing_session_reflects_consent_granted_after_web_acceptance():
+    token, participant_id, study_id = _create_participant_invitation_for_api('api-auth-consent-refresh')
+
+    with client:
+        exchange = _exchange_participant_api_session(token)
+        assert exchange.status_code == 200
+        api_token = exchange.json()['session']['access_token']
+
+        pending = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert pending.status_code == 200
+        assert pending.json()['participant']['consent_status'] == 'pending'
+
+        landing = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert landing.status_code == 303
+        accepted = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert accepted.status_code == 303
+
+        refreshed = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert refreshed.status_code == 200
+        assert refreshed.json()['participant'] == {
+            'participant_id': participant_id,
+            'display_name': 'Participant API Auth',
+            'consent_status': 'granted',
+        }
+        assert refreshed.json()['study_scope'] == [study_id]
+
+        studies = client.get(
+            '/api/v1/participant/studies',
+            headers={'Authorization': f'Bearer {api_token}'},
+            follow_redirects=False,
+        )
+        assert studies.status_code == 200
+        assert studies.json()['data'][0]['study_id'] == study_id
+
+
 def test_participant_api_exchange_rejects_unknown_expired_and_revoked_invitation_tokens():
     from app.models import ParticipantInvitation
     from app.security import token_hash

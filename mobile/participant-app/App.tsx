@@ -5,7 +5,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
 import * as Notifications from "expo-notifications";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { ActivityIndicator, AppState, StyleSheet, View } from "react-native";
 
 import { AuthController } from "./src/auth/authController";
 import type { AuthState } from "./src/auth/types";
@@ -47,6 +47,16 @@ export default function App() {
     };
   }, [authController]);
 
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "active" && authController.getState().status === "consent_required") {
+        void authController.refreshConsent();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [authController]);
+
   if (authState.status === "initialising") {
     return (
       <View accessibilityLabel="Loading Citizen Centric" style={styles.loadingContainer}>
@@ -77,6 +87,7 @@ export default function App() {
             {() => (
               <ConsentRequiredScreen
                 participantDisplayName={authState.participantDisplayName}
+                onCheckAgain={() => void authController.refreshConsent()}
                 onSignOut={() => void authController.signOut()}
               />
             )}
