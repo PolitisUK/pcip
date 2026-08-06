@@ -7,7 +7,18 @@
     "icon": "./assets/citizen-centric-app-icon.png",
     "scheme": "pcip-participant",
     "plugins": [
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          },
+          "ios": {
+            "deploymentTarget": "16.4"
+          }
+        }
+      ]
     ],
     "userInterfaceStyle": "light",
     "splash": {
@@ -18,14 +29,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "uk.politis.pcip.participant.staging",
-      "deploymentTarget": "15.0",
       "associatedDomains": [
         "applinks:participant.staging.politis.co.uk"
       ]
     },
     "android": {
       "package": "uk.politis.pcip.participant.staging",
-      "minSdkVersion": 26,
       "intentFilters": [
         {
           "action": "VIEW",
