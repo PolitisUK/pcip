@@ -9,7 +9,6 @@ import { ActivityIndicator, AppState, StyleSheet, View } from "react-native";
 
 import { AuthController } from "./src/auth/authController";
 import type { AuthState } from "./src/auth/types";
-import { linking } from "./src/navigation/deepLinks";
 import { routeNameForAuthState } from "./src/navigation/appStateRouter";
 import type { RootStackParamList } from "./src/navigation/types";
 import { CitizenCentricLogo } from "./src/components/CitizenCentricLogo";
@@ -69,7 +68,7 @@ export default function App() {
   const currentRoute = routeNameForAuthState(authState);
 
   return (
-    <NavigationContainer linking={linking} fallback={<ActivityIndicator />}>
+    <NavigationContainer fallback={<ActivityIndicator />}>
       <StatusBar style="dark" />
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {currentRoute === "SignedOut" && (
