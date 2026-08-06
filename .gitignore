@@ -28,6 +28,8 @@ data/uploads/
 # Generated and backup files
 *.bak
 *.backup
+*.backup*
+*-backup
 infra/main.json
 
 # macOS
