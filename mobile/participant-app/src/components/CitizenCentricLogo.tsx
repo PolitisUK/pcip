@@ -5,7 +5,7 @@ type CitizenCentricLogoProps = {
   style?: ImageStyle;
 };
 
-const FULL_LOGO = require("../../assets/citizen-centric-logo.png");
+const FULL_LOGO = require("../../assets/citizen-centric-logo-transparent.png");
 const COMPACT_LOGO = require("../../assets/citizen-centric-logo-compact.png");
 
 export function CitizenCentricLogo({ variant, style }: CitizenCentricLogoProps) {

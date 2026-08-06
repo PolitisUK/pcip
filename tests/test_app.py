@@ -117,6 +117,21 @@ def test_login_and_dashboard():
         assert d.status_code == 200 and 'Seven-day town centre diary' in d.text
 
 
+def test_login_uses_transparent_citizen_centric_wordmark():
+    with client:
+        page = client.get('/login')
+        assert page.status_code == 200
+        assert 'src="/static/citizen-centric-logo.png"' in page.text
+        assert 'alt="Citizen Centric by Politis"' in page.text
+        assert 'politis_horizontal_master.png' not in page.text
+
+    wordmark = Path('app/static/citizen-centric-logo.png')
+    assert wordmark.exists()
+    png = wordmark.read_bytes()
+    assert png.startswith(b'\x89PNG\r\n\x1a\n')
+    assert png[25] == 6  # PNG RGBA colour type.
+
+
 def test_public_homepage_is_available_without_authentication_and_keeps_workspace_data_private():
     with client:
         client.cookies.clear()

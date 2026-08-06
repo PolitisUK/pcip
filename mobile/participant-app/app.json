@@ -4,12 +4,17 @@
     "slug": "citizen-centric-participant-staging",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/citizen-centric-brand-mark.png",
+    "icon": "./assets/citizen-centric-app-icon.png",
     "scheme": "pcip-participant",
     "plugins": [
       "expo-notifications"
     ],
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#f7faf8"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "uk.politis.pcip.participant.staging",
@@ -40,8 +45,7 @@
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/citizen-centric-brand-mark.png",
-        "backgroundImage": "./assets/android-icon-background.png",
+        "foregroundImage": "./assets/android-icon-foreground.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false
