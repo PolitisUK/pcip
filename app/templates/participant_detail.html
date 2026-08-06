@@ -96,12 +96,22 @@
 <section class="card card--data section">
   <h2>Activity responses</h2>
   <table class="table">
-    <thead><tr><th>Study</th><th>Status</th><th>Updated</th></tr></thead>
+    <thead><tr><th>Activity</th><th>Study</th><th>Response</th><th>Status</th><th>Updated</th></tr></thead>
     <tbody>
-      {% for r in responses %}
-      <tr><td>{{ studies[r.study_id].title }}</td><td><span class="badge {{ r.status }}">{{ r.status|title }}</span></td><td>{{ r.updated_at.strftime('%d %b %Y %H:%M') }}</td></tr>
+      {% for item in response_views %}
+      <tr>
+        <td>{{ item.activity.title if item.activity else 'Activity ' ~ item.row.activity_id }}</td>
+        <td>{{ studies[item.row.study_id].title }}</td>
+        <td>
+          {% if item.answer %}<p class="response-answer">{{ item.answer }}</p>{% endif %}
+          {% if item.choices %}<ul class="response-choices">{% for choice in item.choices %}<li>{{ choice }}</li>{% endfor %}</ul>{% endif %}
+          {% if not item.answer and not item.choices %}<span class="muted">No response content</span>{% endif %}
+        </td>
+        <td><span class="badge {{ item.row.status }}">{{ item.row.status|title }}</span></td>
+        <td>{{ item.row.updated_at.strftime('%d %b %Y %H:%M') }}</td>
+      </tr>
       {% else %}
-      <tr><td colspan="3" class="empty">No responses yet.</td></tr>
+      <tr><td colspan="5" class="empty">No responses yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>

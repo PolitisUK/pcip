@@ -6340,6 +6340,10 @@ def test_participant_api_activity_response_submit_sets_final_state_and_is_idempo
         assert portal_items[context['activity_id']]['status'] == 'submitted'
         assert portal_items[context['activity_id']]['submitted_at'] is not None
 
+        researcher_detail = client.get(f"/participants/{context['participant_id']}")
+        assert researcher_detail.status_code == 200
+        assert 'final answer' in researcher_detail.text
+
     with SessionLocal() as db:
         row = db.scalar(
             select(ActivityResponse).where(

@@ -1986,9 +1986,31 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
         for message in messages:
             if message.sender_type == "participant" and not message.internal_note and message.read_at is None:
                 message.read_at = now()
+    activity_ids = {response.activity_id for response in responses}
+    activities = {
+        activity.id: activity
+        for activity in db.scalars(
+            select(Activity).where(
+                Activity.organisation_id == u.organisation_id,
+                Activity.id.in_(activity_ids),
+            )
+        ).all()
+    } if activity_ids else {}
+    response_views = []
+    for response_row in responses:
+        try:
+            response_value = json.loads(response_row.value_json or "{}")
+        except (TypeError, json.JSONDecodeError):
+            response_value = {}
+        response_views.append({
+            "row": response_row,
+            "activity": activities.get(response_row.activity_id),
+            "answer": response_value.get("answer") if isinstance(response_value, dict) else None,
+            "choices": response_value.get("choices", []) if isinstance(response_value, dict) else [],
+        })
     privacy_counts = participant_related_counts(db, p.id, u.organisation_id) if u.role in {"owner", "admin"} else None
     privacy_workflow_token = request.session.get(privacy_workflow_key(p.id)) if u.role in {"owner", "admin"} else None
-    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=[m for m in messages if not m.internal_note],internal_notes=[m for m in messages if m.internal_note],statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
+    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,response_views=response_views,evidence_files=evidence_files,messages=[m for m in messages if not m.internal_note],internal_notes=[m for m in messages if m.internal_note],statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
 
 
 @app.get("/participants/{participant_id}/export")
