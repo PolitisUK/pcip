@@ -1920,9 +1920,33 @@ def create_participant(reference:str=Form(...),name:str=Form(...),email:str=Form
     enum_value(status_value,ParticipantStatus,"participant status"); enum_value(consent_status,ConsentStatus,"consent status")
     if communication_preference not in COMMUNICATION_PREFERENCES: raise HTTPException(400,"Invalid communication preference.")
     cleaned_reference=nonblank(reference,"Participant reference").upper(); cleaned_name=nonblank(name,"Participant name",3); cleaned_email=validated_email(email)
-    row=Participant(organisation_id=u.organisation_id,reference=cleaned_reference,name=cleaned_name,email=cleaned_email,phone=phone.strip() or None,status=status_value,consent_status=consent_status,communication_preference=communication_preference,tags=tags.strip(),notes=notes.strip(),created_by_id=u.id); db.add(row)
+    row=Participant(
+        organisation_id=u.organisation_id,
+        reference=cleaned_reference,
+        name=cleaned_name,
+        email=cleaned_email,
+        phone=phone.strip() or None,
+        status=status_value,
+        consent_status=consent_status,
+        communication_preference=communication_preference,
+        tags=tags.strip(),
+        notes=notes.strip(),
+        created_by_id=u.id,
+    )
+    db.add(row)
     try: db.flush(); audit(db,u.organisation_id,u.id,"participant.created","participant",row.id,row.reference); db.commit()
-    except Exception: db.rollback(); raise HTTPException(400,"Participant reference must be unique.")
+    except IntegrityError as exc:
+        db.rollback()
+        error_text = str(getattr(exc, "orig", exc)).lower()
+        if "unique" in error_text and "reference" in error_text:
+            raise HTTPException(
+                400,
+                "Participant reference must be unique.",
+            ) from exc
+        raise HTTPException(
+            400,
+            "The participant could not be created. Please check the details and try again.",
+        ) from exc
     return RedirectResponse(f"/participants/{row.id}",303)
 @app.post("/participants/import")
 def import_participants(file:UploadFile=File(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
