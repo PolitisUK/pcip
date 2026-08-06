@@ -12,7 +12,7 @@ function withDefault(value: string | undefined, fallback: string): string {
   return cleaned || fallback;
 }
 
-const API_BASE_URL = withDefault(process.env.EXPO_PUBLIC_API_BASE_URL, "https://staging.example.invalid");
+const API_BASE_URL = withDefault(process.env.EXPO_PUBLIC_API_BASE_URL, "https://participant.staging.politis.co.uk");
 const DEEP_LINK_HOST = withDefault(process.env.EXPO_PUBLIC_DEEP_LINK_HOST, "participant.staging.politis.co.uk");
 const DEEP_LINK_SCHEME = withDefault(process.env.EXPO_PUBLIC_DEEP_LINK_SCHEME, "pcip-participant");
 const PRIVACY_URL = withDefault(process.env.EXPO_PUBLIC_PRIVACY_URL, "https://citizencentric.co.uk/privacy");
