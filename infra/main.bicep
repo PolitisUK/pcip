@@ -25,7 +25,7 @@ param defenderMonthlyScanCapGB int = 10
 param runMigrations bool = false
 
 var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, prefix, environmentName)
-var compact = toLower(replace('${prefix}${environmentName}${take(suffix, 8)}', '-', ''))
+var compact = padLeft(toLower(replace('${prefix}${environmentName}${take(suffix, 8)}', '-', '')), 5, '0')
 var storageName = take('${compact}st', 24)
 var registryName = take('${compact}acr', 50)
 var appName = '${prefix}-${environmentName}-${take(suffix, 6)}'
@@ -38,6 +38,7 @@ var postgresName = take('${prefix}-${environmentName}-${take(suffix, 8)}-pg', 63
 var databaseName = 'pcip'
 var databaseUrl = 'postgresql+psycopg://${postgresAdminUser}:${uriComponent(postgresAdminPassword)}@${postgresName}.postgres.database.azure.com:5432/${databaseName}?sslmode=require'
 var imageName = '${registryName}.azurecr.io/pcip:${containerImageTag}'
+var entraClientSecretSetting = empty(entraClientSecret) ? '' : '@Microsoft.KeyVault(SecretUri=${entraSecret!.properties.secretUriWithVersion})'
 
 resource log 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logName
@@ -218,7 +219,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'ENTRA_ENABLED', value: string(!empty(entraClientId)) }
         { name: 'ENTRA_TENANT_ID', value: entraTenantId }
         { name: 'ENTRA_CLIENT_ID', value: entraClientId }
-        { name: 'ENTRA_CLIENT_SECRET', value: empty(entraClientSecret) ? '' : '@Microsoft.KeyVault(SecretUri=${entraSecret.properties.secretUriWithVersion})' }
+        { name: 'ENTRA_CLIENT_SECRET', value: entraClientSecretSetting }
         { name: 'ENTRA_ALLOWED_DOMAINS', value: entraAllowedDomains }
         { name: 'ENTRA_DEFAULT_ORGANISATION_SLUG', value: entraDefaultOrganisationSlug }
         { name: 'ENTRA_AUTO_PROVISION', value: 'false' }
