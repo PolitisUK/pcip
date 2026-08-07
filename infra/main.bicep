@@ -30,6 +30,10 @@ var storageName = take('${compact}st', 24)
 var registryName = take('${compact}acr', 50)
 var appName = '${prefix}-${environmentName}-${take(suffix, 6)}'
 var appHostName = '${appName}.azurewebsites.net'
+var isProduction = toLower(environmentName) == 'production'
+var publicHostName = isProduction ? 'citizencentric.co.uk' : appHostName
+var trustedHostNames = isProduction ? '${appHostName},citizencentric.co.uk,www.citizencentric.co.uk' : appHostName
+var allowedOriginList = isProduction ? 'https://${appHostName},https://citizencentric.co.uk,https://www.citizencentric.co.uk' : 'https://${appHostName}'
 var planName = '${appName}-plan'
 var insightsName = '${appName}-appi'
 var logName = '${appName}-log'
@@ -202,11 +206,11 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'SEED_DEMO_DATA', value: 'false' }
         { name: 'DATABASE_URL', value: '@Microsoft.KeyVault(SecretUri=${dbSecret.properties.secretUriWithVersion})' }
         { name: 'SECRET_KEY', value: '@Microsoft.KeyVault(SecretUri=${sessionSecret.properties.secretUriWithVersion})' }
-        { name: 'BASE_URL', value: 'https://${appHostName}' }
+        { name: 'BASE_URL', value: 'https://${publicHostName}' }
         { name: 'COOKIE_SECURE', value: 'true' }
         { name: 'SESSION_COOKIE_SECURE', value: 'true' }
-        { name: 'TRUSTED_HOSTS', value: appHostName }
-        { name: 'ALLOWED_ORIGINS', value: 'https://${appHostName}' }
+        { name: 'TRUSTED_HOSTS', value: trustedHostNames }
+        { name: 'ALLOWED_ORIGINS', value: allowedOriginList }
         { name: 'STORAGE_BACKEND', value: 'azure_blob' }
         { name: 'AZURE_STORAGE_ACCOUNT_URL', value: storage.properties.primaryEndpoints.blob }
         { name: 'AZURE_STORAGE_CONTAINER', value: evidenceContainer.name }
