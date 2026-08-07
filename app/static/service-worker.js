@@ -1,11 +1,12 @@
 "use strict";
 
-const CACHE_NAME = "citizen-centric-public-static-v1";
+const CACHE_NAME = "citizen-centric-public-static-v2";
 const OFFLINE_URL = "/static/offline.html";
 
 const PUBLIC_STATIC_ASSETS = [
   OFFLINE_URL,
-  "/static/politis_symbol_colour.png"
+  "/static/citizen-centric-logo.png",
+  "/static/citizen-centric-logo-compact.png"
 ];
 
 self.addEventListener("install", function (event) {
