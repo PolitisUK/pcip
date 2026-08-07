@@ -50,6 +50,7 @@ jobs:
             entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET }}
             entraAllowedDomains=${{ vars.ENTRA_ALLOWED_DOMAINS }}
             entraDefaultOrganisationSlug=${{ vars.ENTRA_DEFAULT_ORGANISATION_SLUG }}
+            runMigrations=${{ inputs.environment == 'Production' || inputs.environment == 'production' }}
           deploymentName: pcip-${{ inputs.environment }}-${{ github.run_number }}
       - name: Resolve live application resources
         id: resources
@@ -103,7 +104,8 @@ jobs:
             --settings \
               BASE_URL="https://citizencentric.co.uk" \
               TRUSTED_HOSTS="citizencentric.co.uk,www.citizencentric.co.uk,citizencentric-pcip-prod.azurewebsites.net" \
-              ALLOWED_ORIGINS="https://citizencentric.co.uk,https://www.citizencentric.co.uk,https://citizencentric-pcip-prod.azurewebsites.net"
+              ALLOWED_ORIGINS="https://citizencentric.co.uk,https://www.citizencentric.co.uk,https://citizencentric-pcip-prod.azurewebsites.net" \
+              RUN_MIGRATIONS="true"
       - name: Restart application
         run: az webapp restart -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ steps.resources.outputs.app }}"
       - name: Verify application readiness
