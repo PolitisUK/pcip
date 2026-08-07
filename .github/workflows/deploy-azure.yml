@@ -51,16 +51,59 @@ jobs:
             entraAllowedDomains=${{ vars.ENTRA_ALLOWED_DOMAINS }}
             entraDefaultOrganisationSlug=${{ vars.ENTRA_DEFAULT_ORGANISATION_SLUG }}
           deploymentName: pcip-${{ inputs.environment }}-${{ github.run_number }}
-      - name: Resolve deployment resources
+      - name: Resolve live application resources
         id: resources
         shell: bash
         run: |
-          ACR=$(az acr list -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
-          APP=$(az webapp list -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
-          echo "acr=$ACR" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.environment }}" = "Production" ] || [ "${{ inputs.environment }}" = "production" ]; then
+            APP="citizencentric-pcip-prod"
+          else
+            APP=$(az webapp list -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
+          fi
+
+          LINUX_FX_VERSION=$(az webapp config show \
+            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -n "$APP" \
+            --query linuxFxVersion \
+            -o tsv)
+
+          CURRENT_IMAGE=${LINUX_FX_VERSION#DOCKER|}
+          ACR_LOGIN_SERVER=${CURRENT_IMAGE%%/*}
+          IMAGE_WITH_TAG=${CURRENT_IMAGE#*/}
+          IMAGE_REPOSITORY=${IMAGE_WITH_TAG%%:*}
+          ACR=${ACR_LOGIN_SERVER%%.*}
+
+          if [ -z "$APP" ] || [ -z "$ACR" ] || [ -z "$IMAGE_REPOSITORY" ]; then
+            echo "Could not resolve live App Service container configuration." >&2
+            exit 1
+          fi
+
           echo "app=$APP" >> "$GITHUB_OUTPUT"
-      - name: Build image in Azure Container Registry
-        run: az acr build --registry "${{ steps.resources.outputs.acr }}" --image "pcip:${{ inputs.image_tag }}" .
+          echo "acr=$ACR" >> "$GITHUB_OUTPUT"
+          echo "acr_login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+          echo "image_repository=$IMAGE_REPOSITORY" >> "$GITHUB_OUTPUT"
+      - name: Build image in live Azure Container Registry
+        run: >-
+          az acr build
+          --registry "${{ steps.resources.outputs.acr }}"
+          --image "${{ steps.resources.outputs.image_repository }}:${{ inputs.image_tag }}"
+          .
+      - name: Point live application at new image
+        run: >-
+          az webapp config set
+          -g "${{ vars.AZURE_RESOURCE_GROUP }}"
+          -n "${{ steps.resources.outputs.app }}"
+          --linux-fx-version "DOCKER|${{ steps.resources.outputs.acr_login_server }}/${{ steps.resources.outputs.image_repository }}:${{ inputs.image_tag }}"
+      - name: Preserve production custom domain settings
+        if: ${{ inputs.environment == 'Production' || inputs.environment == 'production' }}
+        run: |
+          az webapp config appsettings set \
+            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -n "${{ steps.resources.outputs.app }}" \
+            --settings \
+              BASE_URL="https://citizencentric.co.uk" \
+              TRUSTED_HOSTS="citizencentric.co.uk,www.citizencentric.co.uk,citizencentric-pcip-prod.azurewebsites.net" \
+              ALLOWED_ORIGINS="https://citizencentric.co.uk,https://www.citizencentric.co.uk,https://citizencentric-pcip-prod.azurewebsites.net"
       - name: Restart application
         run: az webapp restart -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ steps.resources.outputs.app }}"
       - name: Verify application readiness
