@@ -50,6 +50,7 @@ jobs:
             entraAllowedDomains=${{ vars.ENTRA_ALLOWED_DOMAINS }}
             entraDefaultOrganisationSlug=${{ vars.ENTRA_DEFAULT_ORGANISATION_SLUG }}
           deploymentName: pcip-${{ inputs.environment }}-${{ github.run_number }}
+          failOnStdErr: false
       - name: Resolve deployment resources
         id: resources
         shell: bash
