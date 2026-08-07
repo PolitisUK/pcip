@@ -101,12 +101,9 @@ class AzureBlobStorage:
         self.container = self.service.get_container_client(self.container_name)
 
     def ensure_ready(self) -> None:
-        from azure.core.exceptions import ResourceExistsError
-
-        try:
-            self.container.create_container()
-        except ResourceExistsError:
-            pass
+        # Azure infrastructure provisions the container. Application startup
+        # must not require permission to create or mutate infrastructure.
+        return None
 
     def save_stream(self, stream: BinaryIO, original_name: str, max_bytes: int) -> StoredObject:
         suffix = Path(original_name).suffix.lower()[:12]
