@@ -10,6 +10,14 @@ on:
         description: Container image tag
         required: true
         default: 0.6.0
+      run_migrations:
+        description: Run database migrations on startup
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 permissions:
   id-token: write
   contents: read
@@ -30,7 +38,7 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Deploy Azure resources
+      - name: Validate Azure resources (what-if)
         uses: azure/arm-deploy@v2
         with:
           scope: resourcegroup
@@ -49,14 +57,45 @@ jobs:
             entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET }}
             entraAllowedDomains=${{ vars.ENTRA_ALLOWED_DOMAINS }}
             entraDefaultOrganisationSlug=${{ vars.ENTRA_DEFAULT_ORGANISATION_SLUG }}
+            runMigrations=${{ inputs.run_migrations }}
+          deploymentName: pcip-${{ inputs.environment }}-${{ github.run_number }}-whatif
+          additionalArguments: --what-if
+          failOnStdErr: false
+      - name: Deploy Azure resources
+        id: deploy
+        uses: azure/arm-deploy@v2
+        with:
+          scope: resourcegroup
+          resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
+          template: infra/main.bicep
+          parameters: >-
+            prefix=${{ vars.PCIP_PREFIX }}
+            environmentName=${{ inputs.environment }}
+            containerImageTag=${{ inputs.image_tag }}
+            postgresAdminUser=${{ vars.POSTGRES_ADMIN_USER }}
+            postgresAdminPassword=${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+            secretKey=${{ secrets.PCIP_SECRET_KEY }}
+            defenderWebhookSecret=${{ secrets.DEFENDER_WEBHOOK_SECRET }}
+            entraTenantId=${{ vars.ENTRA_TENANT_ID }}
+            entraClientId=${{ vars.ENTRA_CLIENT_ID }}
+            entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET }}
+            entraAllowedDomains=${{ vars.ENTRA_ALLOWED_DOMAINS }}
+            entraDefaultOrganisationSlug=${{ vars.ENTRA_DEFAULT_ORGANISATION_SLUG }}
+            runMigrations=${{ inputs.run_migrations }}
           deploymentName: pcip-${{ inputs.environment }}-${{ github.run_number }}
           failOnStdErr: false
       - name: Resolve deployment resources
         id: resources
         shell: bash
         run: |
-          ACR=$(az acr list -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
-          APP=$(az webapp list -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
+          ACR=$(az deployment group show \
+            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -n "pcip-${{ inputs.environment }}-${{ github.run_number }}" \
+            --query properties.outputs.registryName.value -o tsv)
+          APP=$(az deployment group show \
+            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -n "pcip-${{ inputs.environment }}-${{ github.run_number }}" \
+            --query properties.outputs.appName.value -o tsv)
           echo "acr=$ACR" >> "$GITHUB_OUTPUT"
           echo "app=$APP" >> "$GITHUB_OUTPUT"
       - name: Build image in Azure Container Registry
