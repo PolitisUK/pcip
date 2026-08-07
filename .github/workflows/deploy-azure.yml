@@ -36,6 +36,7 @@ jobs:
           scope: resourcegroup
           resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
           template: infra/main.bicep
+          failOnStdErr: false
           parameters: >-
             prefix=${{ vars.PCIP_PREFIX }}
             environmentName=${{ inputs.environment }}
