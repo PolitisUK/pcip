@@ -1,17 +1,9 @@
 from __future__ import annotations
+import json
+import re
 from datetime import datetime, timezone
 from enum import Enum
-from sqlalchemy import (
-    Boolean,
-    DateTime,
-    ForeignKey,
-    Index,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-    func,
-)
+from sqlalchemy import String, DateTime, ForeignKey, Boolean, Text, UniqueConstraint, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -63,9 +55,27 @@ class Organisation(Base):
     slug: Mapped[str] = mapped_column(String(100), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     users: Mapped[list[User]] = relationship(back_populates="organisation")
-    memberships: Mapped[list[OrganisationMembership]] = relationship(
-        back_populates="organisation"
-    )
+
+
+class PublicAuthSession(Base):
+    __tablename__ = "public_auth_sessions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(80), index=True)
+    session_hash: Mapped[str] = mapped_column(String(255), index=True)
+    password_reset_id: Mapped[int | None] = mapped_column(ForeignKey("password_resets.id"), nullable=True, index=True)
+    invitation_id: Mapped[int | None] = mapped_column(ForeignKey("invitations.id"), nullable=True, index=True)
+    participant_invitation_id: Mapped[int | None] = mapped_column(ForeignKey("participant_invitations.id"), nullable=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PublicTokenExchange(Base):
+    __tablename__ = "public_token_exchanges"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(80), index=True)
+    token_hash: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class User(Base):
@@ -79,52 +89,13 @@ class User(Base):
     external_provider: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     external_subject: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    session_version: Mapped[int] = mapped_column(Integer, default=1)
-    failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
-    locked_until: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
     role: Mapped[str] = mapped_column(String(30), default=Role.researcher.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    session_version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     organisation: Mapped[Organisation] = relationship(back_populates="users")
-    memberships: Mapped[list[OrganisationMembership]] = relationship(
-        back_populates="user"
-    )
-
-
-Index("ux_users_email_normalized", func.lower(User.email), unique=True)
-
-
-class OrganisationMembership(Base):
-    __tablename__ = "organisation_memberships"
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "organisation_id",
-            name="uq_organisation_memberships_user_org",
-        ),
-    )
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    organisation_id: Mapped[int] = mapped_column(
-        ForeignKey("organisations.id"),
-        index=True,
-    )
-    role: Mapped[str] = mapped_column(
-        String(30),
-        default=Role.researcher.value,
-    )
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=utcnow,
-    )
-    user: Mapped[User] = relationship(back_populates="memberships")
-    organisation: Mapped[Organisation] = relationship(
-        back_populates="memberships"
-    )
 
 
 class Project(Base):
@@ -175,6 +146,10 @@ class Participant(Base):
     tags: Mapped[str] = mapped_column(Text, default="")
     demographics_json: Mapped[str] = mapped_column(Text, default="{}")
     notes: Mapped[str] = mapped_column(Text, default="")
+    retention_category: Mapped[str] = mapped_column(String(40), default="standard")
+    legal_hold: Mapped[bool] = mapped_column(Boolean, default=False)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scheduled_deletion_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -271,6 +246,20 @@ class ParticipantInvitation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ConsentEvidence(Base):
+    __tablename__ = "consent_evidence"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    consent_version: Mapped[str] = mapped_column(String(30), default="v1")
+    privacy_notice_version: Mapped[str] = mapped_column(String(30), default="v1")
+    consent_wording_hash: Mapped[str] = mapped_column(String(64), default="")
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Invitation(Base):
     __tablename__ = "invitations"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -294,45 +283,6 @@ class PasswordReset(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class PublicTokenExchange(Base):
-    __tablename__ = "public_token_exchanges"
-    __table_args__ = (UniqueConstraint("scope", "token_hash"),)
-    id: Mapped[int] = mapped_column(primary_key=True)
-    scope: Mapped[str] = mapped_column(String(60), index=True)
-    token_hash: Mapped[str] = mapped_column(String(255), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class PublicAuthSession(Base):
-    __tablename__ = "public_auth_sessions"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    scope: Mapped[str] = mapped_column(String(60), index=True)
-    session_hash: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    password_reset_id: Mapped[int | None] = mapped_column(ForeignKey("password_resets.id"), nullable=True, index=True)
-    invitation_id: Mapped[int | None] = mapped_column(ForeignKey("invitations.id"), nullable=True, index=True)
-    participant_invitation_id: Mapped[int | None] = mapped_column(ForeignKey("participant_invitations.id"), nullable=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-Index(
-    "ux_public_auth_sessions_participant_api_active_invitation",
-    PublicAuthSession.participant_invitation_id,
-    unique=True,
-    postgresql_where=(
-        (PublicAuthSession.scope == "participant_api")
-        & (PublicAuthSession.revoked_at.is_(None))
-        & (PublicAuthSession.participant_invitation_id.is_not(None))
-    ),
-    sqlite_where=(
-        (PublicAuthSession.scope == "participant_api")
-        & (PublicAuthSession.revoked_at.is_(None))
-        & (PublicAuthSession.participant_invitation_id.is_not(None))
-    ),
-)
 
 
 class AuditEvent(Base):

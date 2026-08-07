@@ -3,88 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="light">
   <title>{% block page_title %}{{ app_name }}{% endblock %}</title>
-  <meta name="application-name" content="Citizen Centric">
-  <meta name="theme-color" content="#215bb3">
-  {% block head_meta %}{% endblock %}
-  <link rel="manifest" href="/static/manifest.webmanifest">
-  <link rel="icon" type="image/png" href="/static/politis_symbol_colour.png">
-  <link rel="stylesheet" href="/static/app.css?v={{ version }}-website">
+  <link rel="stylesheet" href="/static/app.css">
+  <meta name="csp-nonce" content="{{ csp_nonce }}" nonce="{{ csp_nonce }}">
 </head>
-<body class="{% block body_class %}{% endblock %}">
+<body>
 <a class="skip-link" href="#main-content">Skip to main content</a>
 {% if user %}
-<div class="app-shell">
-  <header class="app-header">
-    <a class="brand" href="/" aria-label="Citizen Centric by Politis home">
-      <img class="brand-logo" src="/static/politis_symbol_colour.png" alt="Politis logo">
-      <span class="brand-copy">
-        <strong>Citizen Centric</strong>
-        <small>by Politis</small>
-      </span>
-    </a>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">POLITIS<small>Civic Intelligence Platform · v{{ version }}</small></div>
     <nav class="nav" aria-label="Primary navigation">
-      <a class="{% if request.url.path == '/' %}active{% endif %}" href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Dashboard</a>
-      <a class="{% if request.url.path.startswith('/projects') %}active{% endif %}" href="/projects" {% if request.url.path.startswith('/projects') %}aria-current="page"{% endif %}>Projects</a>
-      <a class="{% if request.url.path.startswith('/studies') %}active{% endif %}" href="/studies" {% if request.url.path.startswith('/studies') %}aria-current="page"{% endif %}>Studies</a>
-      <a class="{% if request.url.path.startswith('/participants') %}active{% endif %}" href="/participants" {% if request.url.path.startswith('/participants') %}aria-current="page"{% endif %}>Participants</a>
-      <a class="{% if request.url.path.startswith('/messages') %}active{% endif %}" href="/messages" {% if request.url.path.startswith('/messages') %}aria-current="page"{% endif %}>Messages</a>
+      <a class="{% if request.url.path == '/' %}active{% endif %}" href="/">Dashboard</a>
+      <a class="{% if request.url.path.startswith('/projects') %}active{% endif %}" href="/projects">Projects</a>
+      <a class="{% if request.url.path.startswith('/studies') %}active{% endif %}" href="/studies">Studies</a>
+      <a class="{% if request.url.path.startswith('/participants') %}active{% endif %}" href="/participants">Participants</a>
       {% if user.role in ['owner','admin'] %}
-      <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers" {% if request.url.path.startswith('/researchers') %}aria-current="page"{% endif %}>Researchers</a>
-      <a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit" {% if request.url.path.startswith('/audit') %}aria-current="page"{% endif %}>Audit log</a>
-      <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox" {% if request.url.path.startswith('/outbox') %}aria-current="page"{% endif %}>Email</a>
+      <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers">Researchers</a>
+      <a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit">Audit log</a>
+      <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox">Email outbox</a>
       {% endif %}
     </nav>
-    <div class="header-meta">
-      <div class="header-identity">
-        <span class="header-org">{{ user.organisation.name }}</span>
-        <span class="badge header-role">{{ user.role|title }}</span>
-      </div>
-      {% if user.available_memberships is defined and user.available_memberships|length > 1 %}
-      <form method="post" action="/organisations/switch">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <label class="sr-only" for="organisation-switcher">Organisation</label>
-        <select id="organisation-switcher" name="organisation_id">
-          {% for membership in user.available_memberships %}
-          <option value="{{ membership.organisation_id }}" {% if membership.organisation_id == user.organisation_id %}selected{% endif %}>{{ membership.organisation.name }}</option>
-          {% endfor %}
-        </select>
-        <button class="ghost" type="submit">Switch</button>
-      </form>
-      {% endif %}
-      <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="ghost signout-button" type="submit" data-confirm="Sign out now?">Sign out</button></form>
-    </div>
-  </header>
+    <form method="post" action="/logout"><button class="ghost" type="submit">Sign out</button></form>
+  </aside>
   <main class="main" id="main-content" tabindex="-1">
-    <header class="page-header">
-      <div class="eyebrow">{{ user.organisation.name }}</div>
-      <div class="page-title-row">
-        <h1>{% block title %}{% endblock %}</h1>
-        <span class="badge page-badge">{{ user.role|title }}</span>
-      </div>
-      {% block page_description %}{% endblock %}
-    </header>
+    <div class="top">
+      <div><div class="eyebrow">{{ user.organisation.name }}</div><h1>{% block title %}{% endblock %}</h1></div>
+      <div class="userbox"><strong>{{ user.name }}</strong><br>{{ user.role|title }}</div>
+    </div>
     {% if user.role == 'observer' %}<div class="notice neutral">You have observer access. Editing controls are hidden.</div>{% endif %}
-    {% if flash_notice %}<div class="success" role="status">{{ flash_notice }}</div>{% endif %}
-    {% if flash_error %}<div class="error" role="alert">{{ flash_error }}</div>{% endif %}
-    <details class="context-help section">
-      <summary>Need help on this page?</summary>
-      <div class="context-help-body">
-        {% block contextual_help %}
-        <p class="muted">Use the main navigation to move between projects, studies and participants. For first-time setup, start from Dashboard and follow the onboarding checklist.</p>
-        {% endblock %}
-      </div>
-    </details>
     {% block content %}{% endblock %}
   </main>
 </div>
 {% else %}
 {% block public %}{% endblock %}
 {% endif %}
-<div class="sr-only" aria-live="polite" aria-atomic="true" id="live-region"></div>
-{% block footer %}<footer class="app-footer">Citizen Centric <span>by Politis</span> · <small>v{{ version }}</small></footer>{% endblock %}
-<script nonce="{{ csp_nonce }}" src="/static/app.js?v={{ version }}" defer></script>
-{% block page_scripts %}{% endblock %}
 </body>
 </html>

@@ -1,15 +1,18 @@
 from datetime import datetime, timezone
+import re
 import smtplib
 from email.message import EmailMessage
 from sqlalchemy.orm import Session
 from .config import settings
 from .models import AuditEvent, OutboxEmail
 
+
 def audit(db: Session, organisation_id: int, actor_user_id: int | None, action: str, entity_type: str, entity_id: str, detail: str = ""):
     db.add(AuditEvent(organisation_id=organisation_id, actor_user_id=actor_user_id, action=action, entity_type=entity_type, entity_id=str(entity_id), detail=detail))
 
-def queue_email(db: Session, organisation_id: int, recipient: str, subject: str, body: str):
-    row=OutboxEmail(organisation_id=organisation_id, recipient=recipient, subject=subject, body=body)
+
+def queue_email(db: Session, organisation_id: int, recipient: str, subject: str, body: str, persisted_body: str | None = None):
+    row=OutboxEmail(organisation_id=organisation_id, recipient=recipient, subject=subject, body=persisted_body or body)
     db.add(row); db.flush()
     if not settings.smtp_host:
         return row
@@ -23,3 +26,9 @@ def queue_email(db: Session, organisation_id: int, recipient: str, subject: str,
     except Exception as exc:
         row.error=str(exc)
     return row
+
+
+def redact_token_links(text: str) -> str:
+    if not text:
+        return text
+    return re.sub(r"token=[^&\s]+", "token=[REDACTED]", text)
