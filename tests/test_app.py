@@ -131,17 +131,84 @@ def test_login_uses_transparent_citizen_centric_wordmark():
     assert png.startswith(b'\x89PNG\r\n\x1a\n')
     assert png[25] == 6  # PNG RGBA colour type.
 
+    public_templates = [
+        '_public_footer.html',
+        'accept.html',
+        'error.html',
+        'forgot_password.html',
+        'join_study.html',
+        'login.html',
+        'participant_portal.html',
+        'public_home.html',
+        'reset_password.html',
+    ]
+    for template_name in public_templates:
+        template = Path('app/templates', template_name).read_text()
+        assert '/static/citizen-centric-logo.png' in template
+        assert 'alt="Citizen Centric by Politis"' in template
+
 
 def test_public_homepage_is_available_without_authentication_and_keeps_workspace_data_private():
     with client:
         client.cookies.clear()
         homepage = client.get('/', follow_redirects=False)
         assert homepage.status_code == 200
-        assert 'Research shaped around people' in homepage.text
-        assert 'Understand communities through richer, more inclusive insight.' in homepage.text
+        assert 'Civic intelligence for Place councils' in homepage.text
+        assert 'Understand communities before making decisions.' in homepage.text
+        assert 'Citizen Centric supports structured qualitative and mixed-methods research.' in homepage.text
+        assert 'Administrative data often shows what happened.' in homepage.text
+        assert 'Qualitative research helps explain why.' in homepage.text
+        assert 'decision-grade evidence' in homepage.text
+        assert 'community ethnographers' in homepage.text
+        assert 'Use stronger evidence in two directions.' in homepage.text
+        assert 'Consultee responses, planning representations and planning enforcement concerns' in homepage.text
+        assert 'Evidence submitted to principal authorities, government and regulators' in homepage.text
+        assert 'It does not guarantee that the decision will change.' in homepage.text
+        assert 'evidence-led co-design' in homepage.text.lower()
+        assert 'seldom-heard perspectives' in homepage.text
+        assert 'not statistical representation' in homepage.text
+        assert 'Evidence question' in homepage.text
+        assert 'Why have reports about this planning issue fallen even though residents say the problem continues?' in homepage.text
+        assert 'Evidence excerpt' in homepage.text
+        evidence_excerpt = (
+            '"We were told that the more reports the council received, the more likely it was that something would be done. '
+            'My neighbours and I reported the same problems almost every day for months, but nothing changed. Eventually we '
+            "stopped reporting them. The issue was still there, but it no longer felt worth the effort because we didn't "
+            'believe another report would make any difference."'
+        )
+        assert evidence_excerpt in homepage.text
+        assert 'Research codes' in homepage.text
+        assert 'Codes support analysis. Findings emerge through comparison, context and interpretation' in homepage.text
+        for code in [
+            '#Trust',
+            '#Disengagement',
+            '#ReportingBehaviour',
+            '#PerceivedImpact',
+            '#PlanningEnforcement',
+        ]:
+            assert code in homepage.text
         assert 'href="/login">Researcher sign in</a>' in homepage.text
-        assert 'href="#participants">See the participant experience</a>' in homepage.text
-        assert 'Privacy and security' in homepage.text
+        assert 'NHS' not in homepage.text
+        assert 'Universities' not in homepage.text
+        assert 'Charities' not in homepage.text
+        assert 'local councils' not in homepage.text.lower()
+        assert 'town and parish councils' not in homepage.text.lower()
+        assert 'href="#how-it-works">See how the platform works</a>' in homepage.text
+        for planned_page in [
+            'Privacy',
+            'Cookies',
+            'Terms',
+            'Accessibility',
+            'Participant privacy',
+            'Researcher terms',
+            'Contact',
+        ]:
+            assert f'class="footer-placeholder">{planned_page}</span>' in homepage.text
+        assert 'href="/privacy"' not in homepage.text
+        assert 'In preparation' not in homepage.text
+        assert 'Legal, accessibility and contact information is being prepared' in homepage.text
+        assert 'Today’s activity' not in homepage.text
+        assert 'daily activities' not in homepage.text.lower()
         assert 'Seven-day town centre diary' not in homepage.text
         assert 'Politis Demo Council' not in homepage.text
         assert 'name="description"' in homepage.text
@@ -150,6 +217,7 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         login_page = client.get('/login')
         assert login_page.status_code == 200
         assert 'href="/">← Citizen Centric home</a>' in login_page.text
+        assert 'class="footer-placeholder">Privacy</span>' in login_page.text
 
         protected = client.get('/projects', follow_redirects=False)
         assert protected.status_code == 303
@@ -2981,7 +3049,7 @@ def test_service_worker_caches_only_explicit_public_assets():
 
     assert 'PUBLIC_STATIC_ASSETS' in script
     assert '/static/offline.html' in script
-    assert '/static/politis_symbol_colour.png' in script
+    assert '/static/citizen-centric-logo.png' in script
     assert 'request.mode === "navigate"' in script
 
     sensitive_paths = [
@@ -3001,6 +3069,8 @@ def test_offline_page_contains_no_participant_information():
 
     assert response.status_code == 200
     assert "You’re offline" in response.text
+    assert '/static/citizen-centric-logo.png' in response.text
+    assert 'alt="Citizen Centric by Politis"' in response.text
     assert 'No participant page, response, message or evidence' in response.text
     assert 'csrf_token' not in response.text
     assert 'invitation' not in response.text.lower()
