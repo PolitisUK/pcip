@@ -129,6 +129,29 @@ jobs:
             --query defaultHostName \
             -o tsv)
 
+          dump_logs() {
+            echo "===== Azure diagnostics ====="
+            rm -rf /tmp/pcip-app-logs /tmp/pcip-app-logs.zip
+            mkdir -p /tmp/pcip-app-logs
+            az webapp log download \
+              -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              -n "${{ steps.resources.outputs.app }}" \
+              --log-file /tmp/pcip-app-logs.zip || true
+            if [ -f /tmp/pcip-app-logs.zip ]; then
+              unzip -oq /tmp/pcip-app-logs.zip -d /tmp/pcip-app-logs || true
+              find /tmp/pcip-app-logs -type f -print
+              echo "===== Matching errors ====="
+              grep -RniE "Traceback|RuntimeError|ERROR|CRITICAL|Exception|migration|database|storage|credential|permission|denied|failed" /tmp/pcip-app-logs 2>/dev/null | tail -n 300 || true
+              echo "===== Recent log tails ====="
+              find /tmp/pcip-app-logs -type f -print0 | while IFS= read -r -d '' file; do
+                echo "--- $file ---"
+                tail -n 120 "$file" || true
+              done
+            else
+              echo "Azure did not return a downloadable log archive."
+            fi
+          }
+
           ready=0
           for attempt in {1..36}; do
             body=$(curl --fail --silent --show-error "https://${APP_HOST}/health/ready" 2>/tmp/pcip-curl-error || true)
@@ -144,6 +167,7 @@ jobs:
 
           if [ "$ready" -ne 1 ]; then
             echo "Application never became ready within six minutes." >&2
+            dump_logs
             exit 1
           fi
 
@@ -154,31 +178,8 @@ jobs:
             if ! printf '%s' "$body" | grep -q '"status":"ready"'; then
               echo "Application became unhealthy during stability check $stable_check/12." >&2
               cat /tmp/pcip-curl-error >&2 || true
+              dump_logs
               exit 1
             fi
             echo "Stable readiness check $stable_check/12 passed."
           done
-      - name: Capture failed container startup logs
-        if: ${{ failure() }}
-        shell: bash
-        continue-on-error: true
-        run: |
-          rm -rf /tmp/pcip-app-logs /tmp/pcip-app-logs.zip
-          mkdir -p /tmp/pcip-app-logs
-          az webapp log download \
-            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            -n "${{ steps.resources.outputs.app }}" \
-            --log-file /tmp/pcip-app-logs.zip || true
-          if [ -f /tmp/pcip-app-logs.zip ]; then
-            unzip -oq /tmp/pcip-app-logs.zip -d /tmp/pcip-app-logs || true
-            echo "===== Azure container/application logs ====="
-            find /tmp/pcip-app-logs -type f -print
-            grep -RniE "Traceback|RuntimeError|ERROR|CRITICAL|Exception|migration|database|storage|credential|permission|denied|failed" /tmp/pcip-app-logs 2>/dev/null | tail -n 300 || true
-            echo "===== Recent log tails ====="
-            find /tmp/pcip-app-logs -type f -print0 | while IFS= read -r -d '' file; do
-              echo "--- $file ---"
-              tail -n 120 "$file" || true
-            done
-          else
-            echo "Azure did not return a downloadable log archive."
-          fi
