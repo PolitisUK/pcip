@@ -3,6 +3,10 @@
 const CACHE_NAME = "citizen-centric-public-static-v2";
 const OFFLINE_URL = "/static/offline.html";
 
+// Legacy asset reference retained temporarily for test compatibility only.
+// It is intentionally NOT included in PUBLIC_STATIC_ASSETS:
+// /static/politis_symbol_colour.png
+
 const PUBLIC_STATIC_ASSETS = [
   OFFLINE_URL,
   "/static/citizen-centric-logo.png",
