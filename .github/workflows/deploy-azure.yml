@@ -40,7 +40,7 @@ jobs:
           parameters: >-
             prefix=${{ vars.PCIP_PREFIX }}
             environmentName=${{ inputs.environment }}
-            containerImageTag=${{ inputs.image_tag }}
+            containerImageTag=${{ inputs.image_tag }}-${{ github.run_number }}
             postgresAdminUser=${{ vars.POSTGRES_ADMIN_USER }}
             postgresAdminPassword=${{ secrets.POSTGRES_ADMIN_PASSWORD }}
             secretKey=${{ secrets.PCIP_SECRET_KEY }}
@@ -84,17 +84,21 @@ jobs:
           echo "acr_login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
           echo "image_repository=$IMAGE_REPOSITORY" >> "$GITHUB_OUTPUT"
       - name: Build image in live Azure Container Registry
-        run: >-
-          az acr build
-          --registry "${{ steps.resources.outputs.acr }}"
-          --image "${{ steps.resources.outputs.image_repository }}:${{ inputs.image_tag }}"
-          .
+        shell: bash
+        run: |
+          DEPLOY_TAG="${{ inputs.image_tag }}-${{ github.run_number }}"
+          az acr build \
+            --registry "${{ steps.resources.outputs.acr }}" \
+            --image "${{ steps.resources.outputs.image_repository }}:${DEPLOY_TAG}" \
+            .
       - name: Point live application at new image
-        run: >-
-          az webapp config set
-          -g "${{ vars.AZURE_RESOURCE_GROUP }}"
-          -n "${{ steps.resources.outputs.app }}"
-          --linux-fx-version "DOCKER|${{ steps.resources.outputs.acr_login_server }}/${{ steps.resources.outputs.image_repository }}:${{ inputs.image_tag }}"
+        shell: bash
+        run: |
+          DEPLOY_TAG="${{ inputs.image_tag }}-${{ github.run_number }}"
+          az webapp config set \
+            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -n "${{ steps.resources.outputs.app }}" \
+            --linux-fx-version "DOCKER|${{ steps.resources.outputs.acr_login_server }}/${{ steps.resources.outputs.image_repository }}:${DEPLOY_TAG}"
       - name: Preserve production custom domain settings
         if: ${{ inputs.environment == 'Production' || inputs.environment == 'production' }}
         run: |
