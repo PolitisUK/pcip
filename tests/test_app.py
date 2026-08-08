@@ -2652,8 +2652,20 @@ def test_azure_bicep_sets_required_secure_cookie_settings():
     bicep = Path('infra/main.bicep').read_text()
     assert "{ name: 'COOKIE_SECURE', value: 'true' }" in bicep
     assert "{ name: 'SESSION_COOKIE_SECURE', value: 'true' }" in bicep
-    assert 'param runMigrations bool = false' in bicep
+    assert 'param runMigrations bool = true' in bicep
+    assert "appCommandLine: ''" in bicep
     assert "{ name: 'RUN_MIGRATIONS', value: string(runMigrations) }" in bicep
+
+
+def test_azure_deployment_targets_the_configured_app_and_preserves_container_entrypoint():
+    workflow = Path('.github/workflows/deploy-azure.yml').read_text()
+    assert 'APP="${{ vars.AZURE_WEBAPP_NAME }}"' in workflow
+    assert 'APP="citizencentric-pcip-prod"' in workflow
+    assert 'LIVE_IMAGE=$(az webapp config show' in workflow
+    assert '--settings RUN_MIGRATIONS=true' in workflow
+    assert '--startup-file ""' in workflow
+    assert 'az webapp list' not in workflow
+    assert 'az acr list' not in workflow
 
 
 def test_migrations_are_automatic_only_in_local_compose():

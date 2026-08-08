@@ -54,12 +54,50 @@ jobs:
         id: resources
         shell: bash
         run: |
-          ACR=$(az acr list -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
-          APP=$(az webapp list -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
+          APP="${{ vars.AZURE_WEBAPP_NAME }}"
+          if [ -z "$APP" ] && [ "${{ inputs.environment }}" = "production" ]; then
+            APP="citizencentric-pcip-prod"
+          fi
+          if [ -z "$APP" ]; then
+            APP=$(az deployment group show \
+              -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              -n "pcip-${{ inputs.environment }}-${{ github.run_number }}" \
+              --query "properties.outputs.appName.value" \
+              -o tsv)
+          fi
+          az webapp show -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "$APP" --output none
+
+          LIVE_IMAGE=$(az webapp config show \
+            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -n "$APP" \
+            --query linuxFxVersion \
+            -o tsv)
+          REGISTRY_HOST="${LIVE_IMAGE#DOCKER|}"
+          REGISTRY_HOST="${REGISTRY_HOST%%/*}"
+          ACR="${REGISTRY_HOST%%.*}"
+          if [ -z "$ACR" ] || [ "$ACR" = "$REGISTRY_HOST" ]; then
+            echo "Unable to resolve the Azure Container Registry from $APP." >&2
+            exit 1
+          fi
+          az acr show -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "$ACR" --output none
           echo "acr=$ACR" >> "$GITHUB_OUTPUT"
           echo "app=$APP" >> "$GITHUB_OUTPUT"
       - name: Build image in Azure Container Registry
         run: az acr build --registry "${{ steps.resources.outputs.acr }}" --image "pcip:${{ inputs.image_tag }}" .
+      - name: Configure application container startup
+        shell: bash
+        run: |
+          az webapp config appsettings set \
+            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -n "${{ steps.resources.outputs.app }}" \
+            --settings RUN_MIGRATIONS=true \
+            --output none
+          az webapp config set \
+            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -n "${{ steps.resources.outputs.app }}" \
+            --linux-fx-version "DOCKER|${{ steps.resources.outputs.acr }}.azurecr.io/pcip:${{ inputs.image_tag }}" \
+            --startup-file "" \
+            --output none
       - name: Restart application
         run: az webapp restart -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ steps.resources.outputs.app }}"
       - name: Verify application readiness

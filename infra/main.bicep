@@ -22,7 +22,7 @@ param entraClientId string = ''
 param entraAllowedDomains string = ''
 param entraDefaultOrganisationSlug string = ''
 param defenderMonthlyScanCapGB int = 10
-param runMigrations bool = false
+param runMigrations bool = true
 
 var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, prefix, environmentName)
 var compact = toLower(replace('${prefix}${environmentName}${take(suffix, 8)}', '-', ''))
@@ -192,6 +192,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
     clientAffinityEnabled: false
     siteConfig: {
       linuxFxVersion: 'DOCKER|${imageName}'
+      appCommandLine: ''
       acrUseManagedIdentityCreds: true
       alwaysOn: true
       healthCheckPath: '/health/ready'
