@@ -70,8 +70,9 @@ jobs:
 
           CURRENT_IMAGE=${LINUX_FX_VERSION#DOCKER|}
           ACR_LOGIN_SERVER=${CURRENT_IMAGE%%/*}
-          IMAGE_WITH_TAG=${CURRENT_IMAGE#*/}
-          IMAGE_REPOSITORY=${IMAGE_WITH_TAG%%:*}
+          IMAGE_REFERENCE=${CURRENT_IMAGE#*/}
+          IMAGE_REPOSITORY=${IMAGE_REFERENCE%%@*}
+          IMAGE_REPOSITORY=${IMAGE_REPOSITORY%%:*}
           ACR=${ACR_LOGIN_SERVER%%.*}
 
           if [ -z "$APP" ] || [ -z "$ACR" ] || [ -z "$IMAGE_REPOSITORY" ]; then
