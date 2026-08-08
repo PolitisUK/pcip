@@ -52,31 +52,97 @@ jobs:
             entraDefaultOrganisationSlug=${{ vars.ENTRA_DEFAULT_ORGANISATION_SLUG }}
             runMigrations=${{ inputs.environment == 'Production' || inputs.environment == 'production' }}
           deploymentName: pcip-${{ inputs.environment }}-${{ github.run_number }}
+      - name: Synchronize live production app configuration and permissions
+        if: ${{ inputs.environment == 'Production' || inputs.environment == 'production' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG="${{ vars.AZURE_RESOURCE_GROUP }}"
+          DEPLOYMENT="pcip-${{ inputs.environment }}-${{ github.run_number }}"
+          LIVE_APP="citizencentric-pcip-prod"
+
+          INFRA_APP=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.appName.value -o tsv)
+          ACR=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.registryName.value -o tsv)
+          STORAGE=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.storageAccountName.value -o tsv)
+          VAULT=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.keyVaultName.value -o tsv)
+
+          echo "Infrastructure app: $INFRA_APP"
+          echo "Live app: $LIVE_APP"
+          echo "Registry: $ACR"
+          echo "Storage: $STORAGE"
+          echo "Key Vault: $VAULT"
+
+          LIVE_PRINCIPAL=$(az webapp identity assign -g "$RG" -n "$LIVE_APP" --query principalId -o tsv)
+          ACR_SCOPE=$(az acr show -g "$RG" -n "$ACR" --query id -o tsv)
+          STORAGE_SCOPE=$(az storage account show -g "$RG" -n "$STORAGE" --query id -o tsv)
+          VAULT_SCOPE=$(az keyvault show -g "$RG" -n "$VAULT" --query id -o tsv)
+          CONTAINER_SCOPE="$STORAGE_SCOPE/blobServices/default/containers/evidence"
+
+          ensure_role() {
+            ROLE="$1"
+            SCOPE="$2"
+            EXISTING=$(az role assignment list \
+              --assignee-object-id "$LIVE_PRINCIPAL" \
+              --scope "$SCOPE" \
+              --query "[?roleDefinitionName=='$ROLE'] | length(@)" \
+              -o tsv)
+            if [ "$EXISTING" = "0" ]; then
+              az role assignment create \
+                --assignee-object-id "$LIVE_PRINCIPAL" \
+                --assignee-principal-type ServicePrincipal \
+                --role "$ROLE" \
+                --scope "$SCOPE" >/dev/null
+            fi
+          }
+
+          ensure_role "AcrPull" "$ACR_SCOPE"
+          ensure_role "Storage Blob Data Owner" "$CONTAINER_SCOPE"
+          ensure_role "Storage Blob Delegator" "$STORAGE_SCOPE"
+          ensure_role "Key Vault Secrets User" "$VAULT_SCOPE"
+
+          az webapp config appsettings list -g "$RG" -n "$INFRA_APP" -o json \
+            | jq 'map({key: .name, value: .value}) | from_entries' \
+            > /tmp/pcip-live-settings.json
+
+          az webapp config appsettings set \
+            -g "$RG" \
+            -n "$LIVE_APP" \
+            --settings @/tmp/pcip-live-settings.json >/dev/null
+
+          az webapp config appsettings set \
+            -g "$RG" \
+            -n "$LIVE_APP" \
+            --settings \
+              BASE_URL="https://citizencentric.co.uk" \
+              TRUSTED_HOSTS="citizencentric.co.uk,www.citizencentric.co.uk,citizencentric-pcip-prod.azurewebsites.net" \
+              ALLOWED_ORIGINS="https://citizencentric.co.uk,https://www.citizencentric.co.uk,https://citizencentric-pcip-prod.azurewebsites.net" \
+              RUN_MIGRATIONS="true" >/dev/null
       - name: Resolve live application resources
         id: resources
         shell: bash
         run: |
+          set -euo pipefail
+          RG="${{ vars.AZURE_RESOURCE_GROUP }}"
+          DEPLOYMENT="pcip-${{ inputs.environment }}-${{ github.run_number }}"
+
           if [ "${{ inputs.environment }}" = "Production" ] || [ "${{ inputs.environment }}" = "production" ]; then
             APP="citizencentric-pcip-prod"
+            ACR=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.registryName.value -o tsv)
+            ACR_LOGIN_SERVER=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.registryLoginServer.value -o tsv)
+            IMAGE_REPOSITORY="pcip"
           else
-            APP=$(az webapp list -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
+            APP=$(az webapp list -g "$RG" --query "[0].name" -o tsv)
+            LINUX_FX_VERSION=$(az webapp config show -g "$RG" -n "$APP" --query linuxFxVersion -o tsv)
+            CURRENT_IMAGE=${LINUX_FX_VERSION#DOCKER|}
+            ACR_LOGIN_SERVER=${CURRENT_IMAGE%%/*}
+            IMAGE_REFERENCE=${CURRENT_IMAGE#*/}
+            IMAGE_REPOSITORY=${IMAGE_REFERENCE%%@*}
+            IMAGE_REPOSITORY=${IMAGE_REPOSITORY%%:*}
+            ACR=${ACR_LOGIN_SERVER%%.*}
           fi
 
-          LINUX_FX_VERSION=$(az webapp config show \
-            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            -n "$APP" \
-            --query linuxFxVersion \
-            -o tsv)
-
-          CURRENT_IMAGE=${LINUX_FX_VERSION#DOCKER|}
-          ACR_LOGIN_SERVER=${CURRENT_IMAGE%%/*}
-          IMAGE_REFERENCE=${CURRENT_IMAGE#*/}
-          IMAGE_REPOSITORY=${IMAGE_REFERENCE%%@*}
-          IMAGE_REPOSITORY=${IMAGE_REPOSITORY%%:*}
-          ACR=${ACR_LOGIN_SERVER%%.*}
-
-          if [ -z "$APP" ] || [ -z "$ACR" ] || [ -z "$IMAGE_REPOSITORY" ]; then
-            echo "Could not resolve live App Service container configuration." >&2
+          if [ -z "$APP" ] || [ -z "$ACR" ] || [ -z "$ACR_LOGIN_SERVER" ] || [ -z "$IMAGE_REPOSITORY" ]; then
+            echo "Could not resolve deployment resources." >&2
             exit 1
           fi
 
@@ -100,17 +166,6 @@ jobs:
             -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
             -n "${{ steps.resources.outputs.app }}" \
             --linux-fx-version "DOCKER|${{ steps.resources.outputs.acr_login_server }}/${{ steps.resources.outputs.image_repository }}:${DEPLOY_TAG}"
-      - name: Preserve production custom domain settings
-        if: ${{ inputs.environment == 'Production' || inputs.environment == 'production' }}
-        run: |
-          az webapp config appsettings set \
-            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            -n "${{ steps.resources.outputs.app }}" \
-            --settings \
-              BASE_URL="https://citizencentric.co.uk" \
-              TRUSTED_HOSTS="citizencentric.co.uk,www.citizencentric.co.uk,citizencentric-pcip-prod.azurewebsites.net" \
-              ALLOWED_ORIGINS="https://citizencentric.co.uk,https://www.citizencentric.co.uk,https://citizencentric-pcip-prod.azurewebsites.net" \
-              RUN_MIGRATIONS="true"
       - name: Enable container diagnostics
         continue-on-error: true
         run: >-
@@ -130,33 +185,33 @@ jobs:
             -o tsv)
 
           ready=0
-          for attempt in {1..36}; do
+          for attempt in {1..24}; do
             body=$(curl --fail --silent --show-error "https://${APP_HOST}/health/ready" 2>/tmp/pcip-curl-error || true)
             if printf '%s' "$body" | grep -q '"status":"ready"'; then
               ready=1
               echo "Initial readiness passed on attempt $attempt."
               break
             fi
-            echo "Waiting for readiness ($attempt/36)..."
+            echo "Waiting for readiness ($attempt/24)..."
             cat /tmp/pcip-curl-error || true
             sleep 10
           done
 
           if [ "$ready" -ne 1 ]; then
-            echo "Application never became ready within six minutes." >&2
+            echo "Application never became ready within four minutes." >&2
             exit 1
           fi
 
-          echo "Verifying the app remains healthy for two minutes..."
-          for stable_check in {1..12}; do
+          echo "Verifying the app remains healthy for one minute..."
+          for stable_check in {1..6}; do
             sleep 10
             body=$(curl --fail --silent --show-error "https://${APP_HOST}/health/ready" 2>/tmp/pcip-curl-error || true)
             if ! printf '%s' "$body" | grep -q '"status":"ready"'; then
-              echo "Application became unhealthy during stability check $stable_check/12." >&2
+              echo "Application became unhealthy during stability check $stable_check/6." >&2
               cat /tmp/pcip-curl-error >&2 || true
               exit 1
             fi
-            echo "Stable readiness check $stable_check/12 passed."
+            echo "Stable readiness check $stable_check/6 passed."
           done
       - name: Refresh Azure login for diagnostics
         if: ${{ failure() }}
