@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block page_title %}Citizen Centric — Research shaped around people{% endblock %}
+{% block page_title %}Citizen Centric | Civic intelligence for Place councils{% endblock %}
 {% block head_meta %}
-<meta name="description" content="Citizen Centric helps research teams run inclusive studies, gather participant insight and manage evidence, consent and communication in one secure workspace.">
+<meta name="description" content="Citizen Centric supports Place councils to understand people's experiences and use structured research in services, policy and formal representations.">
 {% endblock %}
 {% block body_class %}public-site{% endblock %}
 
@@ -11,9 +11,10 @@
     <img class="brand-logo brand-logo--wordmark" src="/static/citizen-centric-logo.png" alt="Citizen Centric by Politis">
   </a>
   <nav class="public-nav" aria-label="Public navigation">
+    <a href="#why">Why it matters</a>
     <a href="#how-it-works">How it works</a>
-    <a href="#participants">For participants</a>
-    <a href="#responsible-research">Privacy and security</a>
+    <a href="#decisions">Decisions and influence</a>
+    <a href="#trust">Trust</a>
   </nav>
   <a class="btn secondary public-signin" href="/login">Researcher sign in</a>
 </header>
@@ -22,115 +23,155 @@
   <section class="public-hero">
     <div class="public-container public-hero-grid">
       <div class="public-hero-copy">
-        <p class="public-kicker">Research shaped around people</p>
-        <h1>Understand communities through richer, more inclusive insight.</h1>
-        <p class="public-lead">Citizen Centric brings studies, participant activities, evidence and secure communication together—so research teams can listen well and act with confidence.</p>
+        <p class="public-kicker">Civic intelligence for Place councils</p>
+        <h1>Understand communities before making decisions.</h1>
+        <p class="public-lead">Citizen Centric supports structured qualitative and mixed-methods research. It helps research teams understand how people experience places, services and public decisions.</p>
         <div class="public-actions">
-          <a class="btn public-primary" href="/login">Open researcher workspace</a>
-          <a class="btn secondary" href="#participants">See the participant experience</a>
+          <a class="btn public-primary" href="#how-it-works">See how the platform works</a>
+          <a class="btn secondary" href="/login">Open researcher workspace</a>
         </div>
-        <p class="public-action-note">Participants join through a private invitation from their research team.</p>
+        <p class="public-action-note">Participants take part through a private invitation from their research team.</p>
       </div>
 
-      <div class="public-product-preview" aria-label="Citizen Centric research journey overview">
+      <div class="public-product-preview" aria-label="Coded Citizen Centric planning research extract">
         <div class="preview-topline">
           <span class="preview-dot copper"></span>
-          <span>Live community study</span>
-          <span class="preview-status">Listening</span>
+          <span>Research extract · Planning and development study</span>
+          <span class="preview-status">Coded</span>
         </div>
         <div class="preview-question">
-          <span class="preview-label">Today’s activity</span>
-          <strong>What would make this place easier to use?</strong>
-          <div class="preview-response"><span></span><span></span><span class="short"></span></div>
+          <span class="preview-label">Evidence question</span>
+          <strong>Why have reports about this planning issue fallen even though residents say the problem continues?</strong>
         </div>
-        <div class="preview-signals">
-          <div><strong>24</strong><span>participants</span></div>
-          <div><strong>18</strong><span>responses</span></div>
-          <div><strong>7</strong><span>shared files</span></div>
+        <div class="preview-excerpt">
+          <span class="preview-label">Evidence excerpt</span>
+          <blockquote>"We were told that the more reports the council received, the more likely it was that something would be done. My neighbours and I reported the same problems almost every day for months, but nothing changed. Eventually we stopped reporting them. The issue was still there, but it no longer felt worth the effort because we didn't believe another report would make any difference."</blockquote>
         </div>
-        <div class="preview-message"><span class="preview-avatar">CC</span><p><strong>Participant insight</strong><br>“A safer crossing would help me visit more often.”</p></div>
+        <div class="research-codes">
+          <span class="preview-label">Research codes</span>
+          <div class="research-code-list" aria-label="Qualitative research codes"><span>#Trust</span><span>#Disengagement</span><span>#ReportingBehaviour</span><span>#PerceivedImpact</span><span>#PlanningEnforcement</span></div>
+          <p class="research-analysis-note">Codes support analysis. Findings emerge through comparison, context and interpretation across the study.</p>
+        </div>
       </div>
     </div>
   </section>
 
-  <section class="public-trust-strip" aria-label="Citizen Centric capabilities">
+  <section class="public-trust-strip" aria-label="Citizen Centric research platform summary">
     <div class="public-container trust-items">
-      <span>Longitudinal and mixed-method studies</span>
-      <span>Participant evidence</span>
-      <span>Consent and privacy controls</span>
-      <span>Secure two-way messaging</span>
+      <span>Civic intelligence</span>
+      <span>Qualitative depth</span>
+      <span>Mixed-methods integration</span>
+      <span>Transparent evidence</span>
     </div>
   </section>
 
-  <section class="public-section" id="how-it-works">
+  <section class="public-section" id="why">
     <div class="public-container">
       <div class="public-section-heading">
-        <p class="public-kicker">One connected research journey</p>
-        <h2>From the first invitation to a clear evidence trail.</h2>
-        <p>Give teams a consistent way to organise studies while making participation straightforward on any modern device.</p>
+        <p class="public-kicker">Why the platform exists</p>
+        <h2>Administrative data often shows what happened. Qualitative research helps explain why.</h2>
+        <p>Administrative data and quantitative approaches can show scale, measurement and patterns. Consultation has democratic and, where applicable, statutory value. These sources do not always explain why people behave as they do, who is absent from the record, or how a policy is experienced in everyday life.</p>
+      </div>
+      <div class="public-card-grid public-card-grid--three">
+        <article><span class="card-label">Scale without explanation</span><h3>Numbers can identify a pattern. They do not always explain its cause.</h3><p>A fall in reports may look like improvement. Qualitative enquiry may show that residents have stopped reporting because they no longer believe it will make a difference.</p></article>
+        <article><span class="card-label">Consultation in context</span><h3>Consultation matters, but it need not carry the whole evidence base.</h3><p>Ongoing enquiry can test assumptions before formal consultation begins and provide context for interpreting the responses.</p></article>
+        <article><span class="card-label">The people who are missing</span><h3>The usual respondents cannot speak for everyone affected.</h3><p>Purposeful recruitment can bring seldom-heard perspectives into the record. It provides depth and context, not statistical representation.</p></article>
+      </div>
+      <p class="public-section-note">Citizen Centric does not replace surveys, consultation or service data. It helps teams use them as part of a broader and more accountable evidence base.</p>
+    </div>
+  </section>
+
+  <section class="public-section public-section-soft" id="how-it-works">
+    <div class="public-container">
+      <div class="public-section-heading">
+        <p class="public-kicker">A structured research process</p>
+        <h2>Build understanding over time, then carry it into the decision.</h2>
+        <p>The platform keeps the research question, participant relationship, consent, contributions and communication connected from the start of a study to its evidence record.</p>
       </div>
       <div class="public-steps">
-        <article><span class="step-number">01</span><h3>Design the study</h3><p>Set up projects, study methods and accessible activities for the questions you need to explore.</p></article>
-        <article><span class="step-number">02</span><h3>Invite participation</h3><p>Enrol people through private invitations, with clear consent and study-specific access.</p></article>
-        <article><span class="step-number">03</span><h3>Gather lived experience</h3><p>Collect structured responses, reflections, files, photos, audio and participant messages.</p></article>
-        <article><span class="step-number">04</span><h3>Keep research accountable</h3><p>Manage privacy requests, access controls and activity records from the same workspace.</p></article>
+        <article><span class="step-number">01</span><h3>Start with the decision</h3><p>Set up a project and study around a local service, policy question or representation that needs stronger supporting material.</p></article>
+        <article><span class="step-number">02</span><h3>Choose the right mix</h3><p>Combine diaries, open reflection and participant-provided media with choices, rankings, ratings and other structured methods.</p></article>
+        <article><span class="step-number">03</span><h3>Gather insight over time</h3><p>Invite people securely, preserve drafts and use direct messaging to support longitudinal and follow-up work.</p></article>
+        <article><span class="step-number">04</span><h3>Create a usable record</h3><p>Organise and review contributions with a clear connection to the study, contributor, consent state and method, then export the material for further analysis and reporting.</p></article>
       </div>
     </div>
   </section>
 
-  <section class="public-section public-section-soft" id="participants">
-    <div class="public-container public-split">
+  <section class="public-section" id="different">
+    <div class="public-container public-split public-split--top">
       <div>
-        <p class="public-kicker">Designed for participation</p>
-        <h2>A clear, focused experience for sharing what matters.</h2>
-        <p class="public-lead-sm">Participants see only the study they joined. Activities, drafts, evidence, messages and privacy controls stay together in a simple portal branded as Citizen Centric.</p>
-        <ul class="public-checks">
-          <li>Works across desktop and mobile screen sizes</li>
-          <li>Supports text, choices, rankings and multimedia evidence</li>
-          <li>Preserves drafts until the participant is ready to submit</li>
-          <li>Provides self-service data and withdrawal controls</li>
-        </ul>
+        <p class="public-kicker">What makes Citizen Centric different</p>
+        <h2>Depth, structure and continuity in one research environment.</h2>
+        <p class="public-lead-sm">Citizen Centric is not a survey builder or a generic feedback channel. It gives Place councils a structured way to understand context, follow experience over time and connect different forms of material with the continuity and traceability required to build decision-grade evidence.</p>
       </div>
-      <div class="participant-preview" aria-hidden="true">
-        <div class="participant-preview-head"><span class="preview-avatar">CC</span><div><strong>Your activities</strong><small>Neighbourhood access study</small></div></div>
-        <div class="participant-task is-complete"><span>✓</span><div><strong>First impressions</strong><small>Submitted</small></div></div>
-        <div class="participant-task"><span>2</span><div><strong>Rank local improvements</strong><small>Draft saved</small></div></div>
-        <div class="participant-task"><span>3</span><div><strong>Share a photo or note</strong><small>Ready to start</small></div></div>
-      </div>
+      <ul class="public-checks public-checks--substantial">
+        <li><strong>Ethnographic depth.</strong> Use diaries, reflection, media and follow-up communication to examine how services are actually experienced.</li>
+        <li><strong>Mixed-methods integration.</strong> Design studies so qualitative accounts and structured measures inform one another during analysis and interpretation.</li>
+        <li><strong>Community-based enquiry.</strong> Give researchers and community ethnographers a consistent process for collecting contributions responsibly.</li>
+        <li><strong>Continuity.</strong> Build a body of insight across time instead of relying only on a one-off exercise.</li>
+      </ul>
     </div>
   </section>
 
-  <section class="public-section" id="responsible-research">
-    <div class="public-container responsible-grid">
-      <div class="public-section-heading align-left">
-        <p class="public-kicker">Responsible by design</p>
-        <h2>Controls that support careful, trustworthy research.</h2>
-        <p>Citizen Centric keeps participant access scoped to the relevant study and gives authorised teams the tools to manage consent, evidence and privacy requests.</p>
+  <section class="public-section public-section-soft" id="trust">
+    <div class="public-container">
+      <div class="public-section-heading">
+        <p class="public-kicker">Trust and research governance</p>
+        <h2>A credible finding needs a credible process behind it.</h2>
+        <p>Citizen Centric gives authorised teams practical controls for managing access, consent, files, communication and participant rights within a defined study.</p>
       </div>
-      <div class="responsible-cards">
-        <article><strong>Scoped access</strong><p>Role-based researcher permissions and study-specific participant sessions.</p></article>
-        <article><strong>Safer evidence</strong><p>File validation, malware-screening states and protected downloads.</p></article>
-        <article><strong>Privacy controls</strong><p>Data export, deletion or anonymisation requests, and withdrawal workflows.</p></article>
-        <article><strong>Accountability</strong><p>Audit events and clear response states for important research actions.</p></article>
+      <div class="public-card-grid">
+        <article><h3>Scoped access</h3><p>Role-based researcher permissions and study-specific participant sessions keep access tied to the work people are responsible for.</p></article>
+        <article><h3>Consent and status</h3><p>Consent, enrolment and participation states remain visible to the research team as the study progresses.</p></article>
+        <article><h3>Evidence handling</h3><p>File validation, malware-screening states and protected downloads support safer handling of participant-provided material.</p></article>
+        <article><h3>Privacy workflows</h3><p>Export, deletion, anonymisation and withdrawal workflows help teams respond consistently to participant requests.</p></article>
+      </div>
+      <p class="public-section-note">Research quality still depends on sound research design, appropriate sampling, suitable methods, careful interpretation and professional judgement. The platform supports that work. It does not replace it.</p>
+    </div>
+  </section>
+
+  <section class="public-section" id="decisions">
+    <div class="public-container">
+      <div class="public-section-heading">
+        <p class="public-kicker">From insight to action</p>
+        <h2>Use stronger evidence in two directions.</h2>
+        <p>Local insight can improve decisions within a Place council. It can also support a clearer, better-supported case where a principal authority, government body, regulator or partner holds the decision.</p>
+      </div>
+      <div class="decision-grid">
+        <article class="decision-panel">
+          <span class="card-label">Decisions you are responsible for</span>
+          <h3>Improve policy, services and organisational learning.</h3>
+          <p>Use findings to define the right problem, examine how a Place council service works in practice and involve residents in testing better options before committing to a solution.</p>
+          <ul>
+            <li>Parks, open spaces, community buildings and local services</li>
+            <li>Policy development and review</li>
+            <li>Evidence-led co-design</li>
+            <li>Learning, governance and transparent decision records</li>
+          </ul>
+        </article>
+        <article class="decision-panel decision-panel--influence">
+          <span class="card-label">Decisions made by others</span>
+          <h3>Influence change with more than assertion or anecdote.</h3>
+          <p>Where another organisation holds the statutory function, Citizen Centric helps Place councils prepare a structured account of local experience. It strengthens the representation. It does not guarantee that the decision will change.</p>
+          <ul>
+            <li>Consultee responses, planning representations and planning enforcement concerns</li>
+            <li>Statutory, policy and service consultations</li>
+            <li>Evidence submitted to principal authorities, government and regulators</li>
+            <li>Briefings for commissioners and partner organisations</li>
+            <li>Advocacy and collaboration grounded in accountable research</li>
+          </ul>
+        </article>
       </div>
     </div>
   </section>
 
   <section class="public-cta">
     <div class="public-container public-cta-inner">
-      <div><p class="public-kicker">Citizen Centric by Politis</p><h2>Make space for better listening.</h2><p>Bring research operations and participant experience into one connected service.</p></div>
-      <div class="public-actions"><a class="btn public-primary" href="/login">Researcher sign in</a><a class="btn secondary" href="#participants">About participation</a></div>
+      <div><p class="public-kicker">Citizen Centric by Politis</p><h2>Start with a local question that needs better evidence.</h2><p>Bring the research process, evidence gathered throughout the study and accountable record into one place.</p></div>
+      <div class="public-actions"><a class="btn public-primary" href="/login">Researcher sign in</a><a class="btn secondary" href="#how-it-works">Review the process</a></div>
     </div>
   </section>
 </main>
 {% endblock %}
 
-{% block footer %}
-<footer class="public-footer">
-  <div class="public-container public-footer-inner">
-    <div class="brand"><img class="brand-logo brand-logo--wordmark" src="/static/citizen-centric-logo.png" alt="Citizen Centric by Politis"></div>
-    <nav aria-label="Footer navigation"><a href="#how-it-works">How it works</a><a href="#responsible-research">Privacy and security</a><a href="/login">Researcher sign in</a></nav>
-    <small>Participant access is available through a private study invitation.</small>
-  </div>
-</footer>
-{% endblock %}
+{% block footer %}{% include "_public_footer.html" %}{% endblock %}

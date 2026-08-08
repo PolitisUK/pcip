@@ -10,7 +10,7 @@
   {% block head_meta %}{% endblock %}
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" href="/static/citizen-centric-logo-compact.png">
-  <link rel="stylesheet" href="/static/app.css?v={{ version }}-website">
+  <link rel="stylesheet" href="/static/app.css?v={{ version }}-website-v5">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -83,7 +83,7 @@
 {% block public %}{% endblock %}
 {% endif %}
 <div class="sr-only" aria-live="polite" aria-atomic="true" id="live-region"></div>
-{% block footer %}<footer class="app-footer">Citizen Centric <span>by Politis</span> · <small>v{{ version }}</small></footer>{% endblock %}
+{% block footer %}{% if user %}<footer class="app-footer">Citizen Centric <span>by Politis</span> · <small>v{{ version }}</small></footer>{% else %}{% include "_public_footer.html" %}{% endif %}{% endblock %}
 <script nonce="{{ csp_nonce }}" src="/static/app.js?v={{ version }}" defer></script>
 {% block page_scripts %}{% endblock %}
 </body>
