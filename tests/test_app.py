@@ -156,10 +156,11 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         assert 'Civic intelligence for Place councils' in homepage.text
         assert 'Understand communities before making decisions.' in homepage.text
         assert 'Citizen Centric supports structured qualitative and mixed-methods research.' in homepage.text
+        assert 'the decisions that shape everyday life' in homepage.text
         assert 'Administrative data often shows what happened.' in homepage.text
         assert 'Qualitative research helps explain why.' in homepage.text
         assert 'decision-grade evidence' in homepage.text
-        assert 'community ethnographers' in homepage.text
+        assert 'trained community ethnographers' in homepage.text
         assert 'Use stronger evidence in two directions.' in homepage.text
         assert 'Consultee responses, planning representations and planning enforcement concerns' in homepage.text
         assert 'Evidence submitted to principal authorities, government and regulators' in homepage.text
@@ -167,9 +168,9 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         assert 'evidence-led co-design' in homepage.text.lower()
         assert 'seldom-heard perspectives' in homepage.text
         assert 'not statistical representation' in homepage.text
-        assert 'Evidence question' in homepage.text
+        assert 'Research enquiry' in homepage.text
         assert 'Why have reports about this planning issue fallen even though residents say the problem continues?' in homepage.text
-        assert 'Evidence excerpt' in homepage.text
+        assert 'Participant account' in homepage.text
         evidence_excerpt = (
             '"We were told that the more reports the council received, the more likely it was that something would be done. '
             'My neighbours and I reported the same problems almost every day for months, but nothing changed. Eventually we '
@@ -179,6 +180,9 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         assert evidence_excerpt in homepage.text
         assert 'Research codes' in homepage.text
         assert 'Codes support analysis. Findings emerge through comparison, context and interpretation' in homepage.text
+        assert 'Emerging insight' in homepage.text
+        assert 'Repeated reporting without visible action appears to reduce confidence in the reporting process' in homepage.text
+        assert 'Provisional interpretation. Test against additional participant accounts and other evidence before treating it as a finding.' in homepage.text
         for code in [
             '#Trust',
             '#Disengagement',
@@ -213,6 +217,11 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         assert 'Politis Demo Council' not in homepage.text
         assert 'name="description"' in homepage.text
         assert 'class="public-site"' in homepage.text
+        assert 'Build understanding' in homepage.text
+        assert 'Design the research' in homepage.text
+        assert 'Develop evidence over time' in homepage.text
+        assert 'Inform decisions and keep learning' in homepage.text
+        assert 'Research is iterative.' in homepage.text
 
         login_page = client.get('/login')
         assert login_page.status_code == 200
