@@ -1243,6 +1243,30 @@ button.is-loading::after,
   line-height: 1.45;
 }
 
+.preview-insight {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+
+.preview-insight p,
+.preview-insight small {
+  margin: 0;
+}
+
+.preview-insight p {
+  color: #344e67;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.preview-insight small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
 .preview-signals {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
