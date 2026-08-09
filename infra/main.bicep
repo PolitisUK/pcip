@@ -24,21 +24,23 @@ param entraDefaultOrganisationSlug string = ''
 param defenderMonthlyScanCapGB int = 10
 param runMigrations bool = false
 
-var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, prefix, environmentName)
-var compact = toLower(replace('${prefix}${environmentName}${take(suffix, 8)}', '-', ''))
+var normalizedPrefix = toLower(prefix)
+var normalizedEnvironmentName = toLower(environmentName)
+var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, normalizedPrefix, normalizedEnvironmentName)
+var compact = replace('${normalizedPrefix}${normalizedEnvironmentName}${take(suffix, 8)}', '-', '')
 var storageName = take('${compact}st', 24)
 var registryName = take('${compact}acr', 50)
-var appName = '${prefix}-${environmentName}-${take(suffix, 6)}'
+var appName = '${normalizedPrefix}-${normalizedEnvironmentName}-${take(suffix, 6)}'
 var appHostName = '${appName}.azurewebsites.net'
-var isProduction = toLower(environmentName) == 'production'
+var isProduction = normalizedEnvironmentName == 'production'
 var publicHostName = isProduction ? 'citizencentric.co.uk' : appHostName
 var trustedHostNames = isProduction ? '${appHostName},citizencentric.co.uk,www.citizencentric.co.uk' : appHostName
 var allowedOriginList = isProduction ? 'https://${appHostName},https://citizencentric.co.uk,https://www.citizencentric.co.uk' : 'https://${appHostName}'
 var planName = '${appName}-plan'
 var insightsName = '${appName}-appi'
 var logName = '${appName}-log'
-var vaultName = take('${prefix}-${environmentName}-${take(suffix, 6)}-kv', 24)
-var postgresName = take('${prefix}-${environmentName}-${take(suffix, 8)}-pg', 63)
+var vaultName = take('${normalizedPrefix}-${normalizedEnvironmentName}-${take(suffix, 6)}-kv', 24)
+var postgresName = take('${normalizedPrefix}-${normalizedEnvironmentName}-${take(suffix, 8)}-pg', 63)
 var databaseName = 'pcip'
 var databaseUrl = 'postgresql+psycopg://${postgresAdminUser}:${uriComponent(postgresAdminPassword)}@${postgresName}.postgres.database.azure.com:5432/${databaseName}?sslmode=require'
 var imageName = '${registryName}.azurecr.io/pcip:${containerImageTag}'
@@ -202,7 +204,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
       minimumElasticInstanceCount: 1
       appSettings: [
         { name: 'APP_NAME', value: 'Citizen Centric' }
-        { name: 'ENVIRONMENT', value: environmentName }
+        { name: 'ENVIRONMENT', value: normalizedEnvironmentName }
         { name: 'SEED_DEMO_DATA', value: 'false' }
         { name: 'DATABASE_URL', value: '@Microsoft.KeyVault(SecretUri=${dbSecret.properties.secretUriWithVersion})' }
         { name: 'SECRET_KEY', value: '@Microsoft.KeyVault(SecretUri=${sessionSecret.properties.secretUriWithVersion})' }

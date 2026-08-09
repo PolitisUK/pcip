@@ -30,6 +30,32 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Validate Azure resource naming parameters
+        id: deployment_parameters
+        shell: bash
+        env:
+          CONFIGURED_PREFIX: ${{ vars.PCIP_PREFIX }}
+          REQUESTED_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+
+          PREFIX="${CONFIGURED_PREFIX:-pcip}"
+          PREFIX=$(printf '%s' "$PREFIX" | tr '[:upper:]' '[:lower:]')
+          ENVIRONMENT_NAME=$(printf '%s' "$REQUESTED_ENVIRONMENT" | tr '[:upper:]' '[:lower:]')
+          RESOURCE_NAME_PATTERN='^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+
+          if [[ ! "$PREFIX" =~ $RESOURCE_NAME_PATTERN ]]; then
+            echo "PCIP_PREFIX must contain only letters, numbers, and internal hyphens." >&2
+            exit 1
+          fi
+
+          if [[ ! "$ENVIRONMENT_NAME" =~ $RESOURCE_NAME_PATTERN ]]; then
+            echo "The deployment environment must contain only letters, numbers, and internal hyphens." >&2
+            exit 1
+          fi
+
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+          echo "environment_name=$ENVIRONMENT_NAME" >> "$GITHUB_OUTPUT"
       - name: Deploy Azure resources
         uses: azure/arm-deploy@v2
         with:
@@ -38,8 +64,8 @@ jobs:
           template: infra/main.bicep
           failOnStdErr: false
           parameters: >-
-            prefix=${{ vars.PCIP_PREFIX }}
-            environmentName=${{ inputs.environment }}
+            prefix=${{ steps.deployment_parameters.outputs.prefix }}
+            environmentName=${{ steps.deployment_parameters.outputs.environment_name }}
             containerImageTag=${{ inputs.image_tag }}-${{ github.run_number }}
             postgresAdminUser=${{ vars.POSTGRES_ADMIN_USER }}
             postgresAdminPassword=${{ secrets.POSTGRES_ADMIN_PASSWORD }}
