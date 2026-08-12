@@ -32,6 +32,13 @@
   {% endif %}
 </section>
 
+{% if research_intelligence_enabled %}
+<section class="card card--data section" id="research-intelligence">
+  <div class="section-head"><div><h2>Research Intelligence</h2><p class="muted">AI suggestions are provisional, cite their source, and require a researcher decision.</p></div></div>
+  {% if suggestions %}<table class="table"><thead><tr><th>Source response</th><th>AI suggestion</th><th>Status</th><th>Researcher decision</th></tr></thead><tbody>{% for item in suggestions %}<tr><td>#{{ item.source_response_id }}<br><small>{{ item.source_snapshot[:140] }}</small></td><td><strong>Provisional insight</strong><br>{{ item.provisional_insight }}<br><small>{{ item.suggested_codes_json }}</small></td><td><span class="badge">{{ item.status|replace('_',' ')|title }}</span></td><td>{% if item.status == 'awaiting_researcher_review' and can_edit %}<form method="post" action="/studies/{{ study.id }}/research-analysis/{{ item.id }}/review" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input name="note" placeholder="Reason required to reject"><button name="decision" value="accepted">Accept</button><button name="decision" value="rejected">Reject</button></form>{% else %}{{ item.reviewer_note or 'Awaiting researcher review' }}{% endif %}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="muted">No AI analysis has been requested for this study.</p>{% endif %}
+</section>
+{% endif %}
+
 <section class="card card--data section" id="team-access">
   <div class="section-head">
     <div>

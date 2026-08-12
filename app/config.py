@@ -80,10 +80,17 @@ class Settings(BaseSettings):
     key_vault_secret_secret_key: str = "session-secret"
     key_vault_secret_defender_webhook: str = "defender-webhook-secret"
     key_vault_secret_entra_client_secret: str = "entra-client-secret"
+    key_vault_secret_azure_openai_api_key: str = "azure-openai-api-key"
     startup_validate_migrations: bool = True
     privacy_retention_days: int = 365
     privacy_retention_statuses: str = "withdrawn,completed"
     privacy_retention_action: str = "anonymise"
+    research_intelligence_enabled: bool = False
+    research_intelligence_ai_coding_enabled: bool = False
+    research_intelligence_semantic_search_enabled: bool = False
+    azure_openai_endpoint: str | None = None
+    azure_openai_api_key: str | None = None
+    azure_openai_deployment: str = "qual-coder"
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
 
@@ -138,6 +145,7 @@ def apply_key_vault_overrides(runtime: Settings) -> None:
     _load_secret("secret_key", "SECRET_KEY", runtime.key_vault_secret_secret_key)
     _load_secret("azure_defender_webhook_secret", "AZURE_DEFENDER_WEBHOOK_SECRET", runtime.key_vault_secret_defender_webhook)
     _load_secret("entra_client_secret", "ENTRA_CLIENT_SECRET", runtime.key_vault_secret_entra_client_secret)
+    _load_secret("azure_openai_api_key", "AZURE_OPENAI_API_KEY", runtime.key_vault_secret_azure_openai_api_key)
 
 
 def validate_runtime_settings(runtime: Settings) -> None:

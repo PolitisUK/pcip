@@ -335,6 +335,24 @@ Index(
 )
 
 
+class ResearchAnalysisSuggestion(Base):
+    """Untrusted AI output; never an accepted finding without researcher review."""
+    __tablename__ = "research_analysis_suggestions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    source_response_id: Mapped[int] = mapped_column(ForeignKey("activity_responses.id"), index=True)
+    source_snapshot: Mapped[str] = mapped_column(Text)
+    suggested_codes_json: Mapped[str] = mapped_column(Text, default="[]")
+    provisional_insight: Mapped[str] = mapped_column(Text, default="")
+    confidence: Mapped[float] = mapped_column(default=0.0)
+    status: Mapped[str] = mapped_column(String(30), default="awaiting_researcher_review", index=True)
+    reviewer_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewer_note: Mapped[str] = mapped_column(Text, default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(primary_key=True)
