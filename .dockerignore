@@ -17,5 +17,7 @@ data/uploads
 *.backup
 infra/main.json
 tests
-scripts
+scripts/*
+!scripts/__init__.py
+!scripts/bootstrap_admin.py
 *.md
