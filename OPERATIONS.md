@@ -107,6 +107,33 @@ Then verify manually with non-sensitive test records:
 8. audit event creation;
 9. request, exception, dependency, and trace telemetry.
 
+## First privileged account recovery
+
+Use the normal **Researchers** invitation flow whenever an active owner or
+administrator exists. The bootstrap command is only for an organisation with
+no active privileged membership. It creates no password; the new owner must
+use the existing password-reset flow or Microsoft Entra sign-in.
+
+Run a dry-run first:
+
+```bash
+python -m scripts.bootstrap_admin \
+  --organisation-name "Example Council" \
+  --organisation-slug example-council \
+  --name "Named Owner" \
+  --email owner@example.gov.uk \
+  --role owner \
+  --create-organisation \
+  --dry-run
+```
+
+After reviewing the dry-run, repeat it with
+`--confirm-production-bootstrap` instead of `--dry-run`. The command refuses
+duplicate identities, mismatched organisation names, incomplete migrations,
+and any organisation that already has an active owner or administrator. Run it
+from an approved operator environment with `DATABASE_URL` supplied securely;
+never place the database URL or a password on the command line or in logs.
+
 ## Normal startup
 
 Expected sequence:
