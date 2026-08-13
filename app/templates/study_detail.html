@@ -39,6 +39,14 @@
 </section>
 {% endif %}
 
+{% if evidence_confidence_enabled %}
+<section class="card card--data section" id="evidence-confidence">
+  <div class="section-head"><div><h2>Evidence Confidence</h2><p class="muted">A qualitative evidence-strength assessment, not a statistical confidence or population claim. Contradictory accounts stay visible.</p></div></div>
+  {% if can_edit %}<form method="post" action="/studies/{{ study.id }}/evidence-confidence" class="stack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Focus or provisional interpretation</label><input name="focus" required></div><div class="row"><div class="field"><label>Supporting response IDs</label><input name="supporting_response_ids" placeholder="e.g. 12, 18"></div><div class="field"><label>Contradicting response IDs</label><input name="contradicting_response_ids" placeholder="e.g. 24"></div></div><button>Create provisional assessment</button></form>{% endif %}
+  {% if confidence_assessments %}<table class="table"><thead><tr><th>Focus</th><th>Strength</th><th>Support and limitations</th><th>Review</th></tr></thead><tbody>{% for item in confidence_assessments %}<tr><td>{{ item.focus }}<br><small>Sources: {{ item.supporting_response_ids_json }} · Contradictions: {{ item.contradicting_response_ids_json }}</small></td><td><span class="badge">{{ item.category|title }}</span><br><small>{{ item.status|replace('_',' ')|title }}</small></td><td>{{ item.explanation }}<br><small>{{ item.limitations_json }}</small></td><td>{% if item.status == 'awaiting_researcher_review' and can_edit %}<form method="post" action="/studies/{{ study.id }}/evidence-confidence/{{ item.id }}/review" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input name="note" placeholder="Reason required to reject"><button name="decision" value="accepted">Accept</button><button name="decision" value="rejected">Reject</button></form>{% else %}{{ item.reviewer_note or 'Awaiting researcher review' }}{% endif %}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="muted">No confidence assessments have been created.</p>{% endif %}
+</section>
+{% endif %}
+
 <section class="card card--data section" id="team-access">
   <div class="section-head">
     <div>

@@ -26,6 +26,7 @@ from .models import (
     ActivityResponse,
     AuditEvent,
     ConsentStatus,
+    EvidenceConfidenceAssessment,
     EvidenceFile,
     Invitation,
     Organisation,
@@ -50,7 +51,11 @@ from .models import (
 )
 from .security import hash_password, verify_password, new_token, token_hash, encode_session, decode_session
 from .services import audit, queue_email
-from .research_intelligence import review_suggestion
+from .research_intelligence import (
+    create_confidence_assessment,
+    review_confidence_assessment,
+    review_suggestion,
+)
 from .storage import storage
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
@@ -1864,7 +1869,8 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
         access_map = {}
         team = []
     suggestions=db.scalars(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.organisation_id==u.organisation_id,ResearchAnalysisSuggestion.study_id==s.id).order_by(ResearchAnalysisSuggestion.created_at.desc()).limit(20)).all() if settings.research_intelligence_enabled else []
-    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions)
+    confidence_assessments=db.scalars(select(EvidenceConfidenceAssessment).where(EvidenceConfidenceAssessment.organisation_id==u.organisation_id,EvidenceConfidenceAssessment.study_id==s.id).order_by(EvidenceConfidenceAssessment.created_at.desc()).limit(20)).all() if settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled else []
+    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments)
 @app.post("/studies/{study_id}/research-analysis/{suggestion_id}/review")
 def review_research_analysis(study_id:int,suggestion_id:int,decision:str=Form(...),note:str=Form(""),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     if not settings.research_intelligence_enabled: raise HTTPException(404,"Research Intelligence is disabled")
@@ -1875,6 +1881,28 @@ def review_research_analysis(study_id:int,suggestion_id:int,decision:str=Form(..
     except (PermissionError,ValueError) as exc: raise HTTPException(400,str(exc))
     audit(db,u.organisation_id,u.id,f"research_analysis.{decision}","research_analysis_suggestion",row.id,row.source_response_id.__str__()); db.commit()
     return RedirectResponse(f"/studies/{s.id}",303)
+@app.post("/studies/{study_id}/evidence-confidence")
+def create_evidence_confidence(study_id:int,focus:str=Form(...),supporting_response_ids:str=Form(""),contradicting_response_ids:str=Form(""),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    if not (settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled): raise HTTPException(404,"Evidence Confidence is disabled")
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    try:
+        support_ids={int(value) for value in supporting_response_ids.split(',') if value.strip()}; contradiction_ids={int(value) for value in contradicting_response_ids.split(',') if value.strip()}
+    except ValueError: raise HTTPException(400,"Source response IDs must be whole numbers")
+    if support_ids & contradiction_ids: raise HTTPException(400,"A source cannot both support and contradict the same assessment")
+    source_rows=db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id==s.id,ActivityResponse.id.in_(support_ids|contradiction_ids))).all() if support_ids|contradiction_ids else []
+    if {row.id for row in source_rows} != support_ids|contradiction_ids: raise HTTPException(400,"One or more source responses are unavailable in this study")
+    try: row=create_confidence_assessment(db,u,s,focus,[row for row in source_rows if row.id in support_ids],[row for row in source_rows if row.id in contradiction_ids])
+    except (PermissionError,ValueError) as exc: raise HTTPException(400,str(exc))
+    db.flush(); audit(db,u.organisation_id,u.id,"evidence_confidence.created","evidence_confidence_assessment",row.id,row.focus); db.commit(); return RedirectResponse(f"/studies/{s.id}#evidence-confidence",303)
+@app.post("/studies/{study_id}/evidence-confidence/{assessment_id}/review")
+def review_evidence_confidence(study_id:int,assessment_id:int,decision:str=Form(...),note:str=Form(""),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    if not (settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled): raise HTTPException(404,"Evidence Confidence is disabled")
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    row=db.scalar(select(EvidenceConfidenceAssessment).where(EvidenceConfidenceAssessment.id==assessment_id,EvidenceConfidenceAssessment.organisation_id==u.organisation_id,EvidenceConfidenceAssessment.study_id==s.id))
+    if not row: raise HTTPException(404,"Assessment not found")
+    try: review_confidence_assessment(u,row,decision,note)
+    except (PermissionError,ValueError) as exc: raise HTTPException(400,str(exc))
+    audit(db,u.organisation_id,u.id,f"evidence_confidence.{decision}","evidence_confidence_assessment",row.id,row.focus); db.commit(); return RedirectResponse(f"/studies/{s.id}#evidence-confidence",303)
 @app.post("/studies/{study_id}/edit")
 def edit_study(study_id:int,title:str=Form(...),description:str=Form(""),methodology:str=Form(...),status_value:str=Form(...),demographics_schema:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status")

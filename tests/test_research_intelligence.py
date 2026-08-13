@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.research_intelligence import (
+    build_evidence_confidence,
+    create_confidence_assessment,
     UnsafeAIResponse,
     create_suggestion,
     review_suggestion,
@@ -46,6 +48,33 @@ def test_participant_or_cross_scope_actor_rejected():
     user.role = "observer"
     with pytest.raises(PermissionError):
         review_suggestion(user, row, "accepted")
+
+
+def source(identifier, participant):
+    return SimpleNamespace(id=identifier, participant_id=participant, organisation_id=3, study_id=11)
+
+
+def test_confidence_is_qualitative_and_contradictions_are_contested():
+    result = build_evidence_confidence("Appointment access", [source(1, 1), source(2, 2)], [source(3, 3)])
+    assert result["category"] == "contested"
+    assert result["contradiction_ids"] == [3]
+    assert "not a measure of prevalence" in result["limitations"][0]
+
+
+def test_one_account_does_not_become_strong_evidence():
+    result = build_evidence_confidence("Appointment access", [source(1, 1), source(2, 1)], [])
+    assert result["category"] == "developing"
+    assert "one participant" in result["limitations"][-1]
+
+
+def test_confidence_assessment_enforces_scope_and_review_gate():
+    db, user, study, _ = fixtures()
+    row = create_confidence_assessment(db, user, study, "Access", [source(1, 1)], [])
+    assert row.status == "awaiting_researcher_review"
+    assert row.category == "developing"
+    outsider = source(9, 9); outsider.organisation_id = 4
+    with pytest.raises(PermissionError):
+        create_confidence_assessment(db, user, study, "Access", [outsider], [])
     user.role = "researcher"
     user.organisation_id = 99
     with pytest.raises(PermissionError):

@@ -353,6 +353,26 @@ class ResearchAnalysisSuggestion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class EvidenceConfidenceAssessment(Base):
+    """Qualitative evidence-strength assessment, never a statistical confidence claim."""
+    __tablename__ = "evidence_confidence_assessments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    focus: Mapped[str] = mapped_column(String(200))
+    supporting_response_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    contradicting_response_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    category: Mapped[str] = mapped_column(String(30), default="weak")
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    limitations_json: Mapped[str] = mapped_column(Text, default="[]")
+    strengthening_needs_json: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String(30), default="awaiting_researcher_review", index=True)
+    reviewer_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewer_note: Mapped[str] = mapped_column(Text, default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(primary_key=True)
