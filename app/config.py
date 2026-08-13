@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     research_intelligence_enabled: bool = False
     research_intelligence_ai_coding_enabled: bool = False
     research_intelligence_semantic_search_enabled: bool = False
+    research_intelligence_evidence_confidence_enabled: bool = False
     azure_openai_endpoint: str | None = None
     azure_openai_api_key: str | None = None
     azure_openai_deployment: str = "qual-coder"
