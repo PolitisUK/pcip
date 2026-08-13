@@ -1641,6 +1641,97 @@ def test_enterprise_security_headers_and_access_interface():
         assert 'Skip to main content' in detail.text
 
 
+def test_research_evidence_explorer_api_and_ui_enforce_study_scope(monkeypatch):
+    from app.models import (
+        Activity,
+        ActivityResponse,
+        Participant,
+        ResearchAnalysisSuggestion,
+        Study,
+        User,
+    )
+
+    monkeypatch.setattr(settings, 'research_intelligence_enabled', True)
+    with client:
+        auth()
+        with SessionLocal() as db:
+            study = db.scalar(select(Study).order_by(Study.id))
+            activity = db.scalar(select(Activity).where(Activity.study_id == study.id).order_by(Activity.id))
+            owner = db.scalar(select(User).where(User.organisation_id == study.organisation_id).order_by(User.id))
+            participant = Participant(
+                organisation_id=study.organisation_id,
+                reference=unique_value('explorer'),
+                name='Evidence Explorer Participant',
+                created_by_id=owner.id,
+            )
+            db.add(participant)
+            db.flush()
+            response = ActivityResponse(
+                organisation_id=study.organisation_id,
+                study_id=study.id,
+                activity_id=activity.id,
+                participant_id=participant.id,
+                value_json='{"text":"The library opening hours make evening visits difficult."}',
+                status='submitted',
+            )
+            db.add(response); db.flush()
+            db.add(ResearchAnalysisSuggestion(
+                organisation_id=study.organisation_id,
+                study_id=study.id,
+                source_response_id=response.id,
+                source_snapshot='The library opening hours make evening visits difficult.',
+                suggested_codes_json='[{"label":"opening hours","evidence":"opening hours"}]',
+                provisional_insight='Evening access may need further review.',
+                status='awaiting_researcher_review',
+            ))
+            other_study = Study(
+                organisation_id=study.organisation_id,
+                project_id=study.project_id,
+                title='Out of scope evidence study',
+                code=unique_value('scope').upper(),
+                created_by_id=study.created_by_id,
+            )
+            db.add(other_study)
+            db.flush()
+            other_activity = Activity(
+                organisation_id=study.organisation_id,
+                study_id=other_study.id,
+                title='Other study diary',
+            )
+            db.add(other_activity)
+            db.flush()
+            other_response = ActivityResponse(
+                organisation_id=study.organisation_id,
+                study_id=other_study.id,
+                activity_id=other_activity.id,
+                participant_id=participant.id,
+                value_json='{"text":"The library opening hours are unrelated to this study."}',
+                status='submitted',
+            )
+            db.add(other_response)
+            db.commit()
+            study_id, response_id, other_response_id = study.id, response.id, other_response.id
+
+        response = client.get(f'/api/v1/research/studies/{study_id}/evidence?code=opening%20hours')
+        assert response.status_code == 200
+        payload = response.json()
+        item = next(item for item in payload['data'] if item['response_id'] == response_id)
+        assert item['source_excerpt'] == 'The library opening hours make evening visits difficult.'
+        assert item['analysis_status'] == 'awaiting_researcher_review'
+        assert item['source_type'] == 'activity_response'
+        assert other_response_id not in {item['response_id'] for item in payload['data']}
+
+        quotes = client.get(f'/api/v1/research/studies/{study_id}/quotes?q=evening')
+        assert quotes.status_code == 200
+        assert any(item['response_id'] == response_id for item in quotes.json()['data'])
+        page = client.get(f'/studies/{study_id}/evidence-explorer?q=library')
+        assert page.status_code == 200
+        assert 'Evidence Explorer' in page.text
+        assert 'library opening hours' in page.text
+
+        assert client.get('/api/v1/research/studies/999999/evidence').status_code == 404
+
+
 def test_csp_nonce_is_present_on_public_and_authenticated_pages():
     with client:
         public_page = client.get('/login')

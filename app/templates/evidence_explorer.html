@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Evidence Explorer · {{ study.title }}{% endblock %}
+{% block page_description %}<p class="page-description">Search authorised source material. Results are verbatim participant evidence; AI labels remain separate and provisional until reviewed.</p>{% endblock %}
+{% block content %}
+<section class="card card--hero section-compact">
+  <div class="section-head"><div><p class="muted"><a href="/studies/{{ study.id }}">{{ study.title }}</a></p><h1>Evidence Explorer</h1></div></div>
+  <form method="get" class="stack">
+    <div class="row"><div class="field"><label for="q">Search source material</label><input id="q" name="q" value="{{ q }}" maxlength="200"></div><div class="field"><label for="code">AI-suggested code</label><input id="code" name="code" value="{{ code }}" maxlength="120"></div></div>
+    <div class="row"><div class="field"><label for="participant_id">Participant ID</label><input id="participant_id" type="number" min="1" name="participant_id" value="{{ participant_id or '' }}"></div><div class="field"><label for="analysis_status">Analysis review status</label><select id="analysis_status" name="analysis_status">{% for value, label in [('all','Any'),('awaiting_researcher_review','Awaiting review'),('accepted','Accepted'),('rejected','Rejected')] %}<option value="{{ value }}" {% if value == analysis_status %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div></div>
+    <div><button>Search evidence</button></div>
+  </form>
+</section>
+<section class="card card--data section">
+  <div class="section-head"><div><h2>Source results</h2><p class="muted">{{ total }} matching source item{{ '' if total == 1 else 's' }}{% if total > 100 %}; showing the first 100{% endif %}.</p></div></div>
+  {% for item in items %}
+  <article class="activity">
+    <p><strong>Participant {{ item.participant_reference }}</strong> · {{ item.activity_title }} · response #{{ item.response_id }}</p>
+    <blockquote>{{ item.source_excerpt }}</blockquote>
+    {% if item.source_truncated %}<p class="muted">Excerpt is truncated; open the source response for its complete original wording.</p>{% endif %}
+    <p class="muted">AI review: {{ item.analysis_status|replace('_',' ')|title if item.analysis_status else 'No AI analysis' }}{% if item.suggested_codes %} · Suggested codes: {{ item.suggested_codes|join(', ') }}{% endif %}</p>
+  </article>
+  {% else %}<p class="empty">No authorised submitted source material matches these filters.</p>{% endfor %}
+</section>
+{% endblock %}

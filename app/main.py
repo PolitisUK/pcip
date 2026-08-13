@@ -56,6 +56,8 @@ from .research_intelligence import (
     review_confidence_assessment,
     review_suggestion,
 )
+from .evidence_explorer import evidence_items, filter_evidence
+from .research_api import EvidenceExplorerResponse, EvidenceItemResponse, QuoteFinderResponse
 from .storage import storage
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
@@ -1903,6 +1905,143 @@ def review_evidence_confidence(study_id:int,assessment_id:int,decision:str=Form(
     try: review_confidence_assessment(u,row,decision,note)
     except (PermissionError,ValueError) as exc: raise HTTPException(400,str(exc))
     audit(db,u.organisation_id,u.id,f"evidence_confidence.{decision}","evidence_confidence_assessment",row.id,row.focus); db.commit(); return RedirectResponse(f"/studies/{s.id}#evidence-confidence",303)
+
+
+def _study_evidence_explorer_items(
+    db: Session,
+    user: User,
+    study_row: Study,
+    *,
+    query: str = "",
+    code: str = "",
+    participant_id: int | None = None,
+    analysis_status: str = "all",
+):
+    """Return only submitted, authorised source material for the requested study."""
+    responses = db.scalars(
+        select(ActivityResponse).where(
+            ActivityResponse.organisation_id == user.organisation_id,
+            ActivityResponse.study_id == study_row.id,
+            ActivityResponse.status == "submitted",
+        )
+    ).all()
+    activities = {
+        row.id: row
+        for row in db.scalars(
+            select(Activity).where(
+                Activity.organisation_id == user.organisation_id,
+                Activity.study_id == study_row.id,
+            )
+        ).all()
+    }
+    participant_ids = {row.participant_id for row in responses}
+    participants = {
+        row.id: row
+        for row in db.scalars(
+            select(Participant).where(
+                Participant.organisation_id == user.organisation_id,
+                Participant.id.in_(participant_ids),
+            )
+        ).all()
+    } if participant_ids else {}
+    suggestions = db.scalars(
+        select(ResearchAnalysisSuggestion).where(
+            ResearchAnalysisSuggestion.organisation_id == user.organisation_id,
+            ResearchAnalysisSuggestion.study_id == study_row.id,
+        ).order_by(ResearchAnalysisSuggestion.created_at.desc())
+    ).all()
+    return filter_evidence(
+        evidence_items(responses, activities=activities, participants=participants, suggestions=suggestions),
+        query=query,
+        code=code,
+        participant_id=participant_id,
+        analysis_status=analysis_status,
+    )
+
+
+def _evidence_api_item(item) -> EvidenceItemResponse:
+    return EvidenceItemResponse(
+        response_id=item.response_id,
+        participant_id=item.participant_id,
+        participant_reference=item.participant_reference,
+        activity_id=item.activity_id,
+        activity_title=item.activity_title,
+        source_excerpt=item.source_excerpt,
+        source_truncated=item.source_truncated,
+        submitted_at=item.submitted_at,
+        updated_at=item.updated_at,
+        suggested_codes=item.suggested_codes,
+        analysis_status=item.analysis_status,
+    )
+
+
+@app.get("/studies/{study_id}/evidence-explorer", response_class=HTMLResponse)
+def study_evidence_explorer(
+    study_id: int,
+    request: Request,
+    q: str = Query("", max_length=200),
+    code: str = Query("", max_length=120),
+    participant_id: int | None = Query(None, ge=1),
+    analysis_status: str = Query("all", pattern="^(all|awaiting_researcher_review|accepted|rejected)$"),
+    u=Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if not settings.research_intelligence_enabled:
+        raise HTTPException(404, "Research Intelligence is disabled")
+    s = study(db, study_id, u.organisation_id)
+    require_study_permission(db, u, s)
+    items = _study_evidence_explorer_items(
+        db, u, s, query=q, code=code, participant_id=participant_id, analysis_status=analysis_status,
+    )
+    return render(
+        request,
+        "evidence_explorer.html",
+        user=u,
+        study=s,
+        items=items[:100],
+        total=len(items),
+        q=q,
+        code=code,
+        participant_id=participant_id,
+        analysis_status=analysis_status,
+    )
+
+
+@app.get("/api/v1/research/studies/{study_id}/evidence", response_model=EvidenceExplorerResponse)
+def research_evidence_explorer_api(
+    study_id: int,
+    q: str = Query("", max_length=200),
+    code: str = Query("", max_length=120),
+    participant_id: int | None = Query(None, ge=1),
+    analysis_status: str = Query("all", pattern="^(all|awaiting_researcher_review|accepted|rejected)$"),
+    limit: int = Query(50, ge=1, le=100),
+    u=Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if not settings.research_intelligence_enabled:
+        raise HTTPException(404, "Research Intelligence is disabled")
+    s = study(db, study_id, u.organisation_id)
+    require_study_permission(db, u, s)
+    items = _study_evidence_explorer_items(
+        db, u, s, query=q, code=code, participant_id=participant_id, analysis_status=analysis_status,
+    )
+    return EvidenceExplorerResponse(study_id=s.id, data=[_evidence_api_item(item) for item in items[:limit]], total=len(items), returned=min(len(items), limit))
+
+
+@app.get("/api/v1/research/studies/{study_id}/quotes", response_model=QuoteFinderResponse)
+def research_quote_finder_api(
+    study_id: int,
+    q: str = Query("", max_length=200),
+    code: str = Query("", max_length=120),
+    participant_id: int | None = Query(None, ge=1),
+    analysis_status: str = Query("all", pattern="^(all|awaiting_researcher_review|accepted|rejected)$"),
+    limit: int = Query(50, ge=1, le=100),
+    u=Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """A quote finder that only returns verbatim source excerpts and provenance."""
+    result = research_evidence_explorer_api(study_id, q, code, participant_id, analysis_status, limit, u, db)
+    return QuoteFinderResponse(**result.model_dump())
 @app.post("/studies/{study_id}/edit")
 def edit_study(study_id:int,title:str=Form(...),description:str=Form(""),methodology:str=Form(...),status_value:str=Form(...),demographics_schema:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status")
