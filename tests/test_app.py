@@ -1732,6 +1732,86 @@ def test_research_evidence_explorer_api_and_ui_enforce_study_scope(monkeypatch):
         assert client.get('/api/v1/research/studies/999999/evidence').status_code == 404
 
 
+def test_theme_explorer_requires_accepted_analysis_and_preserves_source_links(monkeypatch):
+    from app.models import Activity, ActivityResponse, Participant, ResearchAnalysisSuggestion, Study, User
+
+    monkeypatch.setattr(settings, 'research_intelligence_enabled', True)
+    with client:
+        auth()
+        with SessionLocal() as db:
+            study = db.scalar(select(Study).order_by(Study.id))
+            source = db.scalar(
+                select(ResearchAnalysisSuggestion).where(
+                    ResearchAnalysisSuggestion.organisation_id == study.organisation_id,
+                    ResearchAnalysisSuggestion.study_id == study.id,
+                ).order_by(ResearchAnalysisSuggestion.id)
+            )
+            if not source:
+                response = db.scalar(
+                    select(ActivityResponse).where(
+                        ActivityResponse.organisation_id == study.organisation_id,
+                        ActivityResponse.study_id == study.id,
+                    ).order_by(ActivityResponse.id)
+                )
+                if not response:
+                    owner = db.scalar(select(User).where(User.organisation_id == study.organisation_id).order_by(User.id))
+                    participant = Participant(
+                        organisation_id=study.organisation_id,
+                        reference=unique_value('theme'),
+                        name='Theme Explorer Participant',
+                        created_by_id=owner.id,
+                    )
+                    activity = Activity(
+                        organisation_id=study.organisation_id,
+                        study_id=study.id,
+                        title='Theme explorer source',
+                    )
+                    db.add_all([participant, activity])
+                    db.flush()
+                    response = ActivityResponse(
+                        organisation_id=study.organisation_id,
+                        study_id=study.id,
+                        activity_id=activity.id,
+                        participant_id=participant.id,
+                        value_json='{"text":"A source account for researcher-created themes."}',
+                        status='submitted',
+                    )
+                    db.add(response)
+                    db.flush()
+                source = ResearchAnalysisSuggestion(
+                    organisation_id=study.organisation_id,
+                    study_id=study.id,
+                    source_response_id=response.id,
+                    source_snapshot='Seeded source snapshot',
+                    suggested_codes_json='[]',
+                    provisional_insight='Reviewed source analysis',
+                    status='accepted',
+                )
+                db.add(source)
+            source.status = 'accepted'
+            db.commit()
+            study_id, suggestion_id, response_id = study.id, source.id, source.source_response_id
+
+        created = post_with_csrf(
+            f'/studies/{study_id}/themes',
+            data={
+                'name': 'Access barriers',
+                'description': 'A researcher-created working theme.',
+                'source_suggestion_ids': str(suggestion_id),
+            },
+            follow_redirects=False,
+        )
+        assert created.status_code == 303
+        payload = client.get(f'/api/v1/research/studies/{study_id}/themes').json()
+        theme = next(item for item in payload['data'] if item['name'] == 'Access barriers')
+        assert theme['status'] == 'researcher_draft'
+        assert theme['source_suggestion_ids'] == [suggestion_id]
+        assert theme['source_response_ids'] == [response_id]
+        page = client.get(f'/studies/{study_id}/theme-explorer')
+        assert page.status_code == 200
+        assert 'Theme Explorer' in page.text
+
+
 def test_csp_nonce_is_present_on_public_and_authenticated_pages():
     with client:
         public_page = client.get('/login')

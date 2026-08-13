@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.evidence_explorer import evidence_items, filter_evidence
+from app.theme_explorer import create_theme, parse_suggestion_ids
 from app.research_intelligence import (
     UnsafeAIResponse,
     build_evidence_confidence,
@@ -103,3 +104,15 @@ def test_evidence_explorer_keeps_quotes_verbatim_and_filters_ai_labels_separatel
     assert items[0].analysis_status == "awaiting_researcher_review"
     assert filter_evidence(items, code="Accessibility") == items
     assert filter_evidence(items, query="shelter rain") == items
+
+
+def test_researcher_theme_requires_accepted_analysis_in_its_study():
+    db, user, study, _ = fixtures()
+    accepted = SimpleNamespace(id=21, organisation_id=3, study_id=11, status="accepted")
+    theme = create_theme(db, user, study, name="Access barriers", description="Working interpretation", suggestions=[accepted])
+    assert theme.status == "researcher_draft"
+    assert theme.source_suggestion_ids_json == "[21]"
+    assert parse_suggestion_ids("21, 22") == {21, 22}
+    accepted.status = "awaiting_researcher_review"
+    with pytest.raises(PermissionError):
+        create_theme(db, user, study, name="Unsafe", description="", suggestions=[accepted])

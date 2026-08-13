@@ -34,3 +34,22 @@ class EvidenceExplorerResponse(BaseModel):
 
 class QuoteFinderResponse(EvidenceExplorerResponse):
     """Quotes are exact excerpts from participant source material, never AI text."""
+
+
+class ThemeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    theme_id: int
+    name: str
+    description: str
+    status: Literal["researcher_draft"]
+    source_suggestion_ids: list[int] = Field(default_factory=list)
+    source_response_ids: list[int] = Field(default_factory=list)
+    created_at: datetime
+
+
+class ThemeListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    study_id: int
+    data: list[ThemeResponse]
