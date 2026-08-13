@@ -551,4 +551,24 @@ Largest unresolved technical risk:
 The proposed OpenAPI 3.1 contract for this design is documented in
 docs/participant-api-v1.yaml.
 
-This specification is proposed only and not yet implemented in application routes.
+The participant endpoints are implemented in application routes. Researcher-facing
+Research Intelligence contracts are documented separately below.
+
+## Research Intelligence evidence contracts
+
+The authenticated researcher application exposes these same-organisation,
+study-authorised endpoints for web and future researcher clients:
+
+- `GET /api/v1/research/studies/{study_id}/evidence`
+- `GET /api/v1/research/studies/{study_id}/quotes`
+
+Both accept `q`, `code`, `participant_id`, `analysis_status`, and bounded
+`limit` filters. They return submitted activity-response source excerpts only,
+with the source response, participant reference, activity and review provenance.
+Quotes are verbatim source excerpts; they are never generated or paraphrased.
+AI-suggested codes and review state are metadata, not evidence or findings.
+
+The feature is unavailable unless `RESEARCH_INTELLIGENCE_ENABLED=true`. Every
+request is server-side constrained to the authenticated user's organisation and
+the requested study permission; cross-study and cross-organisation material is
+not returned.

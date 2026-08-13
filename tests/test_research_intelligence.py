@@ -2,10 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.evidence_explorer import evidence_items, filter_evidence
 from app.research_intelligence import (
+    UnsafeAIResponse,
     build_evidence_confidence,
     create_confidence_assessment,
-    UnsafeAIResponse,
     create_suggestion,
     review_suggestion,
 )
@@ -79,3 +80,26 @@ def test_confidence_assessment_enforces_scope_and_review_gate():
     user.organisation_id = 99
     with pytest.raises(PermissionError):
         review_suggestion(user, row, "accepted")
+
+
+def test_evidence_explorer_keeps_quotes_verbatim_and_filters_ai_labels_separately():
+    response = SimpleNamespace(
+        id=19,
+        participant_id=4,
+        activity_id=8,
+        value_json='{"text":"The bus stop has no shelter when it rains."}',
+        submitted_at=None,
+        updated_at=__import__("datetime").datetime.now(),
+    )
+    activity = SimpleNamespace(id=8, title="Travel diary")
+    participant = SimpleNamespace(id=4, reference="P-004")
+    suggestion = SimpleNamespace(
+        source_response_id=19,
+        status="awaiting_researcher_review",
+        suggested_codes_json='[{"label":"accessibility","evidence":"bus stop"}]',
+    )
+    items = evidence_items([response], activities={8: activity}, participants={4: participant}, suggestions=[suggestion])
+    assert items[0].source_excerpt == "The bus stop has no shelter when it rains."
+    assert items[0].analysis_status == "awaiting_researcher_review"
+    assert filter_evidence(items, code="Accessibility") == items
+    assert filter_evidence(items, query="shelter rain") == items
