@@ -193,6 +193,53 @@ class ParticipantSessionResponse(BaseModel):
     study_scope: list[int]
 
 
+class ParticipantProfile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    participant_id: int
+    display_name: str
+    communication_preference: Literal["email", "sms", "phone", "none"]
+    consent_status: str
+
+
+class UpdateParticipantProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    communication_preference: Literal["email", "sms", "phone", "none"]
+
+
+class ConsentAcceptanceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    consent: Literal[True]
+
+
+class ConsentAcceptanceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    consent_status: Literal["granted"]
+    accepted_at: datetime
+
+
+class SubmissionHistoryItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    response_id: int
+    activity_id: int
+    activity_title: str
+    status: Literal["draft", "submitted"]
+    submitted_at: datetime | None = None
+    updated_at: datetime
+
+
+class SubmissionHistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    study_id: int
+    data: list[SubmissionHistoryItem]
+    pagination: Pagination
+
+
 class LogoutResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -298,3 +345,15 @@ class PortalSummaryResponse(BaseModel):
     activities: list[ActivitySummary]
     responses: list[PortalResponseItem]
     messages: list[ParticipantMessageSummary]
+
+
+class ParticipantSyncResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    study_id: int
+    server_time: datetime
+    activities: list[ActivitySummary]
+    responses: list[PortalResponseItem]
+    evidence: list[EvidenceMetadata]
+    messages: list[ParticipantMessageSummary]
+    next_sync_token: datetime

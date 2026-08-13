@@ -479,6 +479,28 @@ def test_participant_api_portal_summary_requires_participant_session():
         assert response.headers.get('www-authenticate') == 'Bearer'
 
 
+def test_participant_api_profile_consent_and_submission_history_contracts():
+    api_token, _participant_id, study_id, _invitation_token = _prepare_participant_api_portal_context(consent=False, email_suffix='mobile-mvp')
+    headers = {'Authorization': f'Bearer {api_token}', 'Content-Type': 'application/json'}
+    with client:
+        profile = client.get('/api/v1/participant/profile', headers={'Authorization': f'Bearer {api_token}'})
+        assert profile.status_code == 200
+        assert profile.json()['consent_status'] == 'pending'
+
+        accepted = client.post('/api/v1/participant/consent', json={'consent': True}, headers=headers)
+        assert accepted.status_code == 200
+        assert accepted.json()['consent_status'] == 'granted'
+
+        updated = client.put('/api/v1/participant/profile', json={'communication_preference': 'none'}, headers=headers)
+        assert updated.status_code == 200
+        assert updated.json()['communication_preference'] == 'none'
+
+        history = client.get('/api/v1/participant/submissions', headers={'Authorization': f'Bearer {api_token}'})
+        assert history.status_code == 200
+        assert history.json()['study_id'] == study_id
+        assert history.json()['pagination']['limit'] == 50
+
+
 def test_participant_api_portal_summary_cookie_only_session_does_not_authenticate_mobile_api():
     _api_token, _participant_id, _study_id, invitation_token = _prepare_participant_api_portal_context(
         consent=True,

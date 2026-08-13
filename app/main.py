@@ -116,18 +116,25 @@ from .participant_api.schemas import (
     MessageListResponse,
     Pagination,
     ParticipantMessageSummary,
+    ParticipantProfile,
     ParticipantSessionResponse,
     ParticipantSummary,
+    ParticipantSyncResponse,
     PrivacyRequestAcknowledgement,
     PortalResponseItem,
     PortalSummaryResponse,
+    ConsentAcceptanceRequest,
+    ConsentAcceptanceResponse,
     SessionExchangeRequest,
     SessionExchangeResponse,
     SessionInfo,
+    SubmissionHistoryItem,
+    SubmissionHistoryResponse,
     SubmitResponseRequest,
     SubmittedResponseResult,
     StudyListResponse,
     StudySummary,
+    UpdateParticipantProfileRequest,
     WithdrawalRequest,
 )
 
@@ -3245,6 +3252,84 @@ def participant_api_session(
             consent_status=participant_row.consent_status,
         ),
         study_scope=[invitation.study_id],
+    )
+
+
+@app.get("/api/v1/participant/profile", response_model=ParticipantProfile)
+def participant_api_profile(request: Request, response: Response, db: Session = Depends(get_db)):
+    _session_row, _invitation, participant_row = _resolve_participant_api_context(request, db)
+    _cache_control_no_store(response)
+    return ParticipantProfile(
+        participant_id=participant_row.id,
+        display_name=participant_row.name,
+        communication_preference=participant_row.communication_preference,
+        consent_status=participant_row.consent_status,
+    )
+
+
+@app.put("/api/v1/participant/profile", response_model=ParticipantProfile)
+def participant_api_profile_update(
+    payload: UpdateParticipantProfileRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
+    db: Session = Depends(get_db),
+):
+    _require_json_content_type(request)
+    invitation, participant_row, _study_row = _resolve_participant_api_study_scope(request, db, write_scope=True)
+    try:
+        _record_participant_idempotency(db, invitation.id, "profile_update", idempotency_key)
+        participant_row.communication_preference = payload.communication_preference
+        audit(db, invitation.organisation_id, None, "participant.profile_updated", "participant", participant_row.id, "communication_preference")
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    _cache_control_no_store(response)
+    return ParticipantProfile(participant_id=participant_row.id, display_name=participant_row.name, communication_preference=participant_row.communication_preference, consent_status=participant_row.consent_status)
+
+
+@app.post("/api/v1/participant/consent", response_model=ConsentAcceptanceResponse)
+def participant_api_consent_accept(
+    payload: ConsentAcceptanceRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    _require_json_content_type(request)
+    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
+    if invitation.revoked_at or not unexpired(invitation.expires_at):
+        raise _participant_api_unauthorised()
+    if not invitation.accepted_at:
+        grant_participant_consent(invitation, participant_row, now())
+        audit(db, invitation.organisation_id, None, "participant.api_consent_accepted", "participant", participant_row.id, str(invitation.study_id))
+        db.commit()
+    _cache_control_no_store(response)
+    return ConsentAcceptanceResponse(consent_status="granted", accepted_at=invitation.accepted_at)
+
+
+@app.get("/api/v1/participant/submissions", response_model=SubmissionHistoryResponse)
+def participant_api_submission_history(
+    request: Request,
+    response: Response,
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    _invitation, participant_row, study_row = _resolve_participant_api_study_scope(request, db, write_scope=False)
+    rows = db.execute(
+        select(ActivityResponse, Activity.title)
+        .join(Activity, Activity.id == ActivityResponse.activity_id)
+        .where(
+            ActivityResponse.organisation_id == participant_row.organisation_id,
+            ActivityResponse.study_id == study_row.id,
+            ActivityResponse.participant_id == participant_row.id,
+        ).order_by(ActivityResponse.updated_at.desc()).limit(limit)
+    ).all()
+    _cache_control_no_store(response)
+    return SubmissionHistoryResponse(
+        study_id=study_row.id,
+        data=[SubmissionHistoryItem(response_id=item.id, activity_id=item.activity_id, activity_title=title, status=item.status, submitted_at=item.submitted_at, updated_at=item.updated_at) for item, title in rows],
+        pagination=Pagination(limit=limit, has_more=False),
     )
 
 
