@@ -40,6 +40,7 @@ from .models import (
     Project,
     ProjectStatus,
     ResearchAnalysisSuggestion,
+    ResearchTheme,
     PublicAuthSession,
     PublicTokenExchange,
     Role,
@@ -57,7 +58,14 @@ from .research_intelligence import (
     review_suggestion,
 )
 from .evidence_explorer import evidence_items, filter_evidence
-from .research_api import EvidenceExplorerResponse, EvidenceItemResponse, QuoteFinderResponse
+from .research_api import (
+    EvidenceExplorerResponse,
+    EvidenceItemResponse,
+    QuoteFinderResponse,
+    ThemeListResponse,
+    ThemeResponse,
+)
+from .theme_explorer import create_theme, parse_suggestion_ids
 from .storage import storage
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
@@ -2042,6 +2050,125 @@ def research_quote_finder_api(
     """A quote finder that only returns verbatim source excerpts and provenance."""
     result = research_evidence_explorer_api(study_id, q, code, participant_id, analysis_status, limit, u, db)
     return QuoteFinderResponse(**result.model_dump())
+
+
+def _theme_response(theme_row: ResearchTheme, suggestions_by_id: dict[int, ResearchAnalysisSuggestion]) -> ThemeResponse:
+    try:
+        suggestion_ids = [int(value) for value in json.loads(theme_row.source_suggestion_ids_json or "[]")]
+    except (TypeError, ValueError, json.JSONDecodeError):
+        suggestion_ids = []
+    return ThemeResponse(
+        theme_id=theme_row.id,
+        name=theme_row.name,
+        description=theme_row.description,
+        status=theme_row.status,
+        source_suggestion_ids=suggestion_ids,
+        source_response_ids=[
+            suggestions_by_id[item_id].source_response_id
+            for item_id in suggestion_ids
+            if item_id in suggestions_by_id
+        ],
+        created_at=theme_row.created_at,
+    )
+
+
+def _study_themes(db: Session, user: User, study_row: Study):
+    themes = db.scalars(
+        select(ResearchTheme).where(
+            ResearchTheme.organisation_id == user.organisation_id,
+            ResearchTheme.study_id == study_row.id,
+        ).order_by(ResearchTheme.updated_at.desc())
+    ).all()
+    suggestion_ids = {
+        suggestion_id
+        for theme_row in themes
+        for suggestion_id in json.loads(theme_row.source_suggestion_ids_json or "[]")
+        if isinstance(suggestion_id, int)
+    }
+    suggestions = {
+        row.id: row
+        for row in db.scalars(
+            select(ResearchAnalysisSuggestion).where(
+                ResearchAnalysisSuggestion.organisation_id == user.organisation_id,
+                ResearchAnalysisSuggestion.study_id == study_row.id,
+                ResearchAnalysisSuggestion.id.in_(suggestion_ids),
+                ResearchAnalysisSuggestion.status == "accepted",
+            )
+        ).all()
+    } if suggestion_ids else {}
+    return themes, suggestions
+
+
+@app.get("/studies/{study_id}/theme-explorer", response_class=HTMLResponse)
+def study_theme_explorer(study_id: int, request: Request, u=Depends(current_user), db: Session = Depends(get_db)):
+    if not settings.research_intelligence_enabled:
+        raise HTTPException(404, "Research Intelligence is disabled")
+    s = study(db, study_id, u.organisation_id)
+    permission = require_study_permission(db, u, s)
+    themes, suggestions_by_id = _study_themes(db, u, s)
+    accepted_suggestions = db.scalars(
+        select(ResearchAnalysisSuggestion).where(
+            ResearchAnalysisSuggestion.organisation_id == u.organisation_id,
+            ResearchAnalysisSuggestion.study_id == s.id,
+            ResearchAnalysisSuggestion.status == "accepted",
+        ).order_by(ResearchAnalysisSuggestion.reviewed_at.desc())
+    ).all()
+    return render(
+        request,
+        "theme_explorer.html",
+        user=u,
+        study=s,
+        themes=[_theme_response(item, suggestions_by_id) for item in themes],
+        accepted_suggestions=accepted_suggestions,
+        can_edit=permission in {"edit", "manage"},
+    )
+
+
+@app.post("/studies/{study_id}/themes")
+def create_research_theme(
+    study_id: int,
+    name: str = Form(...),
+    description: str = Form(""),
+    source_suggestion_ids: str = Form(...),
+    u=Depends(current_user),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    if not settings.research_intelligence_enabled:
+        raise HTTPException(404, "Research Intelligence is disabled")
+    s = study(db, study_id, u.organisation_id)
+    require_study_permission(db, u, s, edit=True)
+    try:
+        identifiers = parse_suggestion_ids(source_suggestion_ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    suggestions = db.scalars(
+        select(ResearchAnalysisSuggestion).where(
+            ResearchAnalysisSuggestion.organisation_id == u.organisation_id,
+            ResearchAnalysisSuggestion.study_id == s.id,
+            ResearchAnalysisSuggestion.id.in_(identifiers),
+        )
+    ).all()
+    if {row.id for row in suggestions} != identifiers:
+        raise HTTPException(400, "One or more source analyses are unavailable in this study")
+    try:
+        row = create_theme(db, u, s, name=name, description=description, suggestions=suggestions)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    db.flush()
+    audit(db, u.organisation_id, u.id, "research_theme.created", "research_theme", row.id, row.name)
+    db.commit()
+    return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
+
+
+@app.get("/api/v1/research/studies/{study_id}/themes", response_model=ThemeListResponse)
+def research_themes_api(study_id: int, u=Depends(current_user), db: Session = Depends(get_db)):
+    if not settings.research_intelligence_enabled:
+        raise HTTPException(404, "Research Intelligence is disabled")
+    s = study(db, study_id, u.organisation_id)
+    require_study_permission(db, u, s)
+    themes, suggestions_by_id = _study_themes(db, u, s)
+    return ThemeListResponse(study_id=s.id, data=[_theme_response(item, suggestions_by_id) for item in themes])
 @app.post("/studies/{study_id}/edit")
 def edit_study(study_id:int,title:str=Form(...),description:str=Form(""),methodology:str=Form(...),status_value:str=Form(...),demographics_schema:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status")

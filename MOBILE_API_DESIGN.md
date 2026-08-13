@@ -561,12 +561,18 @@ study-authorised endpoints for web and future researcher clients:
 
 - `GET /api/v1/research/studies/{study_id}/evidence`
 - `GET /api/v1/research/studies/{study_id}/quotes`
+- `GET /api/v1/research/studies/{study_id}/themes`
 
 Both accept `q`, `code`, `participant_id`, `analysis_status`, and bounded
 `limit` filters. They return submitted activity-response source excerpts only,
 with the source response, participant reference, activity and review provenance.
 Quotes are verbatim source excerpts; they are never generated or paraphrased.
 AI-suggested codes and review state are metadata, not evidence or findings.
+
+Themes are researcher-created working interpretations. Each theme stores only
+accepted analysis IDs from the same study, and the API resolves their linked
+source response IDs. A working theme is not a final finding or a prevalence
+claim.
 
 The feature is unavailable unless `RESEARCH_INTELLIGENCE_ENABLED=true`. Every
 request is server-side constrained to the authenticated user's organisation and
