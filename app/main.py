@@ -38,6 +38,7 @@ from .models import (
     PasswordReset,
     Project,
     ProjectStatus,
+    ResearchAnalysisSuggestion,
     PublicAuthSession,
     PublicTokenExchange,
     Role,
@@ -49,6 +50,7 @@ from .models import (
 )
 from .security import hash_password, verify_password, new_token, token_hash, encode_session, decode_session
 from .services import audit, queue_email
+from .research_intelligence import review_suggestion
 from .storage import storage
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
@@ -1861,7 +1863,18 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
     else:
         access_map = {}
         team = []
-    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES))
+    suggestions=db.scalars(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.organisation_id==u.organisation_id,ResearchAnalysisSuggestion.study_id==s.id).order_by(ResearchAnalysisSuggestion.created_at.desc()).limit(20)).all() if settings.research_intelligence_enabled else []
+    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions)
+@app.post("/studies/{study_id}/research-analysis/{suggestion_id}/review")
+def review_research_analysis(study_id:int,suggestion_id:int,decision:str=Form(...),note:str=Form(""),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    if not settings.research_intelligence_enabled: raise HTTPException(404,"Research Intelligence is disabled")
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    row=db.scalar(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.id==suggestion_id,ResearchAnalysisSuggestion.organisation_id==u.organisation_id,ResearchAnalysisSuggestion.study_id==s.id))
+    if not row: raise HTTPException(404,"Suggestion not found")
+    try: review_suggestion(u,row,decision,note)
+    except (PermissionError,ValueError) as exc: raise HTTPException(400,str(exc))
+    audit(db,u.organisation_id,u.id,f"research_analysis.{decision}","research_analysis_suggestion",row.id,row.source_response_id.__str__()); db.commit()
+    return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/studies/{study_id}/edit")
 def edit_study(study_id:int,title:str=Form(...),description:str=Form(""),methodology:str=Form(...),status_value:str=Form(...),demographics_schema:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status")
