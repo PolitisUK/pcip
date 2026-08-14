@@ -8,4 +8,10 @@ void main() {
       throwsA(isA<ApiError>()),
     );
   });
+
+  test('queue backoff is bounded and increases after transient failures', () {
+    expect(Queue.backoff(0), const Duration(seconds: 1));
+    expect(Queue.backoff(3), const Duration(seconds: 8));
+    expect(Queue.backoff(99), const Duration(seconds: 64));
+  });
 }
