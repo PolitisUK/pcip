@@ -3,32 +3,30 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
-const _storage = FlutterSecureStorage();
-void main() => runApp(const ParticipantApp());
-
-class Api {
-  Api(this.base, this.token);
-  final Uri base;
-  final String? token;
-  Future<Map<String, dynamic>> request(String method, String path, {Object? body, String? idempotencyKey}) async {
-    if (base.scheme != 'https') throw const ApiException('A secure HTTPS address is required.');
-    // ignore: use_null_aware_elements
-    final request = http.Request(method, base.resolve(path))
-      // ignore: use_null_aware_elements
-      ..headers.addAll({'Accept': 'application/json', 'Content-Type': 'application/json', if (token case final bearer?) 'Authorization': 'Bearer $bearer', if (idempotencyKey case final key?) 'Idempotency-Key': key})
-      ..body = body == null ? '' : jsonEncode(body);
-    final response = await http.Response.fromStream(await request.send());
-    if (response.statusCode == 401) throw const ApiException('Your session has ended.');
-    if (response.statusCode < 200 || response.statusCode > 299) throw const ApiException('We could not complete that safely. Please try again.');
-    return response.body.isEmpty ? <String, dynamic>{} : Map<String, dynamic>.from(jsonDecode(response.body));
-  }
+abstract class ParticipantApi { Future<Map<String,dynamic>> exchange(String invitation); Future<Map<String,dynamic>> session(); Future<void> consent(); Future<void> logout(); }
+class ApiError implements Exception { const ApiError(this.message); final String message; }
+class Api implements ParticipantApi {
+  Api(this.base,this.token); final Uri base; final String? token;
+  Future<Map<String,dynamic>> request(String method,String path,{Object? body}) async { if(base.scheme!='https') throw const ApiError('A secure HTTPS address is required.'); final r=http.Request(method,base.resolve(path))..headers.addAll({'Accept':'application/json','Content-Type':'application/json',if(token case final value?) 'Authorization':'Bearer $value'})..body=body==null?'':jsonEncode(body); final x=await http.Response.fromStream(await r.send()); if(x.statusCode==401) throw const ApiError('Your session has ended.'); if(x.statusCode<200||x.statusCode>299) throw const ApiError('We could not complete that safely. Please try again.'); return Map<String,dynamic>.from(jsonDecode(x.body)); }
+  @override Future<Map<String,dynamic>> exchange(String invitation)=>request('POST','/api/v1/participant/session/exchange',body:{'invitation_token':invitation});
+  @override Future<Map<String,dynamic>> session()=>request('GET','/api/v1/participant/session');
+  @override Future<void> consent() async { await request('POST','/api/v1/participant/consent',body:{'consent':true}); }
+  @override Future<void> logout() async { await request('DELETE','/api/v1/participant/session'); }
 }
-class ApiException implements Exception { const ApiException(this.message); final String message; }
-
-class ParticipantApp extends StatefulWidget { const ParticipantApp({super.key}); @override State<ParticipantApp> createState() => _ParticipantAppState(); }
-class _ParticipantAppState extends State<ParticipantApp> {
-  Api? api; bool loading = true;
-  @override void initState() { super.initState(); _restore(); }
-  Future<void> _restore() async { final url = await _storage.read(key: 'api_url'); final token = await _storage.read(key: 'access_token'); if (url != null && token != null) { try { api = Api(Uri.parse(url), token); await api!.request('GET', '/api/v1/participant/session'); } catch (_) { await _storage.deleteAll(); api = null; } } if (mounted) setState(() => loading = false); }
-  @override Widget build(BuildContext context) => MaterialApp(theme: ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xff176b63)), home: Scaffold(appBar: AppBar(title: const Text('Citizen Centric')), body: Center(child: loading ? const CircularProgressIndicator() : Text(api == null ? 'Use your secure invitation to join your study.' : 'Your study is ready.'))));
+class SessionStore { SessionStore(this.storage); final FlutterSecureStorage storage; Future<void> save(String url,String token)=>Future.wait([storage.write(key:'api_url',value:url),storage.write(key:'access_token',value:token)]); Future<(String,String)?> read() async { final u=await storage.read(key:'api_url');final t=await storage.read(key:'access_token');return u==null||t==null?null:(u,t); } Future<void> clear()=>storage.deleteAll(); }
+final _store=SessionStore(FlutterSecureStorage());
+void main()=>runApp(ParticipantApp());
+class ParticipantApp extends StatefulWidget { ParticipantApp({super.key,SessionStore? store,this.factory}):store=store??_store; final SessionStore store; final ParticipantApi Function(String,String?)? factory; @override State<ParticipantApp> createState()=>_ParticipantAppState(); }
+class _ParticipantAppState extends State<ParticipantApp> { ParticipantApi? api; Map<String,dynamic>? session; bool busy=true; String? error;
+  ParticipantApi make(String u,String? t)=>widget.factory?.call(u,t)??Api(Uri.parse(u),t);
+  @override void initState(){super.initState();restore();}
+  Future<void> restore() async { final saved=await widget.store.read(); if(saved!=null){try{api=make(saved.$1,saved.$2);session=await api!.session();}catch(_){await widget.store.clear();api=null;}}if(mounted)setState(()=>busy=false); }
+  Future<void> join(String url,String invitation) async { try{final first=make(url,null);final result=await first.exchange(invitation);final token=(result['session'] as Map)['access_token'] as String;await widget.store.save(url,token);api=make(url,token);session=await api!.session();error=null;} on ApiError catch(e){error=e.message;}catch(_){error='We could not connect. Please check your details and try again.';}if(mounted)setState((){}); }
+  Future<void> accept() async { try{await api!.consent();session=await api!.session();error=null;}on ApiError catch(e){error=e.message;}if(mounted)setState((){}); }
+  Future<void> signOut() async { try{await api?.logout();}catch(_){}await widget.store.clear();if(mounted)setState((){api=null;session=null;error=null;}); }
+  @override Widget build(BuildContext c){if(busy)return const MaterialApp(home:Scaffold(body:Center(child:CircularProgressIndicator(semanticsLabel:'Loading your secure session'))));if(api==null)return MaterialApp(home:Invite(error:error,onJoin:join));final participant=Map<String,dynamic>.from(session!['participant']);if(participant['consent_status']!='granted')return MaterialApp(home:Consent(error:error,onAccept:accept));return MaterialApp(home:Home(name:participant['display_name'] as String,onLogout:signOut));}
 }
+class Invite extends StatefulWidget { const Invite({super.key,required this.error,required this.onJoin});final String? error;final Future<void> Function(String,String) onJoin;@override State<Invite> createState()=>_InviteState();}
+class _InviteState extends State<Invite>{final url=TextEditingController(),code=TextEditingController();bool waiting=false;Future<void> submit()async{setState(()=>waiting=true);await widget.onJoin(url.text.trim(),code.text.trim());if(mounted)setState(()=>waiting=false);}@override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Citizen Centric')),body:SafeArea(child:Padding(padding:const EdgeInsets.all(24),child:ListView(children:[Semantics(header:true,child:const Text('Join your study',style:TextStyle(fontSize:28,fontWeight:FontWeight.bold))),const SizedBox(height:12),const Text('Enter the secure service address and invitation code from your research team.'),TextField(controller:url,keyboardType:TextInputType.url,decoration:const InputDecoration(labelText:'Secure service address',hintText:'https://…')),TextField(controller:code,decoration:const InputDecoration(labelText:'Invitation code')),if(widget.error!=null)Semantics(liveRegion:true,child:Padding(padding:const EdgeInsets.only(top:12),child:Text(widget.error!,style:const TextStyle(color:Colors.red)))),const SizedBox(height:20),SizedBox(height:48,child:FilledButton(onPressed:waiting?null:submit,child:Text(waiting?'Checking invitation…':'Continue')))]))));}
+class Consent extends StatefulWidget{const Consent({super.key,required this.error,required this.onAccept});final String? error;final Future<void> Function()onAccept;@override State<Consent>createState()=>_ConsentState();}class _ConsentState extends State<Consent>{bool yes=false,waiting=false;Future<void>go()async{setState(()=>waiting=true);await widget.onAccept();if(mounted)setState(()=>waiting=false);}@override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Your consent')),body:Padding(padding:const EdgeInsets.all(24),child:ListView(children:[Semantics(header:true,child:const Text('Before you begin',style:TextStyle(fontSize:28,fontWeight:FontWeight.bold))),const Text('Taking part is your choice. Your responses are shared securely with the Citizen Centric research team for this study.'),CheckboxListTile(value:yes,onChanged:(v)=>setState(()=>yes=v??false),title:const Text('I understand and agree to take part.'),controlAffinity:ListTileControlAffinity.leading),if(widget.error!=null)Semantics(liveRegion:true,child:Text(widget.error!,style:const TextStyle(color:Colors.red))),SizedBox(height:48,child:FilledButton(onPressed:yes&&!waiting?go:null,child:Text(waiting?'Saving consent…':'Accept and continue')))])));}
+class Home extends StatelessWidget{const Home({super.key,required this.name,required this.onLogout});final String name;final Future<void>Function()onLogout;@override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Your study'),actions:[IconButton(tooltip:'Sign out',onPressed:onLogout,icon:const Icon(Icons.logout))]),body:Padding(padding:const EdgeInsets.all(24),child:ListView(children:[Semantics(header:true,child:Text('Welcome, $name',style:const TextStyle(fontSize:28,fontWeight:FontWeight.bold))),const SizedBox(height:12),const Text('You are ready to take part. Your study activities will appear here.'),const SizedBox(height:24),const Card(child:ListTile(title:Text('Activities'),subtitle:Text('Coming next'))),const Card(child:ListTile(title:Text('Profile'),subtitle:Text('Coming next'))),const Card(child:ListTile(title:Text('Submission history'),subtitle:Text('Coming next')))])));}
