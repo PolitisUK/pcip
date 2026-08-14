@@ -119,7 +119,6 @@ from .participant_api.schemas import (
     ParticipantProfile,
     ParticipantSessionResponse,
     ParticipantSummary,
-    ParticipantSyncResponse,
     PrivacyRequestAcknowledgement,
     PortalResponseItem,
     PortalSummaryResponse,
