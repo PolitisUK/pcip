@@ -20,6 +20,10 @@ void main() {
     expect(allowsApiBase(Uri.parse('https://example.invalid')), isFalse);
   });
 
+  test('the release build defaults to the approved PCIP HTTPS base', () {
+    expect(configuredApiBase(), Uri.parse('https://citizencentric.co.uk'));
+  });
+
   test('a debug override is never selected in a release build', () {
     expect(
       selectedApiBaseValue(

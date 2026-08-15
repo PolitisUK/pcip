@@ -36,14 +36,14 @@ production endpoint, credentials, or participant material was used.
 | --- | --- | --- |
 | A. Invitation, consent and text activity | BLOCKED: CoreSimulator service became unavailable before authenticated interaction | PASS: real invitation exchange, consent gating, activity load, local draft, submit, and history confirmation. |
 | B. Session recovery, profile and preferences | BLOCKED: CoreSimulator service became unavailable before authenticated interaction | PASS: a stored session restored after force-stop/relaunch; profile and communication preference update confirmed by the backend. |
-| C. Offline text/reconnect | BLOCKED: requires authenticated simulator interaction | BLOCKED: the emulator's local HTTP QA fallback was intentionally development-only; transport-loss replay remains covered by automated tests and requires a trusted HTTPS QA environment for device confirmation. |
+| C. Offline text/reconnect | BLOCKED: authenticated interaction automation could not complete the consent-selection gesture in CoreSimulator. | PASS: an isolated, temporary HTTPS tunnel was used; the service was stopped for submission, then restored. The app retained the text locally, replayed on resume, and the isolated service recorded exactly one submission. |
 | D. Messaging | BLOCKED: CoreSimulator service became unavailable before authenticated interaction | PASS: synthetic research-team message opened successfully and a participant reply was accepted. Read/unread is NOT SUPPORTED by the backend. |
 | E. Photo capture and library | PHYSICAL DEVICE REQUIRED | PARTIAL: Android Photo Picker, preview/remove UI, backend upload, and processing copy passed using a synthetic image. Camera capture and production permission recovery require a physical device. |
 | F. Document picker | BLOCKED: requires authenticated simulator interaction | PASS: Android system document picker selected a synthetic PDF, displayed filename/size, and received backend upload acknowledgement. |
 | G. Voice diary | PHYSICAL DEVICE REQUIRED | PHYSICAL DEVICE REQUIRED: Android microphone permission denial and retry were verified. The emulator did not provide reliable recording/playback evidence. Participant-facing transcription is NOT SUPPORTED by the backend. |
 | H. Withdrawal | BLOCKED: CoreSimulator service became unavailable before authenticated interaction | PASS: cancellation and explicit confirmation were exercised using an isolated synthetic study; server acknowledgement was shown. |
 | I. Deletion request | BLOCKED: CoreSimulator service became unavailable before authenticated interaction | PASS: cancellation and explicit confirmation were exercised using an isolated synthetic participant; server acknowledgement was shown. Status lookup is NOT SUPPORTED by the backend. |
-| Accessibility, permission and background/resume checks | PARTIAL: authenticated simulator interaction was blocked by the local simulator service | PARTIAL: semantic labels and scaled layout were visible in the emulator; TalkBack, OS permission prompts, media controls, and full background/reconnect behaviour require device QA. |
+| Accessibility, permission and background/resume checks | PARTIAL: session restoration and scaled layout were visible; screen-reader and hardware permission tests require a physical device. | PARTIAL: semantic labels and scaled layout were visible; background/resume replay passed with queued text, while TalkBack, OS permission prompts, and media controls require device QA. |
 
 Only disposable synthetic QA data was created. No production endpoint was used.
 
@@ -95,6 +95,43 @@ password field. Invalid and expired tokens use the same participant-safe error.
 | iOS simulator | iPhone 17 Pro, iOS 26.5 | PASS: rebuilt, installed, and launched; approved logo and one invitation-code field shown with no participant-facing endpoint field. |
 | Android emulator | Google APIs ARM64, Android 16 / API 36 | PASS: rebuilt, installed, and launched; approved logo and one invitation-code field shown with no participant-facing endpoint field. |
 
-Release configuration still requires the approved production HTTPS API root to
-be supplied as `PCIP_API_BASE_URL` by the signed-build pipeline. No endpoint is
-shown to, or accepted from, a participant.
+The release default is the approved production `BASE_URL` defined by the Azure
+deployment workflow (`https://citizencentric.co.uk`). A signed-build pipeline
+may set the identical `PCIP_API_BASE_URL` explicitly; no endpoint is shown to,
+or accepted from, a participant.
+
+## Final trusted-HTTPS and hardware QA boundaries
+
+Run date: 2026-08-15. The documented legacy staging host did not resolve and
+production was not used. An isolated local PCIP instance with a disposable
+SQLite database, ephemeral storage, and synthetic participants was exposed only
+for this QA run through a temporary HTTPS tunnel. It was removed after testing.
+The tunnel confirmed the release HTTPS transport path without using production
+data or credentials.
+
+No physical iOS or Android device was connected. The available iPhone 17 Pro
+(iOS 26.5) and Android API 36 targets are simulators/emulator only.
+
+| Final QA item | iOS simulator | Android emulator |
+| --- | --- | --- |
+| Trusted HTTPS Journey C: offline → reconnect → one submission | BLOCKED: CoreSimulator automation could not complete the consent-selection gesture. | PASS: text remained saved on-device while the isolated service was unavailable; after service recovery and app resume, exactly one server submission was recorded. |
+| Network failure: offline, timeout, expired session and retry | BLOCKED: only the authenticated session and home were exercised. | PASS: temporary service unavailability showed the saved-on-device state and retained the queued operation; successful recovery was confirmed on resume. |
+| Background/resume with queued material | BLOCKED: requires a completed authenticated simulator activity interaction. | PASS: the queued text operation replayed safely after the app returned from background. |
+| Camera / permission recovery | PHYSICAL DEVICE REQUIRED | PHYSICAL DEVICE REQUIRED |
+| Microphone / recording / permission recovery | PHYSICAL DEVICE REQUIRED | PHYSICAL DEVICE REQUIRED |
+| Screen-reader spot check | PHYSICAL DEVICE REQUIRED | PHYSICAL DEVICE REQUIRED |
+
+### Release association requirements
+
+- **iOS Universal Links:** an approved HTTPS host must serve an Apple App Site
+  Association file at `/.well-known/apple-app-site-association`, naming the
+  signed app's Team ID and bundle identifier; the app must have the matching
+  `applinks:<approved-host>` entitlement.
+- **Android App Links:** the same approved HTTPS host must serve
+  `/.well-known/assetlinks.json`, binding
+  `uk.co.politisltd.participant_app` to the release signing-certificate SHA-256
+  fingerprint; the manifest must declare the matching verified HTTPS intent
+  filter.
+- **Flutter:** the app must validate that host and `/join-study` path before
+  consuming the token. No association host, Team ID, or signing fingerprint is
+  currently approved for this Flutter app, so deep links remain unsupported.

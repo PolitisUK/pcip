@@ -19,7 +19,8 @@ import 'package:path_provider/path_provider.dart';
 abstract class ParticipantApi { Future<Map<String,dynamic>> exchange(String invitation); Future<Map<String,dynamic>> session(); Future<void> consent(); Future<void> logout(); }
 class ApiError implements Exception { const ApiError(this.message); final String message; }
 const _allowLocalQaHttp = bool.fromEnvironment('PCIP_LOCAL_QA');
-const _configuredReleaseApiBase = String.fromEnvironment('PCIP_API_BASE_URL');
+// Matches the deployed PCIP BASE_URL in .github/workflows/deploy-azure.yml.
+const _configuredReleaseApiBase = String.fromEnvironment('PCIP_API_BASE_URL',defaultValue:'https://citizencentric.co.uk');
 const _configuredDebugApiBase = String.fromEnvironment('PCIP_QA_API_BASE_URL');
 bool _isQaHttpBase(Uri base) => kDebugMode && _allowLocalQaHttp && base.scheme == 'http' && (base.host == 'localhost' || base.host == '10.0.2.2');
 String selectedApiBaseValue({required bool debugMode,required String releaseValue,required String debugValue}) => debugMode && debugValue.isNotEmpty ? debugValue : releaseValue;
