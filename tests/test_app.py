@@ -375,6 +375,62 @@ def test_project_and_study_creation():
         assert 'Access diary' in detail.text
 
 
+def test_study_governance_blocks_live_until_controller_decisions_are_recorded():
+    with client:
+        auth()
+        project_code = unique_value('GOVP').upper()
+        study_code = unique_value('GOVS').upper()
+        project = post_with_csrf(
+            '/projects',
+            data={'title': 'Governance project', 'code': project_code, 'description': '', 'status_value': 'draft'},
+            follow_redirects=False,
+        )
+        project_id = int(project.headers['location'].rsplit('/', 1)[-1])
+        created = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={'title': 'Governance study', 'code': study_code, 'description': '', 'methodology': 'diary', 'status_value': 'draft'},
+            follow_redirects=False,
+        )
+        study_id = int(created.headers['location'].rsplit('/', 1)[-1])
+        blocked = post_with_csrf(f'/studies/{study_id}/status', data={'status_value': 'live'}, follow_redirects=False)
+        assert blocked.status_code == 400
+        assert 'launch readiness' in blocked.text.lower()
+
+        saved = post_with_csrf(
+            f'/studies/{study_id}/governance',
+            data={
+                'controller_name': 'Test controller',
+                'controller_privacy_contact': 'privacy@example.test',
+                'sponsor_name': '',
+                'research_contact': 'research@example.test',
+                'participant_population': 'Synthetic pilot participants',
+                'data_categories': 'Contact details and diary responses',
+                'special_category_data': 'no',
+                'article_6_lawful_basis': 'Controller-approved lawful basis',
+                'article_9_condition': '',
+                'participation_consent_configured': 'true',
+                'participant_information_available': 'true',
+                'privacy_information_available': 'true',
+                'retention_description': 'Controller-approved study retention schedule',
+                'withdrawal_process_defined': 'true',
+                'deletion_handling_defined': 'true',
+                'features_assessed': 'true',
+                'ai_features_disclosed': 'false',
+                'international_transfer_assessment': 'recorded',
+                'ethics_status': 'recorded',
+                'dpia_status': 'not_required',
+                'security_considerations': 'Access is limited to authorised study users.',
+            },
+            follow_redirects=False,
+        )
+        assert saved.status_code == 303
+        detail = client.get(f'/studies/{study_id}')
+        assert 'Study governance and launch readiness' in detail.text
+        assert 'Complete' in detail.text
+        live = post_with_csrf(f'/studies/{study_id}/status', data={'status_value': 'live'}, follow_redirects=False)
+        assert live.status_code == 303
+
+
 def test_first_project_wizard_creates_project_and_study():
     with client:
         auth()

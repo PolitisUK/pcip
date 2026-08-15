@@ -47,6 +47,7 @@ from .models import (
     Study,
     StudyAccess,
     StudyEnrolment,
+    StudyGovernance,
     StudyStatus,
     User,
 )
@@ -71,6 +72,12 @@ from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
 from .observability import configure_observability
 from .legal_content import LEGAL_EFFECTIVE_DATE, LEGAL_VERSION, public_legal_document
+from .study_governance import (
+    ASSESSMENT_STATES,
+    FEATURES,
+    SPECIAL_CATEGORY_STATES,
+    study_launch_readiness,
+)
 from .participant_services import (
     activity_window,
     apply_response_action,
@@ -757,6 +764,26 @@ def study(db,i,o):
     r=db.scalar(select(Study).where(Study.id==i,Study.organisation_id==o))
     if not r: raise HTTPException(404)
     return r
+
+
+def governance_for_study(db: Session, study_row: Study) -> StudyGovernance | None:
+    return db.scalar(
+        select(StudyGovernance).where(
+            StudyGovernance.organisation_id == study_row.organisation_id,
+            StudyGovernance.study_id == study_row.id,
+        )
+    )
+
+
+def require_study_launch_ready(db: Session, study_row: Study) -> None:
+    readiness = study_launch_readiness(governance_for_study(db, study_row))
+    if readiness.can_launch:
+        return
+    outstanding = list(readiness.missing) + list(readiness.review_required)
+    raise HTTPException(
+        400,
+        "Study launch readiness is not complete: " + ", ".join(outstanding) + ".",
+    )
 
 def participant(db,i,o):
     r=db.scalar(select(Participant).where(Participant.id==i,Participant.organisation_id==o))
@@ -1885,6 +1912,8 @@ def studies_page(request:Request,u=Depends(current_user),db:Session=Depends(get_
 def create_study(project_id:int,title:str=Form(...),code:str=Form(...),description:str=Form(""),methodology:str=Form("diary"),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); require_project_permission(db,u,p,edit=True); enum_value(status_value,StudyStatus,"study status")
     if methodology not in STUDY_METHODOLOGIES: raise HTTPException(400,"Invalid methodology.")
+    if status_value == "live":
+        raise HTTPException(400, "Configure study governance before making a study live.")
     cleaned_title=nonblank(title,"Study title",3); cleaned_code=nonblank(code,"Study code").upper(); s=Study(organisation_id=u.organisation_id,project_id=p.id,title=cleaned_title,code=cleaned_code,description=description.strip(),methodology=methodology,status=status_value,created_by_id=u.id); db.add(s)
     try: db.flush(); audit(db,u.organisation_id,u.id,"study.created","study",s.id,s.title); db.commit()
     except Exception: db.rollback(); raise HTTPException(400,"Study code must be unique.")
@@ -1908,7 +1937,80 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
         team = []
     suggestions=db.scalars(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.organisation_id==u.organisation_id,ResearchAnalysisSuggestion.study_id==s.id).order_by(ResearchAnalysisSuggestion.created_at.desc()).limit(20)).all() if settings.research_intelligence_enabled else []
     confidence_assessments=db.scalars(select(EvidenceConfidenceAssessment).where(EvidenceConfidenceAssessment.organisation_id==u.organisation_id,EvidenceConfidenceAssessment.study_id==s.id).order_by(EvidenceConfidenceAssessment.created_at.desc()).limit(20)).all() if settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled else []
-    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments)
+    governance = governance_for_study(db, s)
+    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES))
+
+@app.post("/studies/{study_id}/governance")
+def update_study_governance(
+    study_id: int,
+    controller_name: str = Form(""),
+    controller_privacy_contact: str = Form(""),
+    sponsor_name: str = Form(""),
+    research_contact: str = Form(""),
+    participant_population: str = Form(""),
+    data_categories: str = Form(""),
+    special_category_data: str = Form("not_assessed"),
+    article_6_lawful_basis: str = Form(""),
+    article_9_condition: str = Form(""),
+    participation_consent_configured: bool = Form(False),
+    participant_information_available: bool = Form(False),
+    privacy_information_available: bool = Form(False),
+    retention_description: str = Form(""),
+    withdrawal_process_defined: bool = Form(False),
+    deletion_handling_defined: bool = Form(False),
+    features_assessed: bool = Form(False),
+    enabled_features_values: list[str] = Form([], alias="enabled_features"),
+    ai_features_disclosed: bool = Form(False),
+    international_transfer_assessment: str = Form("not_assessed"),
+    ethics_status: str = Form("not_assessed"),
+    dpia_status: str = Form("not_assessed"),
+    security_considerations: str = Form(""),
+    u=Depends(roles("owner", "admin", "researcher")),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    s = study(db, study_id, u.organisation_id)
+    require_study_permission(db, u, s, edit=True)
+    if special_category_data not in SPECIAL_CATEGORY_STATES:
+        raise HTTPException(400, "Invalid special-category data assessment.")
+    assessments = (international_transfer_assessment, ethics_status, dpia_status)
+    if any(value not in ASSESSMENT_STATES for value in assessments):
+        raise HTTPException(400, "Invalid governance assessment status.")
+    selected_features = {value for value in enabled_features_values if value in FEATURES}
+    if set(enabled_features_values) != selected_features:
+        raise HTTPException(400, "Invalid participant feature.")
+    governance = governance_for_study(db, s)
+    if governance is None:
+        governance = StudyGovernance(organisation_id=s.organisation_id, study_id=s.id)
+        db.add(governance)
+    for name, value in {
+        "controller_name": controller_name,
+        "controller_privacy_contact": controller_privacy_contact,
+        "sponsor_name": sponsor_name,
+        "research_contact": research_contact,
+        "participant_population": participant_population,
+        "data_categories": data_categories,
+        "article_6_lawful_basis": article_6_lawful_basis,
+        "article_9_condition": article_9_condition,
+        "retention_description": retention_description,
+        "security_considerations": security_considerations,
+    }.items():
+        setattr(governance, name, value.strip())
+    governance.special_category_data = special_category_data
+    governance.participation_consent_configured = participation_consent_configured
+    governance.participant_information_available = participant_information_available
+    governance.privacy_information_available = privacy_information_available
+    governance.withdrawal_process_defined = withdrawal_process_defined
+    governance.deletion_handling_defined = deletion_handling_defined
+    governance.features_assessed = features_assessed
+    governance.enabled_features_json = json.dumps(sorted(selected_features))
+    governance.ai_features_disclosed = ai_features_disclosed
+    governance.international_transfer_assessment = international_transfer_assessment
+    governance.ethics_status = ethics_status
+    governance.dpia_status = dpia_status
+    audit(db, u.organisation_id, u.id, "study.governance_updated", "study", s.id, s.title)
+    db.commit()
+    return RedirectResponse(f"/studies/{s.id}#governance", 303)
 @app.post("/studies/{study_id}/research-analysis/{suggestion_id}/review")
 def review_research_analysis(study_id:int,suggestion_id:int,decision:str=Form(...),note:str=Form(""),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     if not settings.research_intelligence_enabled: raise HTTPException(404,"Research Intelligence is disabled")
@@ -2201,10 +2303,13 @@ def research_themes_api(study_id: int, u=Depends(current_user), db: Session = De
 def edit_study(study_id:int,title:str=Form(...),description:str=Form(""),methodology:str=Form(...),status_value:str=Form(...),demographics_schema:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status")
     if methodology not in STUDY_METHODOLOGIES: raise HTTPException(400,"Invalid methodology.")
+    if status_value == "live": require_study_launch_ready(db, s)
     s.title=nonblank(title,"Study title",3); s.description=description.strip(); s.methodology=methodology; s.status=status_value; s.demographics_schema_json=json.dumps([x.strip() for x in demographics_schema.splitlines() if x.strip()]); audit(db,u.organisation_id,u.id,"study.updated","study",s.id,s.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/studies/{study_id}/status")
 def study_status(study_id:int,status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
-    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status"); s.status=status_value; db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); enum_value(status_value,StudyStatus,"study status")
+    if status_value == "live": require_study_launch_ready(db, s)
+    s.status=status_value; db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/studies/{study_id}/activities")
 def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form("long_text"),options:str=Form(""),required:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
