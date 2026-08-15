@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:participant_app/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,6 +9,21 @@ void main() {
       Api(Uri.parse('http://example.invalid'), 'not-a-real-token').request('GET', '/session'),
       throwsA(isA<ApiError>()),
     );
+  });
+
+  test('local HTTP QA is restricted to an explicit debug build', () {
+    const expected = kDebugMode && bool.fromEnvironment('PCIP_LOCAL_QA');
+    expect(allowsApiBase(Uri.parse('http://localhost:8001')), expected);
+    expect(allowsApiBase(Uri.parse('http://10.0.2.2:8001')), expected);
+    expect(allowsApiBase(Uri.parse('http://example.invalid')), isFalse);
+  });
+
+  test('participant timestamps are readable and fail safely', () {
+    expect(
+      participantDateTime('2026-08-15T09:36:08.177087Z'),
+      matches(RegExp(r'^15/08/2026 at \d{2}:\d{2}$')),
+    );
+    expect(participantDateTime('not-a-date'), 'Date unavailable');
   });
 
   test('queue backoff is bounded and increases after transient failures', () {

@@ -23,27 +23,40 @@ recent Android device. Do not use real participant material.
 
 ## Device QA evidence
 
-Run date: 2026-08-15. App commit: `0345640`.
+Run date: 2026-08-15. Authenticated QA used an isolated local SQLite backend,
+ephemeral local storage, and synthetic `MOBILE-QA-*` participants only. No
+production endpoint, credentials, or participant material was used.
 
 | Target | Model and OS | Result |
 | --- | --- | --- |
-| iOS simulator | iPhone 17 Pro, iOS 26.5 | PASS: unsigned debug app built, installed, launched to the invitation screen, and relaunch/back navigation did not crash. |
-| Android emulator | Google APIs ARM64 emulator, Android 16 / API 36 | PASS: debug APK installed, launched to the invitation screen, and relaunch/back navigation did not crash. |
+| iOS simulator | iPhone 17 Pro, iOS 26.5 | PARTIAL: unsigned debug app built, installed, and launched. Authenticated interaction was blocked when the local CoreSimulator service became unavailable. |
+| Android emulator | Google APIs ARM64 emulator, Android 16 / API 36 | PASS: debug app installed and authenticated against the isolated backend. Session recovery, consent, activities, profile, preferences, messages, withdrawal, and deletion acknowledgement were exercised. |
 
 | Journey | iOS simulator | Android emulator |
 | --- | --- | --- |
-| A. Invitation, consent and text activity | BLOCKED: no non-production service address and synthetic invitation were supplied | BLOCKED: no non-production service address and synthetic invitation were supplied |
-| B. Session recovery, profile and preferences | BLOCKED: requires a synthetic authenticated participant | BLOCKED: requires a synthetic authenticated participant |
-| C. Offline text/reconnect | BLOCKED: requires a synthetic authenticated participant/activity | BLOCKED: requires a synthetic authenticated participant/activity |
-| D. Messaging | BLOCKED: requires a synthetic authenticated participant | BLOCKED: requires a synthetic authenticated participant |
-| E. Photo capture and library | PHYSICAL DEVICE REQUIRED after an authenticated QA session | PHYSICAL DEVICE REQUIRED after an authenticated QA session |
-| F. Document picker | BLOCKED: requires a synthetic authenticated participant/activity | BLOCKED: requires a synthetic authenticated participant/activity |
-| G. Voice diary | PHYSICAL DEVICE REQUIRED after an authenticated QA session | PHYSICAL DEVICE REQUIRED after an authenticated QA session |
-| H. Withdrawal | BLOCKED: requires an isolated synthetic study state | BLOCKED: requires an isolated synthetic study state |
-| I. Deletion request | BLOCKED: requires an isolated synthetic participant | BLOCKED: requires an isolated synthetic participant |
-| Accessibility, permission and background/resume checks | PARTIAL: initial invitation layout is usable; full assistive-technology, permission, and authenticated background/resume checks require device QA | PARTIAL: initial invitation layout is usable; full TalkBack, permission, and authenticated background/resume checks require device QA |
+| A. Invitation, consent and text activity | BLOCKED: CoreSimulator service became unavailable before authenticated interaction | PASS: real invitation exchange, consent gating, activity load, local draft, submit, and history confirmation. |
+| B. Session recovery, profile and preferences | BLOCKED: CoreSimulator service became unavailable before authenticated interaction | PASS: a stored session restored after force-stop/relaunch; profile and communication preference update confirmed by the backend. |
+| C. Offline text/reconnect | BLOCKED: requires authenticated simulator interaction | BLOCKED: the emulator's local HTTP QA fallback was intentionally development-only; transport-loss replay remains covered by automated tests and requires a trusted HTTPS QA environment for device confirmation. |
+| D. Messaging | BLOCKED: CoreSimulator service became unavailable before authenticated interaction | PASS: synthetic research-team message opened successfully and a participant reply was accepted. Read/unread is NOT SUPPORTED by the backend. |
+| E. Photo capture and library | PHYSICAL DEVICE REQUIRED | PARTIAL: Android Photo Picker, preview/remove UI, backend upload, and processing copy passed using a synthetic image. Camera capture and production permission recovery require a physical device. |
+| F. Document picker | BLOCKED: requires authenticated simulator interaction | PASS: Android system document picker selected a synthetic PDF, displayed filename/size, and received backend upload acknowledgement. |
+| G. Voice diary | PHYSICAL DEVICE REQUIRED | PHYSICAL DEVICE REQUIRED: Android microphone permission denial and retry were verified. The emulator did not provide reliable recording/playback evidence. Participant-facing transcription is NOT SUPPORTED by the backend. |
+| H. Withdrawal | BLOCKED: CoreSimulator service became unavailable before authenticated interaction | PASS: cancellation and explicit confirmation were exercised using an isolated synthetic study; server acknowledgement was shown. |
+| I. Deletion request | BLOCKED: CoreSimulator service became unavailable before authenticated interaction | PASS: cancellation and explicit confirmation were exercised using an isolated synthetic participant; server acknowledgement was shown. Status lookup is NOT SUPPORTED by the backend. |
+| Accessibility, permission and background/resume checks | PARTIAL: authenticated simulator interaction was blocked by the local simulator service | PARTIAL: semantic labels and scaled layout were visible in the emulator; TalkBack, OS permission prompts, media controls, and full background/reconnect behaviour require device QA. |
 
-No participant data was created. No production endpoint was used.
+Only disposable synthetic QA data was created. No production endpoint was used.
+
+## Authenticated QA notes
+
+- The Android run used a compile-time debug-only local transport allowance for
+  `localhost`/`10.0.2.2`; release and profile builds still reject HTTP.
+- Timestamps returned by the service are now rendered as participant-readable
+  local date/time values rather than raw ISO strings.
+- A real device remains required for camera, photo-library, microphone,
+  recording/playback, permission denial/recovery, and assistive-technology
+  checks. Device offline/reconnect confirmation also requires a trusted HTTPS
+  QA endpoint.
 
 Device QA defect fixed: Android's application label still exposed the scaffold
 name. It now uses the established `Citizen Centric` display name in `0345640`.
