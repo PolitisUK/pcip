@@ -10,6 +10,8 @@
 	<string>Citizen Centric uses your camera only when you choose to add photo evidence to an activity.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Citizen Centric lets you choose a photo only when you choose to add photo evidence to an activity.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Citizen Centric uses your microphone only when you choose to record a voice diary.</string>
 	<key>CFBundleDisplayName</key>
 	<string>Participant App</string>
 	<key>CFBundleExecutable</key>
