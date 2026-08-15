@@ -82,7 +82,9 @@ class Settings(BaseSettings):
     key_vault_secret_entra_client_secret: str = "entra-client-secret"
     key_vault_secret_azure_openai_api_key: str = "azure-openai-api-key"
     startup_validate_migrations: bool = True
-    privacy_retention_days: int = 365
+    # Retention must be deliberately configured by the controller.  A generic
+    # platform period is not an approved study retention schedule.
+    privacy_retention_days: int | None = None
     privacy_retention_statuses: str = "withdrawn,completed"
     privacy_retention_action: str = "anonymise"
     research_intelligence_enabled: bool = False

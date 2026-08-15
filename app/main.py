@@ -2486,10 +2486,12 @@ def participant_delete_execute(participant_id:int,request:Request,workflow_token
 
 @app.post("/privacy/retention/apply")
 def apply_privacy_retention(request:Request,u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+    if settings.privacy_retention_days is None or settings.privacy_retention_days <= 0:
+        raise HTTPException(400, "A controller-approved retention period must be configured before applying retention.")
     statuses = [x.strip() for x in settings.privacy_retention_statuses.split(",") if x.strip()]
     if not statuses:
         raise HTTPException(400, "No retention statuses configured.")
-    days = max(0, int(settings.privacy_retention_days))
+    days = int(settings.privacy_retention_days)
     cutoff = now() - timedelta(days=days)
     mode = settings.privacy_retention_action.strip().lower()
     if mode not in {"delete", "anonymise"}:

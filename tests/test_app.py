@@ -1707,6 +1707,19 @@ def test_privacy_retention_apply_processes_configured_participants_and_audits():
         settings.privacy_retention_action = original_action
 
 
+def test_privacy_retention_cannot_run_without_a_controller_approved_period():
+    original_days = settings.privacy_retention_days
+    try:
+        settings.privacy_retention_days = None
+        with client:
+            auth()
+            response = post_with_csrf('/privacy/retention/apply', follow_redirects=False)
+            assert response.status_code == 400
+            assert 'controller-approved retention period' in response.text
+    finally:
+        settings.privacy_retention_days = original_days
+
+
 def test_study_and_project_edit_forms_render():
     with client:
         auth()
