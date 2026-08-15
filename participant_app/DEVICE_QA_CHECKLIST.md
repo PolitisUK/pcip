@@ -32,10 +32,10 @@ Run date: 2026-08-15. App commit: `0345640`.
 
 | Journey | iOS simulator | Android emulator |
 | --- | --- | --- |
-| A. Install, launch and invitation screen | PASS | PASS |
-| B. Invitation/session | BLOCKED: no non-production service address and synthetic invitation were supplied | BLOCKED: no non-production service address and synthetic invitation were supplied |
-| C. Consent, home and text activity | BLOCKED: requires a synthetic authenticated participant | BLOCKED: requires a synthetic authenticated participant |
-| D. Profile, preferences and history | BLOCKED: requires a synthetic authenticated participant | BLOCKED: requires a synthetic authenticated participant |
+| A. Invitation, consent and text activity | BLOCKED: no non-production service address and synthetic invitation were supplied | BLOCKED: no non-production service address and synthetic invitation were supplied |
+| B. Session recovery, profile and preferences | BLOCKED: requires a synthetic authenticated participant | BLOCKED: requires a synthetic authenticated participant |
+| C. Offline text/reconnect | BLOCKED: requires a synthetic authenticated participant/activity | BLOCKED: requires a synthetic authenticated participant/activity |
+| D. Messaging | BLOCKED: requires a synthetic authenticated participant | BLOCKED: requires a synthetic authenticated participant |
 | E. Photo capture and library | PHYSICAL DEVICE REQUIRED after an authenticated QA session | PHYSICAL DEVICE REQUIRED after an authenticated QA session |
 | F. Document picker | BLOCKED: requires a synthetic authenticated participant/activity | BLOCKED: requires a synthetic authenticated participant/activity |
 | G. Voice diary | PHYSICAL DEVICE REQUIRED after an authenticated QA session | PHYSICAL DEVICE REQUIRED after an authenticated QA session |
