@@ -73,3 +73,28 @@ onboarding logo and native application mark.
 
 Device QA defect fixed: Android's application label still exposed the scaffold
 name. It now uses the established `Citizen Centric` display name in `0345640`.
+
+## Invitation sign-in correction
+
+Run date: 2026-08-15. The PCIP participant API accepts only an invitation
+token at `POST /api/v1/participant/session/exchange`; the invitation is already
+bound to the participant email on the server. The mobile onboarding screen now
+shows only **Invitation code** and does not expose a service-address, email, or
+password field. Invalid and expired tokens use the same participant-safe error.
+
+| Check | Result |
+| --- | --- |
+| Participant invitation flow | PASS: invitation code only; session remains server-authorised. |
+| Participant email sign-in | NOT SUPPORTED: email is not part of the participant API contract. |
+| Participant forgot password | NOT APPLICABLE: the existing password-reset route is for staff accounts. |
+| Mobile invitation deep link | NOT SUPPORTED: PCIP web invitations use `/join-study?token=…`; no approved iOS Universal Link or Android App Link association is configured. Manual invitation-code entry remains available. |
+| Service endpoint control | PASS: production accepts only a build-configured HTTPS PCIP API base. Debug QA overrides are build-time only and cannot be selected by a release build. |
+
+| Platform | Onboarding visual QA | Result |
+| --- | --- | --- |
+| iOS simulator | iPhone 17 Pro, iOS 26.5 | PASS: rebuilt, installed, and launched; approved logo and one invitation-code field shown with no participant-facing endpoint field. |
+| Android emulator | Google APIs ARM64, Android 16 / API 36 | PASS: rebuilt, installed, and launched; approved logo and one invitation-code field shown with no participant-facing endpoint field. |
+
+Release configuration still requires the approved production HTTPS API root to
+be supplied as `PCIP_API_BASE_URL` by the signed-build pipeline. No endpoint is
+shown to, or accepted from, a participant.
