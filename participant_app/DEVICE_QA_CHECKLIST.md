@@ -58,5 +58,18 @@ Only disposable synthetic QA data was created. No production endpoint was used.
   checks. Device offline/reconnect confirmation also requires a trusted HTTPS
   QA endpoint.
 
+## Branding verification
+
+Run date: 2026-08-15. The approved web-product assets
+`app/static/citizen-centric-logo.png` and
+`app/static/citizen-centric-logo-compact.png` are the source for the Flutter
+onboarding logo and native application mark.
+
+| Check | iOS simulator | Android emulator |
+| --- | --- | --- |
+| In-app approved logo | PASS: full approved logo shown on the invitation screen; no plain-text product title remains. | PASS: full approved logo shown on the invitation screen; no plain-text product title remains. |
+| Launcher icon | PASS: approved compact Citizen Centric mark shown with the `Citizen Centric` display name. | PASS: approved compact Citizen Centric mark shown with the `Citizen Centric` display name. |
+| Branded launch treatment | PASS: launch asset compiled from the approved compact mark. | PASS: launch asset compiled from the approved compact mark. |
+
 Device QA defect fixed: Android's application label still exposed the scaffold
 name. It now uses the established `Citizen Centric` display name in `0345640`.
