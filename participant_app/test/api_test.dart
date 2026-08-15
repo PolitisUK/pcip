@@ -36,4 +36,29 @@ void main() {
     expect(prefs.containsKey('draft_12'), isFalse);
     expect(prefs.getBool('non_sensitive_setting'), isTrue);
   });
+
+  test('malformed read caches are removed instead of blocking recovery', () async {
+    SharedPreferences.setMockInitialValues({
+      'cached_profile': 'not-json',
+      'cached_history': '{"not":"a list"}',
+    });
+
+    expect(await cachedObject('cached_profile'), isNull);
+    expect(await cachedList('cached_history'), isNull);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.containsKey('cached_profile'), isFalse);
+    expect(prefs.containsKey('cached_history'), isFalse);
+  });
+
+  test('corrupt queued material is retained and needs attention', () async {
+    SharedPreferences.setMockInitialValues({
+      'submission_queue': <String>['not-json'],
+    });
+
+    final state = await Queue.replay(Api(Uri.parse('https://example.invalid'), 'synthetic'));
+
+    expect(state, SyncState.needsAttention);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getStringList('submission_queue'), <String>['not-json']);
+  });
 }
