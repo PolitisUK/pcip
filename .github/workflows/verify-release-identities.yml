@@ -2,6 +2,9 @@ name: Verify PCIP release identities
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/verify-release-identities
 
 permissions:
   contents: read
