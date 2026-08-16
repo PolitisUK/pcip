@@ -76,6 +76,7 @@ from .study_governance import (
     ASSESSMENT_STATES,
     FEATURES,
     SPECIAL_CATEGORY_STATES,
+    study_document_references,
     study_launch_readiness,
 )
 from .participant_services import (
@@ -120,6 +121,7 @@ from .participant_api.schemas import (
     CreateMessageResponse,
     DeletionRequest,
     InvitationContext,
+    LegalDocumentReference,
     LogoutResponse,
     MessageListResponse,
     Pagination,
@@ -140,6 +142,7 @@ from .participant_api.schemas import (
     SubmitResponseRequest,
     SubmittedResponseResult,
     StudyListResponse,
+    StudyLegalDocumentsResponse,
     StudySummary,
     UpdateParticipantProfileRequest,
     WithdrawalRequest,
@@ -773,6 +776,32 @@ def governance_for_study(db: Session, study_row: Study) -> StudyGovernance | Non
             StudyGovernance.study_id == study_row.id,
         )
     )
+
+
+def document_reference(value: str, label: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+    if (
+        cleaned.startswith("/")
+        or cleaned.lower().startswith("file:")
+        or re.match(r"^[A-Za-z]:[\\/]", cleaned)
+        or ".." in cleaned
+        or any(ord(char) < 32 for char in cleaned)
+    ):
+        raise HTTPException(400, f"{label} must be a public reference, not an internal path.")
+    return cleaned
+
+
+def capture_consent_document_evidence(invitation: ParticipantInvitation, governance: StudyGovernance | None) -> None:
+    """Snapshot controller-approved references once; historical consent is immutable."""
+    if invitation.accepted_at or governance is None:
+        return
+    for item in study_document_references(governance):
+        prefix = item.document_type
+        setattr(invitation, f"{prefix}_reference", item.reference)
+        setattr(invitation, f"{prefix}_version", item.version)
+        setattr(invitation, f"{prefix}_effective_date", item.effective_date)
 
 
 def require_study_launch_ready(db: Session, study_row: Study) -> None:
@@ -1955,6 +1984,15 @@ def update_study_governance(
     participation_consent_configured: bool = Form(False),
     participant_information_available: bool = Form(False),
     privacy_information_available: bool = Form(False),
+    participant_information_reference: str = Form(""),
+    participant_information_version: str = Form(""),
+    participant_information_effective_date: str = Form(""),
+    privacy_notice_reference: str = Form(""),
+    privacy_notice_version: str = Form(""),
+    privacy_notice_effective_date: str = Form(""),
+    consent_text_reference: str = Form(""),
+    consent_text_version: str = Form(""),
+    consent_text_effective_date: str = Form(""),
     retention_description: str = Form(""),
     withdrawal_process_defined: bool = Form(False),
     deletion_handling_defined: bool = Form(False),
@@ -1996,6 +2034,21 @@ def update_study_governance(
         "security_considerations": security_considerations,
     }.items():
         setattr(governance, name, value.strip())
+    for name, value in {
+        "participant_information_reference": participant_information_reference,
+        "participant_information_version": participant_information_version,
+        "participant_information_effective_date": participant_information_effective_date,
+        "privacy_notice_reference": privacy_notice_reference,
+        "privacy_notice_version": privacy_notice_version,
+        "privacy_notice_effective_date": privacy_notice_effective_date,
+        "consent_text_reference": consent_text_reference,
+        "consent_text_version": consent_text_version,
+        "consent_text_effective_date": consent_text_effective_date,
+    }.items():
+        if name.endswith("_reference"):
+            setattr(governance, name, document_reference(value, name.replace("_", " ")))
+        else:
+            setattr(governance, name, value.strip())
     governance.special_category_data = special_category_data
     governance.participation_consent_configured = participation_consent_configured
     governance.participant_information_available = participant_information_available
@@ -2645,7 +2698,12 @@ def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csr
     if not inv or inv.revoked_at or not unexpired(inv.expires_at):
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not consent: raise HTTPException(400,"Consent is required.")
-    p=db.get(Participant,inv.participant_id); grant_participant_consent(inv, p, now()); audit(db,inv.organisation_id,None,"participant.invitation_accepted","participant",p.id); db.commit(); return RedirectResponse("/participant-portal",303)
+    p = db.get(Participant, inv.participant_id)
+    capture_consent_document_evidence(inv, governance_for_study(db, study(db, inv.study_id, inv.organisation_id)))
+    grant_participant_consent(inv, p, now())
+    audit(db, inv.organisation_id, None, "participant.invitation_accepted", "participant", p.id)
+    db.commit()
+    return RedirectResponse("/participant-portal", 303)
 
 
 def participant_portal_context(request: Request, db: Session):
@@ -3395,6 +3453,25 @@ def participant_api_profile(request: Request, response: Response, db: Session = 
     )
 
 
+@app.get("/api/v1/participant/legal-documents", response_model=StudyLegalDocumentsResponse)
+def participant_api_legal_documents(request: Request, response: Response, db: Session = Depends(get_db)):
+    _session_row, invitation, _participant_row = _resolve_participant_api_context(request, db)
+    study_row = study(db, invitation.study_id, invitation.organisation_id)
+    governance = governance_for_study(db, study_row)
+    documents = [
+        LegalDocumentReference(
+            document_type=item.document_type,
+            version=item.version,
+            reference=item.reference,
+            effective_date=item.effective_date,
+        )
+        for item in study_document_references(governance)
+        if item.reference and item.version and item.effective_date
+    ]
+    _cache_control_no_store(response)
+    return StudyLegalDocumentsResponse(study_id=study_row.id, documents=documents)
+
+
 @app.put("/api/v1/participant/profile", response_model=ParticipantProfile)
 def participant_api_profile_update(
     payload: UpdateParticipantProfileRequest,
@@ -3429,6 +3506,10 @@ def participant_api_consent_accept(
     if invitation.revoked_at or not unexpired(invitation.expires_at):
         raise _participant_api_unauthorised()
     if not invitation.accepted_at:
+        capture_consent_document_evidence(
+            invitation,
+            governance_for_study(db, study(db, invitation.study_id, invitation.organisation_id)),
+        )
         grant_participant_consent(invitation, participant_row, now())
         audit(db, invitation.organisation_id, None, "participant.api_consent_accepted", "participant", participant_row.id, str(invitation.study_id))
         db.commit()
