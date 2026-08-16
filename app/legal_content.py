@@ -1,14 +1,13 @@
-"""Controlled public legal content for Citizen Centric.
+"""Versioned public legal-content catalogue.
 
-This is platform information, effective 15 August 2026. Study-specific
-participant information, privacy notices, legal bases and retention periods are
-owned by the relevant controller and must be configured for each study.
+Only a source-complete, owner-approved document may be rendered as policy
+content. Study-specific notices remain controller supplied and are served via
+the consent-document evidence model instead of this platform catalogue.
 """
 
-# Controlled legal prose is kept as complete paragraphs for accurate review.
-# ruff: noqa: E501
-
 from dataclasses import dataclass
+from pathlib import Path
+
 
 LEGAL_VERSION = "1.0"
 LEGAL_EFFECTIVE_DATE = "15 August 2026"
@@ -18,129 +17,137 @@ COMPANY_NUMBER = "13661766"
 ICO_REFERENCE = "ZB738312"
 REGISTERED_OFFICE = "The Old Courthouse, Orsett Road, Grays, Essex, England, RM17 5DD"
 
+_SOURCE_DIRECTORY = Path(__file__).with_name("legal_sources")
+
 
 @dataclass(frozen=True)
 class LegalSection:
     heading: str
-    paragraphs: tuple[str, ...]
+    paragraphs: tuple[str, ...] = ()
+    bullets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class LegalDocument:
-    slug: str
+    document_id: str
     title: str
     summary: str
-    sections: tuple[LegalSection, ...]
+    audience: str
+    publication_status: str
+    source_file: str | None
+    sections: tuple[LegalSection, ...] = ()
+
+    @property
+    def is_published(self) -> bool:
+        return self.publication_status == "published"
 
 
-PUBLIC_LEGAL_DOCUMENTS = {
-    "privacy": LegalDocument(
-        "privacy",
-        "Privacy Notice",
-        "How Citizen Centric supports research organisations and participants.",
-        (
-            LegalSection("Our role", (
-                "Citizen Centric is provided by Politis Ltd. In many studies, the research organisation is the controller for Study Data and Politis Ltd processes that data on its documented instructions. The study-specific privacy information explains the arrangement for a particular study.",
-                f"{COMPANY_NAME} is registered in England and Wales. Registered office: {REGISTERED_OFFICE}. Company number {COMPANY_NUMBER}. ICO registration reference {ICO_REFERENCE}.",
-            )),
-            LegalSection("Keeping information", (
-                "Information is kept only for as long as necessary for its purpose. Study Data follows the controller-approved retention period documented for the study. Where Politis Ltd acts as processor, it follows the controller’s documented retention and deletion instructions, subject to legal obligations.",
-                "We do not use a single arbitrary retention period for every study.",
-            )),
-            LegalSection("Rights and requests", (
-                "Participants can ask to withdraw from a study or request deletion through the secure participant experience. These requests are handled on the server and are not a local-only action.",
-                f"For questions about the Citizen Centric service, contact {CONTACT_EMAIL}. For a study-specific request, use the contact details supplied by the research organisation.",
-            )),
-            LegalSection("Where information is processed", (
-                "The approved platform policy is to host and process personal data in the UK and/or EU/EEA. Study-specific information should identify any arrangements that apply to that study.",
-            )),
-        ),
+def _plain_markdown(value: str) -> str:
+    """Remove only Markdown presentation marks; source wording is unchanged."""
+    return value.replace("**", "").replace("`", "").strip()
+
+
+def _sections_from_markdown(filename: str) -> tuple[LegalSection, ...]:
+    lines = (_SOURCE_DIRECTORY / filename).read_text(encoding="utf-8").splitlines()
+    sections: list[LegalSection] = []
+    heading = "About this document"
+    paragraphs: list[str] = []
+    bullets: list[str] = []
+
+    def append_section() -> None:
+        if paragraphs or bullets:
+            sections.append(
+                LegalSection(
+                    heading=heading,
+                    paragraphs=tuple(paragraphs),
+                    bullets=tuple(bullets),
+                )
+            )
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("# "):
+            continue
+        if stripped.startswith("## "):
+            append_section()
+            heading = _plain_markdown(stripped[3:])
+            paragraphs = []
+            bullets = []
+        elif stripped.startswith("- "):
+            bullets.append(_plain_markdown(stripped[2:]))
+        else:
+            paragraphs.append(_plain_markdown(stripped))
+    append_section()
+    return tuple(sections)
+
+
+def _published_source_document(
+    *,
+    document_id: str,
+    title: str,
+    summary: str,
+    filename: str,
+) -> LegalDocument:
+    return LegalDocument(
+        document_id=document_id,
+        title=title,
+        summary=summary,
+        audience="public and participant",
+        publication_status="published",
+        source_file=f"app/legal_sources/{filename}",
+        sections=_sections_from_markdown(filename),
+    )
+
+
+def _awaiting_source_document(
+    *, document_id: str, title: str, source_file: str | None
+) -> LegalDocument:
+    return LegalDocument(
+        document_id=document_id,
+        title=title,
+        summary="This document has not been published because its approved source still requires completion.",
+        audience="public and participant",
+        publication_status="awaiting_source_completion",
+        source_file=source_file,
+    )
+
+
+LEGAL_DOCUMENTS = {
+    "terms": _published_source_document(
+        document_id="terms",
+        title="Terms of Use",
+        summary="Terms for invited participant use of Citizen Centric.",
+        filename="terms_of_use_v1.md",
     ),
-    "terms": LegalDocument(
-        "terms",
-        "Terms of Use",
-        "Using Citizen Centric safely and respectfully.",
-        (
-            LegalSection("Using the service", (
-                "Use Citizen Centric only through authorised access and in line with the research organisation’s instructions. The service supports research; it does not replace emergency, medical, legal or safeguarding services.",
-            )),
-            LegalSection("Your responsibilities", (
-                "Keep access credentials and participant invitations private. Do not try to access another person’s information, bypass security controls, upload malicious material or use the service to harass or harm anyone.",
-            )),
-            LegalSection("Study terms", (
-                "Organisation and customer contractual terms, data-processing schedules and study-specific terms are provided to the relevant authorised parties. They are not participant-facing documents.",
-            )),
-        ),
+    # Do not fall back to earlier paraphrased copy. The approved sources below
+    # retain unresolved fields or are absent entirely.
+    "privacy": _awaiting_source_document(
+        document_id="privacy",
+        title="Privacy Notice",
+        source_file="Citizen Centric Legal Pack v1.0: CITIZEN CENTRIC PRIVACY NOTICE.docx",
     ),
-    "cookies": LegalDocument(
-        "cookies",
-        "Cookie and Similar Technologies Policy",
-        "The technologies used to keep the web service and participant app working.",
-        (
-            LegalSection("Strictly necessary website cookies", (
-                "The web service uses strictly necessary session and security cookies where needed to provide authenticated access and protect requests. They are not used for advertising or cross-site behavioural tracking.",
-            )),
-            LegalSection("Mobile app storage", (
-                "Mobile drafts and secure session storage are not cookies. The participant app uses secure device storage for session credentials and local storage for drafts and safe offline queueing.",
-            )),
-            LegalSection("Analytics and tracking", (
-                "Citizen Centric does not use marketing or participant-profiling tracking in the participant app. Operational diagnostics, security logging and service-performance telemetry may be used to run and protect the service. Non-essential analytics must not be enabled without the appropriate controls.",
-            )),
-        ),
+    "cookies": _awaiting_source_document(
+        document_id="cookies",
+        title="Cookie and Similar Technologies Policy",
+        source_file="Citizen Centric Legal Pack v1.0: Citizen Centric Cookie Policy - App Ready.md",
     ),
-    "accessibility": LegalDocument(
-        "accessibility",
-        "Accessibility Statement",
-        "Our approach to making Citizen Centric usable for more people.",
-        (
-            LegalSection("Our approach", (
-                "Citizen Centric is designed with clear labels, meaningful status messages, scalable text, accessible touch targets and controls that do not rely on colour alone. We continue to test with assistive technologies and real devices.",
-                "We do not claim a certification or full assistive-technology conformance that has not been independently verified.",
-            )),
-            LegalSection("Getting help", (
-                f"If you experience a barrier, contact the relevant research team or email {CONTACT_EMAIL} with enough detail for us to understand the problem.",
-            )),
-        ),
+    "accessibility": _awaiting_source_document(
+        document_id="accessibility",
+        title="Accessibility Statement",
+        source_file=None,
     ),
-    "acceptable-use": LegalDocument(
-        "acceptable-use",
-        "Acceptable Use Policy",
-        "The standards that help keep Citizen Centric safe and respectful.",
-        (
-            LegalSection("Please do", (
-                "Use the service for legitimate research activity, keep credentials and invitation codes private, and share only material you are entitled to provide.",
-            )),
-            LegalSection("Please do not", (
-                "Do not attempt unauthorised access, interfere with the service, upload malware, expose another person’s private information, or use Citizen Centric to harm, harass or discriminate against anyone.",
-            )),
-        ),
+    "acceptable-use": _awaiting_source_document(
+        document_id="acceptable-use",
+        title="Acceptable Use Policy",
+        source_file="Citizen Centric Legal Pack v1.0: Acceptable Use Policy for Citizen Centric - App Ready.md",
     ),
-    "legal-information": LegalDocument(
-        "legal-information",
-        "Legal Information",
-        "Company and regulatory information for Citizen Centric.",
-        (
-            LegalSection("Company details", (
-                f"Citizen Centric is provided by {COMPANY_NAME}. Company number {COMPANY_NUMBER}. Registered office: {REGISTERED_OFFICE}.",
-                f"ICO registration/reference: {ICO_REFERENCE}. Contact: {CONTACT_EMAIL}.",
-            )),
-        ),
-    ),
-    "contact": LegalDocument(
-        "contact",
-        "Contact",
-        "How to contact Politis Ltd about Citizen Centric.",
-        (
-            LegalSection("Platform contact", (
-                f"Email {CONTACT_EMAIL} for questions about the Citizen Centric platform.",
-            )),
-            LegalSection("Study contact", (
-                "For questions about a specific study or participation, use the contact details in the participant information supplied by the research organisation.",
-            )),
-        ),
+    "legal": _awaiting_source_document(
+        document_id="legal",
+        title="Legal Information",
+        source_file="Citizen Centric Legal Pack v1.0: Citizen Centric Legal Information - Revised.docx",
     ),
 }
 
 
 def public_legal_document(slug: str) -> LegalDocument | None:
-    return PUBLIC_LEGAL_DOCUMENTS.get(slug)
+    return LEGAL_DOCUMENTS.get(slug)

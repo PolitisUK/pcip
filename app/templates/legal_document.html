@@ -13,7 +13,7 @@
     <p class="public-kicker">Citizen Centric · Version {{ legal_version }} · Effective {{ legal_effective_date }}</p>
     <h1>{{ document.title }}</h1>
     <p class="public-lead">{{ document.summary }}</p>
-    {% for section in document.sections %}<section class="legal-document-section"><h2>{{ section.heading }}</h2>{% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}</section>{% endfor %}
+    {% for section in document.sections %}<section class="legal-document-section"><h2>{{ section.heading }}</h2>{% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}{% if section.bullets %}<ul>{% for bullet in section.bullets %}<li>{{ bullet }}</li>{% endfor %}</ul>{% endif %}</section>{% endfor %}
   </article>
 </main>
 {% endblock %}

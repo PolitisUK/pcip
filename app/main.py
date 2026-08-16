@@ -71,7 +71,14 @@ from .storage import storage
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
 from .observability import configure_observability
-from .legal_content import LEGAL_EFFECTIVE_DATE, LEGAL_VERSION, public_legal_document
+from .legal_content import (
+    CONTACT_EMAIL,
+    LEGAL_EFFECTIVE_DATE,
+    LEGAL_VERSION,
+    LegalDocument,
+    LegalSection,
+    public_legal_document,
+)
 from .study_governance import (
     ASSESSMENT_STATES,
     FEATURES,
@@ -1378,13 +1385,55 @@ def readiness():
 @app.get("/cookies", response_class=HTMLResponse)
 @app.get("/accessibility", response_class=HTMLResponse)
 @app.get("/acceptable-use", response_class=HTMLResponse)
-@app.get("/legal-information", response_class=HTMLResponse)
-@app.get("/contact", response_class=HTMLResponse)
+@app.get("/legal", response_class=HTMLResponse)
 def public_legal_page(request: Request):
     legal_slug = request.url.path.lstrip("/")
     document = public_legal_document(legal_slug)
     if document is None:
         raise HTTPException(404)
+    if not document.is_published:
+        response = render(
+            request,
+            "legal_unavailable.html",
+            document=document,
+            contact_email=CONTACT_EMAIL,
+        )
+        response.status_code = 503
+        return response
+    return render(
+        request,
+        "legal_document.html",
+        document=document,
+        legal_version=LEGAL_VERSION,
+        legal_effective_date=LEGAL_EFFECTIVE_DATE,
+    )
+
+
+@app.get("/legal-information", response_class=HTMLResponse)
+def legacy_legal_information(request: Request):
+    return RedirectResponse("/legal", 308)
+
+
+@app.get("/contact", response_class=HTMLResponse)
+@app.get("/support", response_class=HTMLResponse)
+def public_support_page(request: Request):
+    document = LegalDocument(
+        document_id="support",
+        title="Citizen Centric support",
+        summary="How to get support for the Citizen Centric platform or a study.",
+        audience="public and participant",
+        publication_status="published",
+        source_file=None,
+        sections=(
+            LegalSection(
+                "Support contact",
+                (
+                    "For Citizen Centric support, contact info@politisconsulting.co.uk.",
+                    "For a question about a specific study, use the contact details supplied by the research organisation.",
+                ),
+            ),
+        ),
+    )
     return render(
         request,
         "legal_document.html",

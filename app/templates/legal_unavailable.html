@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block page_title %}{{ document.title }} | Citizen Centric{% endblock %}
+{% block body_class %}public-site{% endblock %}
+{% block public %}
+<header class="public-header">
+  <a class="brand public-site-brand" href="/" aria-label="Citizen Centric by Politis home"><img class="brand-logo brand-logo--wordmark" src="/static/citizen-centric-logo.png" alt="Citizen Centric by Politis"></a>
+  <a class="btn secondary public-signin" href="/login">Researcher sign in</a>
+</header>
+<main id="main-content" tabindex="-1" class="public-section">
+  <article class="public-container legal-document">
+    <p class="public-kicker">Citizen Centric</p>
+    <h1>{{ document.title }}</h1>
+    <p class="public-lead">This document is not yet available for publication.</p>
+    <p>We will publish it once the approved source has been completed. For questions about Citizen Centric, contact <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
+  </article>
+</main>
+{% endblock %}
