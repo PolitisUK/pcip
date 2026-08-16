@@ -26,7 +26,7 @@ environment secrets; never place them in workflow inputs or repository files.
 
 ## Migration decision
 
-The candidate target is Alembic `0013`. The release operator obtains the
+The candidate target is Alembic `0014`. The release operator obtains the
 current revision through an approved, read-only production database query and
 records it in the promotion request. At the same time, the operator runs the
 `0006` precondition query below and records a zero result. The local rehearsal
@@ -48,6 +48,7 @@ HAVING count(*) > 1;
 - `0008`–`0011`: additive tables and indexes.
 - `0012`: additive columns with safe defaults.
 - `0013`: additive user flag with a safe default.
+- `0014`: additive methodology-configuration table and provenance columns.
 
 The schema changes are backward-compatible for the prior application because
 they add data only. They are not treated as database-downgrade-safe: an
