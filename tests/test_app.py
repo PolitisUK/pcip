@@ -3263,6 +3263,27 @@ def test_migrations_are_automatic_only_in_local_compose():
     compose = Path('docker-compose.yml').read_text()
     assert '${RUN_MIGRATIONS:-false}' in entrypoint
     assert 'RUN_MIGRATIONS: "true"' in compose
+    assert 'alembic upgrade head' in entrypoint
+    assert 'continuing so the web service can expose health diagnostics' not in entrypoint
+    assert '--lifespan off' not in entrypoint
+
+
+def test_release_promotion_is_digest_pinned_and_protected_by_release_evidence():
+    promotion = Path('.github/workflows/promote-release.yml').read_text()
+    rollback = Path('.github/workflows/rollback-release.yml').read_text()
+    legacy = Path('.github/workflows/deploy-azure.yml').read_text()
+
+    assert 'The release commit must already be merged into main.' in promotion
+    assert 'backup_recovery_point' in promotion
+    assert 'current_alembic_revision' in promotion
+    assert 'rollback_digest' in promotion
+    assert 'environment: staging' in promotion
+    assert 'environment: production' in promotion
+    assert 'az acr import' in promotion
+    assert 'DOCKER|$STAGING_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST' in promotion
+    assert 'DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST' in promotion
+    assert 'A digest, not a mutable tag, is required.' in rollback
+    assert 'Production promotion must use the digest-pinned Promote PCIP release candidate workflow.' in legacy
 
 
 def test_development_environment_allows_local_defaults():

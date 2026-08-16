@@ -1,9 +1,9 @@
-name: Deploy PCIP to Azure
+name: Legacy PCIP Azure deployment (non-production only)
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: Azure environment name
+        description: Non-production Azure environment name. Production promotion uses Promote PCIP release candidate.
         required: true
         default: dev
       image_tag:
@@ -14,7 +14,23 @@ permissions:
   id-token: write
   contents: read
 jobs:
+  prevent-production-use:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Block the legacy production path
+        shell: bash
+        env:
+          REQUESTED_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          environment_name=$(printf '%s' "$REQUESTED_ENVIRONMENT" | tr '[:upper:]' '[:lower:]')
+          if [ "$environment_name" = "production" ]; then
+            echo "Production promotion must use the digest-pinned Promote PCIP release candidate workflow." >&2
+            exit 1
+          fi
+
   test-and-deploy:
+    needs: prevent-production-use
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
