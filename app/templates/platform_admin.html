@@ -16,4 +16,18 @@
     </tbody>
   </table>
 </section>
+<section class="card section card--data">
+  <div class="section-head"><div><h2>AI governance</h2><p class="muted">Platform controls only. Customer and participant material remains separated by organisation and study scope.</p></div><span class="badge">Human review required</span></div>
+  <dl class="details-list">
+    <dt>Provider boundary</dt><dd>{{ ai_governance.provider }}</dd>
+    <dt>Configured deployment</dt><dd>{{ ai_governance.deployment }}</dd>
+    <dt>Verified processing region</dt><dd>{{ ai_governance.region }}</dd>
+    <dt>Methodology grounding</dt><dd>{{ ai_governance.grounding }}</dd>
+    <dt>Retrieval provider</dt><dd>{{ ai_governance.retrieval }}</dd>
+    <dt>Participant training</dt><dd>{{ 'Enabled' if ai_governance.participant_training else 'Disabled' }}</dd>
+    <dt>Shared-model training</dt><dd>{{ 'Enabled' if ai_governance.shared_training else 'Disabled' }}</dd>
+    <dt>Cross-customer learning</dt><dd>{{ 'Enabled' if ai_governance.cross_customer_learning else 'Disabled' }}</dd>
+  </dl>
+  <p class="muted">Participant applications never call AI-provider endpoints directly. AI-assisted output is researcher-only and remains a suggestion until a researcher makes a recorded decision.</p>
+</section>
 {% endblock %}

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from .models import EvidenceConfidenceAssessment, ResearchAnalysisSuggestion
 from .ai_safeguards import SafeguardViolation, validate_provisional_ai_output
+from .methodology import MethodologyGateViolation, study_grounding
 
 
 class UnsafeAIResponse(ValueError): pass
@@ -10,12 +11,47 @@ def response_text(response):
     value=json.loads(response.value_json or '{}'); text=value.get('text') or value.get('value') or ''
     if not isinstance(text,str) or not text.strip(): raise ValueError('Response has no text evidence')
     return text.strip()
-def create_suggestion(db,user,study,response,output):
+
+
+def retrieve_grounded_context(user, study, methodology_configuration, responses, task="candidate_code_suggestions"):
+    """Return the only context an approved server-side AI operation may receive.
+
+    Retrieval is deterministic and study-scoped: methodology rules are read
+    from the published controlled library and evidence is limited to the
+    caller's organisation and the selected study.  The caller remains
+    responsible for sending this context only to an approved server provider.
+    """
+    if any(
+        row.organisation_id != user.organisation_id or row.study_id != study.id
+        for row in responses
+    ):
+        raise PermissionError("Evidence scope mismatch")
+    grounding = study_grounding(methodology_configuration, task)
+    return {
+        "grounding": grounding,
+        "evidence_ids": tuple(row.id for row in responses),
+        "evidence_text": tuple(response_text(row) for row in responses),
+    }
+
+
+def create_suggestion(db,user,study,response,output,methodology_configuration=None):
     if user.role not in {'owner','admin','researcher'}: raise PermissionError('Only researchers can request analysis')
     if response.organisation_id!=user.organisation_id or response.study_id!=study.id: raise PermissionError('Source scope mismatch')
-    try: validate_provisional_ai_output(output, response_text(response))
+    if methodology_configuration is not None and (
+        getattr(methodology_configuration, "organisation_id", user.organisation_id) != user.organisation_id
+        or getattr(methodology_configuration, "study_id", study.id) != study.id
+    ):
+        raise PermissionError('Methodology configuration scope mismatch')
+    try:
+        context = retrieve_grounded_context(
+            user, study, methodology_configuration, [response],
+        )
+        grounding = context["grounding"]
+        validate_provisional_ai_output(output, response_text(response))
+    except MethodologyGateViolation as exc:
+        raise UnsafeAIResponse(str(exc)) from exc
     except SafeguardViolation as exc: raise UnsafeAIResponse(str(exc)) from exc
-    row=ResearchAnalysisSuggestion(organisation_id=user.organisation_id,study_id=study.id,source_response_id=response.id,source_snapshot=response_text(response),suggested_codes_json=json.dumps(output['suggested_codes']),provisional_insight=output['provisional_insight'],confidence=float(output.get('confidence',0)),status='awaiting_researcher_review')
+    row=ResearchAnalysisSuggestion(organisation_id=user.organisation_id,study_id=study.id,source_response_id=response.id,source_snapshot=response_text(response),suggested_codes_json=json.dumps(output['suggested_codes']),provisional_insight=output['provisional_insight'],confidence=float(output.get('confidence',0)),status='awaiting_researcher_review',methodology_id=grounding.methodology_id,methodology_variant=grounding.variant,methodology_library_version=grounding.library_version,methodology_rule_references_json=json.dumps(grounding.rule_references),protocol_version=methodology_configuration.protocol_version,evidence_item_ids_json=json.dumps([response.id]),model_provider="server-side controlled provider",model_deployment="configured server deployment",prompt_template_version="research-analysis-v1",human_review_required=True)
     db.add(row); return row
 def review_suggestion(user,row,decision,note=''):
     if user.role not in {'owner','admin','researcher'}: raise PermissionError('Only researchers can review analysis')

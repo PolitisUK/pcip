@@ -211,6 +211,37 @@ class StudyGovernance(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class StudyMethodologyConfiguration(Base):
+    """Researcher-confirmed, version-pinned method and AI boundary for one study."""
+
+    __tablename__ = "study_methodology_configurations"
+    __table_args__ = (
+        UniqueConstraint("study_id", name="uq_study_methodology_configuration_study"),
+        Index("ix_study_methodology_configuration_scope", "organisation_id", "study_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    primary_methodology_id: Mapped[str] = mapped_column(String(30), default="")
+    methodology_variant: Mapped[str] = mapped_column(String(80), default="")
+    secondary_methodologies_json: Mapped[str] = mapped_column(Text, default="[]")
+    research_questions: Mapped[str] = mapped_column(Text, default="")
+    protocol_reference: Mapped[str] = mapped_column(String(500), default="")
+    protocol_version: Mapped[str] = mapped_column(String(80), default="")
+    sampling_approach: Mapped[str] = mapped_column(Text, default="")
+    data_collection_plan: Mapped[str] = mapped_column(Text, default="")
+    ai_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    allowed_ai_tasks_json: Mapped[str] = mapped_column(Text, default="[]")
+    human_review_required: Mapped[bool] = mapped_column(Boolean, default=True)
+    library_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
+    researcher_notes: Mapped[str] = mapped_column(Text, default="")
+    researcher_confirmed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    researcher_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class Participant(Base):
     __tablename__ = "participants"
     __table_args__ = (UniqueConstraint("organisation_id", "reference"),)
@@ -410,6 +441,16 @@ class ResearchAnalysisSuggestion(Base):
     reviewer_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     reviewer_note: Mapped[str] = mapped_column(Text, default="")
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    methodology_id: Mapped[str] = mapped_column(String(30), default="")
+    methodology_variant: Mapped[str] = mapped_column(String(80), default="")
+    methodology_library_version: Mapped[str] = mapped_column(String(30), default="")
+    methodology_rule_references_json: Mapped[str] = mapped_column(Text, default="[]")
+    protocol_version: Mapped[str] = mapped_column(String(80), default="")
+    evidence_item_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    model_provider: Mapped[str] = mapped_column(String(80), default="")
+    model_deployment: Mapped[str] = mapped_column(String(120), default="")
+    prompt_template_version: Mapped[str] = mapped_column(String(80), default="research-analysis-v1")
+    human_review_required: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
