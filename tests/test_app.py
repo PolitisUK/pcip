@@ -200,7 +200,7 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         assert 'href="#how-it-works">See how the platform works</a>' in homepage.text
         for legal_path in [
             '/privacy', '/cookies', '/terms', '/accessibility', '/acceptable-use',
-            '/legal-information', '/contact',
+            '/legal', '/contact', '/support',
         ]:
             assert f'href="{legal_path}"' in homepage.text
         assert 'footer-placeholder' not in homepage.text
@@ -227,27 +227,65 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         assert protected.headers['location'] == '/login'
 
 
-def test_public_legal_pages_are_versioned_and_use_approved_company_details():
+def test_public_legal_publication_uses_only_source_complete_policy_text():
+    from app.legal_content import public_legal_document
+
+    for legal_slug in ('privacy', 'terms', 'cookies', 'accessibility', 'acceptable-use', 'legal'):
+        source_document = public_legal_document(legal_slug)
+        assert source_document is not None
+        assert source_document.is_published is True
+        assert source_document.source_file.startswith('app/legal_sources/canonical/')
+        rendered_text = ' '.join(
+            paragraph
+            for section in source_document.sections
+            for paragraph in section.paragraphs
+        )
+        assert 'CLIENT INPUT REQUIRED' not in rendered_text
+        assert '[confirm' not in rendered_text.lower()
+
     with client:
         client.cookies.clear()
+        terms = client.get('/terms')
+        assert terms.status_code == 200
+        assert 'Version 1.0' in terms.text
+        assert 'Effective 15 August 2026' in terms.text
+        assert 'invitation token/code rather than email/password sign-in' in terms.text
+        assert 'Participant material is not used to train public or shared foundation models.' in terms.text
+        assert 'info@politisconsulting.co.uk' in terms.text
+
+        support = client.get('/support')
+        assert support.status_code == 200
+        assert 'Citizen Centric support' in support.text
+        assert 'info@politisconsulting.co.uk' in support.text
+
+        assert client.get('/legal-information', follow_redirects=False).headers['location'] == '/legal'
         for path, title in {
             '/privacy': 'Privacy Notice',
-            '/terms': 'Terms of Use',
             '/cookies': 'Cookie and Similar Technologies Policy',
             '/accessibility': 'Accessibility Statement',
             '/acceptable-use': 'Acceptable Use Policy',
-            '/legal-information': 'Legal Information',
-            '/contact': 'Contact',
+            '/legal': 'Legal Information',
         }.items():
             response = client.get(path)
             assert response.status_code == 200
             assert title in response.text
-            assert 'Version 1.0' in response.text
-            assert 'Effective 15 August 2026' in response.text
-            assert 'info@politisconsulting.co.uk' in response.text
-        privacy = client.get('/privacy')
-        assert 'controller-approved retention period' in privacy.text
-        assert 'single arbitrary retention period' in privacy.text
+            assert 'CLIENT INPUT REQUIRED' not in response.text
+
+
+def test_customer_agreements_are_owner_admin_only_and_source_backed():
+    with client:
+        client.cookies.clear()
+        assert client.get('/agreements', follow_redirects=False).status_code == 303
+
+        owner_login = login()
+        client.cookies.update(owner_login.cookies)
+        agreements = client.get('/agreements')
+        assert agreements.status_code == 200
+        assert 'Data Processing Agreement' in agreements.text
+
+        document = client.get('/agreements/dpa')
+        assert document.status_code == 200
+        assert 'UK GDPR Article 28 Schedule to the Citizen Centric Organisation SaaS Terms' in document.text
 
 
 def test_global_user_can_hold_memberships_in_multiple_organisations():

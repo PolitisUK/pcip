@@ -31,6 +31,7 @@
       <a class="{% if request.url.path.startswith('/participants') %}active{% endif %}" href="/participants" {% if request.url.path.startswith('/participants') %}aria-current="page"{% endif %}>Participants</a>
       <a class="{% if request.url.path.startswith('/messages') %}active{% endif %}" href="/messages" {% if request.url.path.startswith('/messages') %}aria-current="page"{% endif %}>Messages</a>
       {% if user.role in ['owner','admin'] %}
+      <a class="{% if request.url.path.startswith('/agreements') %}active{% endif %}" href="/agreements" {% if request.url.path.startswith('/agreements') %}aria-current="page"{% endif %}>Legal &amp; agreements</a>
       <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers" {% if request.url.path.startswith('/researchers') %}aria-current="page"{% endif %}>Team</a>
       <a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit" {% if request.url.path.startswith('/audit') %}aria-current="page"{% endif %}>Audit log</a>
       <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox" {% if request.url.path.startswith('/outbox') %}aria-current="page"{% endif %}>Email</a>

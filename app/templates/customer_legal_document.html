@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ document.title }}{% endblock %}
+{% block page_description %}<p>{{ document.summary }}</p>{% endblock %}
+{% block content %}
+<article class="section legal-document">
+  <p class="public-kicker">Citizen Centric · Version {{ legal_version }} · Effective {{ legal_effective_date }}</p>
+  {% for section in document.sections %}<section class="legal-document-section"><h2>{{ section.heading }}</h2>{% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}{% if section.bullets %}<ul>{% for bullet in section.bullets %}<li>{{ bullet }}</li>{% endfor %}</ul>{% endif %}</section>{% endfor %}
+</article>
+{% endblock %}

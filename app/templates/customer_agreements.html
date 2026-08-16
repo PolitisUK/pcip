@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Legal & agreements{% endblock %}
+{% block page_description %}<p>Approved Citizen Centric contractual documents and service schedules for your organisation.</p>{% endblock %}
+{% block content %}
+<section class="section" aria-label="Customer legal documents">
+  <div class="card-grid">
+  {% for document in documents %}
+    <article class="card">
+      <h2>{{ document.title }}</h2>
+      <p>{{ document.summary }}</p>
+      <a class="btn secondary" href="/agreements/{{ document.document_id }}">Read document</a>
+    </article>
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}
