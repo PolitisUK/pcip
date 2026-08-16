@@ -1,0 +1,68 @@
+name: Roll back PCIP production release
+
+on:
+  workflow_dispatch:
+    inputs:
+      rollback_digest:
+        description: Immutable sha256 digest of the previously verified production image.
+        required: true
+        type: string
+      release_operator:
+        description: Named operator performing the rollback.
+        required: true
+        type: string
+      rollback_decision_owner:
+        description: Named person or role that authorised the rollback.
+        required: true
+        type: string
+      incident_or_change_reference:
+        description: Incident or change record for the rollback decision.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pcip-release-promotion
+  cancel-in-progress: false
+
+jobs:
+  rollback-application:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      PRODUCTION_APP: ${{ vars.PCIP_PRODUCTION_APP }}
+      PRODUCTION_ACR: ${{ vars.PCIP_PRODUCTION_ACR }}
+      IMAGE_REPOSITORY: pcip
+      ROLLBACK_DIGEST: ${{ inputs.rollback_digest }}
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Restore the verified application artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in AZURE_RESOURCE_GROUP PRODUCTION_APP PRODUCTION_ACR; do
+            test -n "${!value}" || { echo "Repository variable $value must be configured." >&2; exit 1; }
+          done
+          [[ "$ROLLBACK_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "A digest, not a mutable tag, is required." >&2; exit 1; }
+          az acr manifest show-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY@$ROLLBACK_DIGEST" --query digest -o tsv | grep -qx "$ROLLBACK_DIGEST"
+          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=false >/dev/null
+          az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --linux-fx-version "DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$ROLLBACK_DIGEST" >/dev/null
+          az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP"
+      - name: Verify rollback readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error "https://$host/health/ready" | grep -q '"status":"ready"'; then exit 0; fi
+            sleep 10
+          done
+          exit 1

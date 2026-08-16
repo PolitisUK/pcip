@@ -1,0 +1,237 @@
+name: Promote PCIP release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full commit SHA already merged into main.
+        required: true
+        type: string
+      release_operator:
+        description: Named release operator.
+        required: true
+        type: string
+      release_window:
+        description: Approved release window, including timezone.
+        required: true
+        type: string
+      rollback_decision_owner:
+        description: Named person or role authorised to decide a rollback.
+        required: true
+        type: string
+      backup_recovery_point:
+        description: Verified Azure PostgreSQL recovery-point name recorded for this release.
+        required: true
+        type: string
+      current_alembic_revision:
+        description: Revision verified by the approved production database query.
+        required: true
+        type: string
+      rollback_digest:
+        description: Immutable sha256 digest of the previously verified production rollback artifact.
+        required: true
+        type: string
+      promote_to_production:
+        description: Set true only after the staging job has passed in this run.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pcip-release-promotion
+  cancel-in-progress: false
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  STAGING_APP: ${{ vars.PCIP_STAGING_APP }}
+  STAGING_ACR: ${{ vars.PCIP_STAGING_ACR }}
+  PRODUCTION_APP: ${{ vars.PCIP_PRODUCTION_APP }}
+  PRODUCTION_ACR: ${{ vars.PCIP_PRODUCTION_ACR }}
+  PRODUCTION_DATABASE_SERVER: ${{ vars.PCIP_PRODUCTION_DATABASE_SERVER }}
+  IMAGE_REPOSITORY: pcip
+
+jobs:
+  validate-release-evidence:
+    runs-on: ubuntu-latest
+    environment: release-controls
+    outputs:
+      release_sha: ${{ steps.evidence.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - id: evidence
+        name: Validate the approved source and release record
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_OPERATOR: ${{ inputs.release_operator }}
+          RELEASE_WINDOW: ${{ inputs.release_window }}
+          ROLLBACK_DECISION_OWNER: ${{ inputs.rollback_decision_owner }}
+          BACKUP_RECOVERY_POINT: ${{ inputs.backup_recovery_point }}
+          CURRENT_ALEMBIC_REVISION: ${{ inputs.current_alembic_revision }}
+        run: |
+          set -euo pipefail
+          for value in RELEASE_SHA RELEASE_OPERATOR RELEASE_WINDOW ROLLBACK_DECISION_OWNER BACKUP_RECOVERY_POINT CURRENT_ALEMBIC_REVISION; do
+            test -n "${!value}" || { echo "$value is required." >&2; exit 1; }
+          done
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full lowercase commit SHA." >&2; exit 1; }
+          git cat-file -e "${RELEASE_SHA}^{commit}"
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || {
+            echo "The release commit must already be merged into main." >&2
+            exit 1
+          }
+          printf 'release_sha=%s\n' "$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Release evidence"
+            echo "- Commit: \`$RELEASE_SHA\`"
+            echo "- Operator: $RELEASE_OPERATOR"
+            echo "- Window: $RELEASE_WINDOW"
+            echo "- Rollback decision owner: $ROLLBACK_DECISION_OWNER"
+            echo "- Recorded database revision: $CURRENT_ALEMBIC_REVISION"
+            echo "- Recovery point: $BACKUP_RECOVERY_POINT"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  stage:
+    needs: validate-release-evidence
+    runs-on: ubuntu-latest
+    environment: staging
+    outputs:
+      image_digest: ${{ steps.digest.outputs.image_digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-release-evidence.outputs.release_sha }}
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Validate staging configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in AZURE_RESOURCE_GROUP STAGING_APP STAGING_ACR; do
+            test -n "${!value}" || { echo "Repository variable $value must be configured." >&2; exit 1; }
+          done
+          az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --query state -o tsv | grep -qx Running
+      - name: Build an immutable candidate in the staging registry
+        id: build
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.validate-release-evidence.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          az acr build \
+            --registry "$STAGING_ACR" \
+            --image "$IMAGE_REPOSITORY:sha-$RELEASE_SHA" \
+            --build-arg "VCS_REF=$RELEASE_SHA" \
+            --build-arg "BUILD_CREATED=$created" \
+            .
+      - name: Resolve the immutable candidate digest
+        id: digest
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.validate-release-evidence.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          digest=$(az acr manifest list-metadata -r "$STAGING_ACR" -n "$IMAGE_REPOSITORY" --query "[?tags && contains(tags, 'sha-$RELEASE_SHA')].digest | [0]" -o tsv)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Could not resolve a candidate image digest." >&2; exit 1; }
+          printf 'image_digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          echo "Staging candidate: $STAGING_ACR.azurecr.io/$IMAGE_REPOSITORY@$digest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Deploy the digest-pinned candidate to staging
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --settings RUN_MIGRATIONS=true >/dev/null
+          az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --linux-fx-version "DOCKER|$STAGING_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST" >/dev/null
+          az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP"
+      - name: Verify staging readiness and public legal routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --query defaultHostName -o tsv)
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error "https://$host/health/ready" | grep -q '"status":"ready"'; then break; fi
+            test "$attempt" -lt 30 || { echo "Staging never became ready." >&2; exit 1; }
+            sleep 10
+          done
+          for route in health privacy support terms cookies accessibility acceptable-use legal contact; do
+            curl --fail --silent --show-error "https://$host/$route" >/dev/null
+          done
+      - name: Disable automatic migrations after staging validation
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --settings RUN_MIGRATIONS=false >/dev/null
+
+  promote-production:
+    if: ${{ inputs.promote_to_production }}
+    needs: [validate-release-evidence, stage]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-release-evidence.outputs.release_sha }}
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Verify production evidence and rollback target
+        shell: bash
+        env:
+          BACKUP_RECOVERY_POINT: ${{ inputs.backup_recovery_point }}
+          CURRENT_ALEMBIC_REVISION: ${{ inputs.current_alembic_revision }}
+          ROLLBACK_DIGEST: ${{ inputs.rollback_digest }}
+          IMAGE_DIGEST: ${{ needs.stage.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          for value in AZURE_RESOURCE_GROUP PRODUCTION_APP PRODUCTION_ACR PRODUCTION_DATABASE_SERVER; do
+            test -n "${!value}" || { echo "Repository variable $value must be configured." >&2; exit 1; }
+          done
+          az postgres flexible-server backup list -g "$AZURE_RESOURCE_GROUP" -s "$PRODUCTION_DATABASE_SERVER" --query "[?name=='$BACKUP_RECOVERY_POINT'].name | [0]" -o tsv | grep -qx "$BACKUP_RECOVERY_POINT"
+          [[ "$CURRENT_ALEMBIC_REVISION" =~ ^[0-9]{4}$ ]] || { echo "Current Alembic revision must come from the approved production query." >&2; exit 1; }
+          [[ "$ROLLBACK_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "A verified rollback digest is required." >&2; exit 1; }
+          az acr manifest show-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY@$ROLLBACK_DIGEST" --query digest -o tsv | grep -qx "$ROLLBACK_DIGEST"
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+      - name: Promote the already-staged immutable artifact
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.validate-release-evidence.outputs.release_sha }}
+          IMAGE_DIGEST: ${{ needs.stage.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          az acr import -n "$PRODUCTION_ACR" --source "$STAGING_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST" --image "$IMAGE_REPOSITORY:sha-$RELEASE_SHA"
+          promoted=$(az acr manifest list-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY" --query "[?tags && contains(tags, 'sha-$RELEASE_SHA')].digest | [0]" -o tsv)
+          test "$promoted" = "$IMAGE_DIGEST" || { echo "Imported production digest differs from staged artifact." >&2; exit 1; }
+          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=true >/dev/null
+          az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --linux-fx-version "DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST" >/dev/null
+          az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP"
+      - name: Verify sustained production readiness and legal routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error "https://$host/health/ready" | grep -q '"status":"ready"'; then break; fi
+            test "$attempt" -lt 30 || { echo "Production never became ready." >&2; exit 1; }
+            sleep 10
+          done
+          for route in health privacy support terms cookies accessibility acceptable-use legal contact; do
+            curl --fail --silent --show-error "https://citizencentric.co.uk/$route" >/dev/null
+          done
+      - name: Disable automatic migrations after promotion
+        if: success()
+        shell: bash
+        run: az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=false >/dev/null
