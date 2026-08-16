@@ -309,6 +309,64 @@ def test_global_user_can_hold_memberships_in_multiple_organisations():
         assert 'Observer' in dashboard.text
 
 
+def test_platform_admin_is_explicit_and_customer_owner_cannot_open_global_view():
+    from app.models import Organisation
+
+    with client:
+        client.cookies.clear()
+        auth()
+        denied = client.get('/admin', follow_redirects=False)
+        assert denied.status_code == 404
+
+        with SessionLocal() as db:
+            owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            assert owner is not None
+            owner.is_platform_admin = True
+            db.add(Organisation(name=unique_value('Customer organisation'), slug=unique_value('customer-org').lower()))
+            db.commit()
+
+        client.cookies.clear()
+        auth()
+        allowed = client.get('/admin')
+        assert allowed.status_code == 200
+        assert 'Platform administration' in allowed.text
+        assert 'Customer organisations' in allowed.text
+
+
+def test_customer_cannot_cross_tenant_study_or_participant_object_ids():
+    from app.models import Organisation, OrganisationMembership, Participant, Project, Study
+    from app.security import hash_password
+
+    customer_email = f"{unique_value('customer-owner')}@example.org"
+    customer_password = 'CustomerPass123!'
+    with client:
+        with SessionLocal() as db:
+            other_org = Organisation(name=unique_value('Other council'), slug=unique_value('other-council').lower())
+            db.add(other_org)
+            db.flush()
+            customer_org = Organisation(name=unique_value('Customer council'), slug=unique_value('customer-council').lower())
+            db.add(customer_org)
+            db.flush()
+            customer = User(organisation_id=customer_org.id, name='Customer owner', email=customer_email, password_hash=hash_password(customer_password), role='owner')
+            db.add(customer)
+            db.flush()
+            db.add(OrganisationMembership(user_id=customer.id, organisation_id=customer_org.id, role='owner'))
+            project = Project(organisation_id=other_org.id, title='Other project', code=unique_value('OTHER-PROJECT').upper(), description='', status='draft', created_by_id=customer.id)
+            db.add(project)
+            db.flush()
+            study_row = Study(organisation_id=other_org.id, project_id=project.id, title='Other study', code=unique_value('OTHER-STUDY').upper(), description='', methodology='diary', status='draft', created_by_id=customer.id)
+            participant_row = Participant(organisation_id=other_org.id, reference=unique_value('OTHER-PARTICIPANT').upper(), name='Other participant', status='prospective', consent_status='pending', communication_preference='email', created_by_id=customer.id)
+            db.add_all([study_row, participant_row])
+            db.commit()
+            other_study_id, other_participant_id = study_row.id, participant_row.id
+
+        client.cookies.clear()
+        assert login_as(customer_email, customer_password).status_code == 303
+        assert client.get(f'/studies/{other_study_id}', follow_redirects=False).status_code == 404
+        assert client.get(f'/participants/{other_participant_id}', follow_redirects=False).status_code == 404
+        assert client.get('/admin', follow_redirects=False).status_code == 404
+
+
 def test_entra_identity_requires_configured_tenant_claim():
     original_tenant = settings.entra_tenant_id
     try:

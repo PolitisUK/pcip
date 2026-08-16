@@ -33,6 +33,7 @@ class BootstrapResult:
     dry_run: bool
     organisation_created: bool
     account_created: bool
+    platform_admin: bool = False
     user_id: int | None = None
 
 
@@ -80,6 +81,7 @@ def bootstrap_admin(
     role: str = "owner",
     create_organisation: bool = False,
     dry_run: bool = False,
+    platform_admin: bool = False,
 ) -> BootstrapResult:
     organisation_name = organisation_name.strip()
     administrator_name = administrator_name.strip()
@@ -153,6 +155,7 @@ def bootstrap_admin(
             dry_run=True,
             organisation_created=organisation_created,
             account_created=True,
+            platform_admin=platform_admin,
         )
 
     if organisation is None:
@@ -169,6 +172,7 @@ def bootstrap_admin(
         email=email,
         password_hash=None,
         role=role,
+        is_platform_admin=platform_admin,
         is_active=True,
     )
     db.add(user)
@@ -188,7 +192,10 @@ def bootstrap_admin(
             action="auth.admin_bootstrapped",
             entity_type="user",
             entity_id=str(user.id),
-            detail=f"role={role}; source=scripts.bootstrap_admin",
+            detail=(
+                f"role={role}; platform_admin={platform_admin}; "
+                "source=scripts.bootstrap_admin"
+            ),
         )
     )
     db.flush()
@@ -201,6 +208,7 @@ def bootstrap_admin(
         dry_run=False,
         organisation_created=organisation_created,
         account_created=True,
+        platform_admin=platform_admin,
         user_id=user.id,
     )
 
@@ -227,6 +235,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--create-organisation", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
+        "--platform-admin",
+        action="store_true",
+        help="Grant Politis-only global administration; use only with explicit approval.",
+    )
+    parser.add_argument(
         "--confirm-production-bootstrap",
         action="store_true",
         help="Required for a write; confirms the production bootstrap was approved.",
@@ -250,6 +263,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             role=args.role,
             create_organisation=args.create_organisation,
             dry_run=args.dry_run,
+            platform_admin=args.platform_admin,
         )
     except BootstrapError as exc:
         parser.exit(2, f"Bootstrap refused: {exc}\n")

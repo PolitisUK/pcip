@@ -67,12 +67,24 @@ def test_bootstrap_creates_owner_membership_and_audit_atomically(bootstrap_datab
         assert user.password_hash is None
         assert user.role == "owner"
         assert user.is_active is True
+        assert user.is_platform_admin is False
         assert membership.user_id == user.id
         assert membership.organisation_id == organisation.id
         assert membership.role == "owner"
         assert membership.is_active is True
         assert audit.action == "auth.admin_bootstrapped"
         assert audit.actor_user_id is None
+
+
+def test_bootstrap_can_explicitly_grant_platform_admin(bootstrap_database):
+    _, factory = bootstrap_database
+    result = execute_bootstrap(factory, **bootstrap_kwargs(platform_admin=True))
+
+    assert result.platform_admin is True
+    with factory() as db:
+        user = db.scalar(select(User))
+        assert user is not None
+        assert user.is_platform_admin is True
 
 
 def test_bootstrap_refuses_duplicate_global_email(bootstrap_database):

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Platform administration{% endblock %}
+{% block page_description %}<p class="page-description">A Politis-only operational view across customer organisations. Customer workspaces remain separate.</p>{% endblock %}
+{% block contextual_help %}<p class="muted">This view is limited to explicitly provisioned platform administrators. Do not use it to access participant material unless an authorised support process requires it.</p>{% endblock %}
+{% block content %}
+<section class="card section card--data">
+  <div class="section-head"><div><h2>Customer organisations</h2><p class="muted">Organisation-level operational summary only.</p></div><span class="muted">{{ organisations|length }} organisations</span></div>
+  <table class="table">
+    <thead><tr><th>Organisation</th><th>Studies</th><th>Participants</th></tr></thead>
+    <tbody>
+      {% for organisation, study_count, participant_count in organisations %}
+      <tr><td>{{ organisation.name }}</td><td>{{ study_count }}</td><td>{{ participant_count }}</td></tr>
+      {% else %}
+      <tr><td colspan="3" class="empty">No customer organisations are configured.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

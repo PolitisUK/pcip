@@ -31,9 +31,12 @@
       <a class="{% if request.url.path.startswith('/participants') %}active{% endif %}" href="/participants" {% if request.url.path.startswith('/participants') %}aria-current="page"{% endif %}>Participants</a>
       <a class="{% if request.url.path.startswith('/messages') %}active{% endif %}" href="/messages" {% if request.url.path.startswith('/messages') %}aria-current="page"{% endif %}>Messages</a>
       {% if user.role in ['owner','admin'] %}
-      <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers" {% if request.url.path.startswith('/researchers') %}aria-current="page"{% endif %}>Researchers</a>
+      <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers" {% if request.url.path.startswith('/researchers') %}aria-current="page"{% endif %}>Team</a>
       <a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit" {% if request.url.path.startswith('/audit') %}aria-current="page"{% endif %}>Audit log</a>
       <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox" {% if request.url.path.startswith('/outbox') %}aria-current="page"{% endif %}>Email</a>
+      {% endif %}
+      {% if user.is_platform_admin %}
+      <a class="{% if request.url.path.startswith('/admin') %}active{% endif %}" href="/admin" {% if request.url.path.startswith('/admin') %}aria-current="page"{% endif %}>Platform administration</a>
       {% endif %}
     </nav>
     <div class="header-meta">
