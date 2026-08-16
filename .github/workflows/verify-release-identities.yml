@@ -1,0 +1,55 @@
+name: Verify PCIP release identities
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify-staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      PCIP_STAGING_APP: ${{ vars.PCIP_STAGING_APP }}
+      PCIP_STAGING_ACR: ${{ vars.PCIP_STAGING_ACR }}
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Verify read-only staging deployment access
+        shell: bash
+        run: |
+          set -euo pipefail
+          az account show --query id -o tsv | grep -qx "$AZURE_SUBSCRIPTION_ID"
+          az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PCIP_STAGING_APP" --query state -o tsv | grep -qx Running
+          az acr manifest show-metadata -r "$PCIP_STAGING_ACR" -n "pcip@sha256:dd74b3c34dc37fad9e23fed9b12476a5fdf8a62bafa5917aba56ebd49cd419f3" --query digest -o tsv | grep -qx "sha256:dd74b3c34dc37fad9e23fed9b12476a5fdf8a62bafa5917aba56ebd49cd419f3"
+
+  verify-production:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      PCIP_PRODUCTION_APP: ${{ vars.PCIP_PRODUCTION_APP }}
+      PCIP_PRODUCTION_ACR: ${{ vars.PCIP_PRODUCTION_ACR }}
+      PCIP_PRODUCTION_DATABASE_SERVER: ${{ vars.PCIP_PRODUCTION_DATABASE_SERVER }}
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Verify read-only production promotion access
+        shell: bash
+        run: |
+          set -euo pipefail
+          az account show --query id -o tsv | grep -qx "$AZURE_SUBSCRIPTION_ID"
+          az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PCIP_PRODUCTION_APP" --query state -o tsv | grep -qx Running
+          az acr manifest show-metadata -r "$PCIP_PRODUCTION_ACR" -n "pcip@sha256:0ce95cb12f1793b1c978f3233a327ceddaffbab61210d7286ec269223b2892de" --query digest -o tsv | grep -qx "sha256:0ce95cb12f1793b1c978f3233a327ceddaffbab61210d7286ec269223b2892de"
+          az postgres flexible-server backup list -g "$AZURE_RESOURCE_GROUP" -s "$PCIP_PRODUCTION_DATABASE_SERVER" --query "[?name=='backup_639224846545789483'].name | [0]" -o tsv | grep -qx backup_639224846545789483
