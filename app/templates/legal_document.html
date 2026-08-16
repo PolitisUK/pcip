@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block page_title %}{{ document.title }} | Citizen Centric{% endblock %}
+{% block head_meta %}<meta name="description" content="{{ document.summary }}">{% endblock %}
+{% block body_class %}public-site{% endblock %}
+{% block public %}
+<header class="public-header">
+  <a class="brand public-site-brand" href="/" aria-label="Citizen Centric by Politis home"><img class="brand-logo brand-logo--wordmark" src="/static/citizen-centric-logo.png" alt="Citizen Centric by Politis"></a>
+  <nav class="public-nav" aria-label="Public navigation"><a href="/#why">Why it matters</a><a href="/#trust">Trust</a><a href="/privacy">Legal and privacy</a></nav>
+  <a class="btn secondary public-signin" href="/login">Researcher sign in</a>
+</header>
+<main id="main-content" tabindex="-1" class="public-section">
+  <article class="public-container legal-document">
+    <p class="public-kicker">Citizen Centric · Version {{ legal_version }} · Effective {{ legal_effective_date }}</p>
+    <h1>{{ document.title }}</h1>
+    <p class="public-lead">{{ document.summary }}</p>
+    {% for section in document.sections %}<section class="legal-document-section"><h2>{{ section.heading }}</h2>{% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}</section>{% endfor %}
+  </article>
+</main>
+{% endblock %}

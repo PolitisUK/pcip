@@ -70,6 +70,7 @@ from .storage import storage
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
 from .observability import configure_observability
+from .legal_content import LEGAL_EFFECTIVE_DATE, LEGAL_VERSION, public_legal_document
 from .participant_services import (
     activity_window,
     apply_response_action,
@@ -1302,6 +1303,27 @@ def readiness():
             content={"status": "unavailable"},
         )
     return {"status": "ready", "version": VERSION}
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+@app.get("/terms", response_class=HTMLResponse)
+@app.get("/cookies", response_class=HTMLResponse)
+@app.get("/accessibility", response_class=HTMLResponse)
+@app.get("/acceptable-use", response_class=HTMLResponse)
+@app.get("/legal-information", response_class=HTMLResponse)
+@app.get("/contact", response_class=HTMLResponse)
+def public_legal_page(request: Request):
+    legal_slug = request.url.path.lstrip("/")
+    document = public_legal_document(legal_slug)
+    if document is None:
+        raise HTTPException(404)
+    return render(
+        request,
+        "legal_document.html",
+        document=document,
+        legal_version=LEGAL_VERSION,
+        legal_effective_date=LEGAL_EFFECTIVE_DATE,
+    )
 
 
 @app.get("/login",response_class=HTMLResponse)

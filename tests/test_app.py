@@ -198,19 +198,13 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         assert 'local councils' not in homepage.text.lower()
         assert 'town and parish councils' not in homepage.text.lower()
         assert 'href="#how-it-works">See how the platform works</a>' in homepage.text
-        for planned_page in [
-            'Privacy',
-            'Cookies',
-            'Terms',
-            'Accessibility',
-            'Participant privacy',
-            'Researcher terms',
-            'Contact',
+        for legal_path in [
+            '/privacy', '/cookies', '/terms', '/accessibility', '/acceptable-use',
+            '/legal-information', '/contact',
         ]:
-            assert f'class="footer-placeholder">{planned_page}</span>' in homepage.text
-        assert 'href="/privacy"' not in homepage.text
-        assert 'In preparation' not in homepage.text
-        assert 'Legal, accessibility and contact information is being prepared' in homepage.text
+            assert f'href="{legal_path}"' in homepage.text
+        assert 'footer-placeholder' not in homepage.text
+        assert 'Politis Ltd · Company No. 13661766 · ICO ZB738312' in homepage.text
         assert 'Today’s activity' not in homepage.text
         assert 'daily activities' not in homepage.text.lower()
         assert 'Seven-day town centre diary' not in homepage.text
@@ -226,11 +220,34 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         login_page = client.get('/login')
         assert login_page.status_code == 200
         assert 'href="/">← Citizen Centric home</a>' in login_page.text
-        assert 'class="footer-placeholder">Privacy</span>' in login_page.text
+        assert 'href="/privacy"' in login_page.text
 
         protected = client.get('/projects', follow_redirects=False)
         assert protected.status_code == 303
         assert protected.headers['location'] == '/login'
+
+
+def test_public_legal_pages_are_versioned_and_use_approved_company_details():
+    with client:
+        client.cookies.clear()
+        for path, title in {
+            '/privacy': 'Privacy Notice',
+            '/terms': 'Terms of Use',
+            '/cookies': 'Cookie and Similar Technologies Policy',
+            '/accessibility': 'Accessibility Statement',
+            '/acceptable-use': 'Acceptable Use Policy',
+            '/legal-information': 'Legal Information',
+            '/contact': 'Contact',
+        }.items():
+            response = client.get(path)
+            assert response.status_code == 200
+            assert title in response.text
+            assert 'Version 1.0' in response.text
+            assert 'Effective 15 August 2026' in response.text
+            assert 'info@politisconsulting.co.uk' in response.text
+        privacy = client.get('/privacy')
+        assert 'controller-approved retention period' in privacy.text
+        assert 'single arbitrary retention period' in privacy.text
 
 
 def test_global_user_can_hold_memberships_in_multiple_organisations():
