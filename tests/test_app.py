@@ -765,6 +765,7 @@ def test_participant_api_profile_consent_and_submission_history_contracts():
         profile = client.get('/api/v1/participant/profile', headers={'Authorization': f'Bearer {api_token}'})
         assert profile.status_code == 200
         assert profile.json()['consent_status'] == 'pending'
+        assert 'participant_id' not in profile.json()
 
         accepted = client.post('/api/v1/participant/consent', json={'consent': True}, headers=headers)
         assert accepted.status_code == 200
@@ -887,7 +888,7 @@ def test_participant_api_portal_summary_returns_contract_shaped_payload_for_acce
 
         assert set(body.keys()) == {'study', 'participant', 'activities', 'responses', 'messages'}
         assert body['study']['study_id'] == study_id
-        assert body['participant']['participant_id'] == participant_id
+        assert 'participant_id' not in body['participant']
 
         activity_ids = {item['activity_id'] for item in body['activities']}
         assert activity_id in activity_ids
@@ -5432,7 +5433,7 @@ def test_participant_api_session_requires_valid_bearer_and_excludes_internal_fie
         assert valid.status_code == 200
         assert valid.headers.get('cache-control') == 'no-store'
         body = valid.json()
-        assert body['participant']['participant_id'] == participant_id
+        assert 'participant_id' not in body['participant']
         assert body['study_scope'] == [study_id]
         assert 'session_hash' not in body
         assert 'token_hash' not in body
@@ -7210,6 +7211,7 @@ def test_participant_api_activity_response_invalid_evidence_reference_does_not_m
 
 def test_participant_api_evidence_upload_and_status_support_activity_response_reference():
     from io import BytesIO
+    from app.models import EvidenceFile
 
     context = _prepare_participant_api_activity_response_context('api-evidence-upload-foundation')
 
@@ -7231,6 +7233,13 @@ def test_participant_api_evidence_upload_and_status_support_activity_response_re
         assert upload_body['evidence']['scan_status'] in {'pending', 'clean', 'infected', 'scan_failed'}
         evidence_id = upload_body['evidence']['evidence_id']
 
+    with SessionLocal() as db:
+        evidence_row = db.get(EvidenceFile, evidence_id)
+        assert evidence_row is not None
+        evidence_row.scan_detail = 'Internal scanner diagnostic must not reach a participant.'
+        db.commit()
+
+    with client:
         status = client.get(
             f"/api/v1/participant/evidence/{evidence_id}/status",
             headers={'Authorization': f"Bearer {context['api_token']}"},
@@ -7240,6 +7249,8 @@ def test_participant_api_evidence_upload_and_status_support_activity_response_re
         assert status.headers.get('cache-control') == 'no-store'
         status_body = status.json()
         assert status_body['evidence']['evidence_id'] == evidence_id
+        assert 'scan_detail' not in status_body['evidence']
+        assert 'Internal scanner diagnostic' not in status.text
         assert status_body['downloadable'] == (status_body['evidence']['scan_status'] == 'clean')
 
         drafted = client.put(
@@ -7299,6 +7310,129 @@ def test_participant_api_evidence_status_is_scoped_to_participant_context():
             follow_redirects=False,
         )
         assert blocked.status_code == 404
+
+
+def test_participant_api_access_matrix_is_invitation_scoped_and_denies_customer_routes():
+    """A participant bearer can only read its own active invitation scope."""
+    from app.models import Activity, Organisation, ParticipantMessage, Project, Study, User
+
+    first = _prepare_participant_api_activity_response_context('api-access-matrix-a')
+    second = _prepare_participant_api_activity_response_context('api-access-matrix-b')
+
+    with SessionLocal() as db:
+        first_study = db.get(Study, first['study_id'])
+        assert first_study is not None
+        first_activity = db.get(Activity, first['activity_id'])
+        assert first_activity is not None
+        owner = db.scalar(
+            select(User).where(User.organisation_id == first_study.organisation_id).order_by(User.id.asc())
+        )
+        assert owner is not None
+
+        same_org_other_study = Study(
+            organisation_id=first_study.organisation_id,
+            project_id=first_study.project_id,
+            title='Other study outside participant scope',
+            code=unique_value('ACCESS-OOS').upper(),
+            description='Must not be visible to this invitation.',
+            methodology=first_study.methodology,
+            status=first_study.status,
+            created_by_id=owner.id,
+        )
+        db.add(same_org_other_study)
+        db.flush()
+        other_study_activity = Activity(
+            organisation_id=first_study.organisation_id,
+            study_id=same_org_other_study.id,
+            title='Other study activity',
+            prompt='Must not be visible.',
+            activity_type='long_text',
+            required=True,
+            position=1,
+            release_offset_days=0,
+            due_offset_days=None,
+        )
+        other_org = Organisation(name=unique_value('Access tenant'), slug=unique_value('access-tenant').lower())
+        db.add(other_study_activity)
+        db.add(other_org)
+        db.flush()
+        external_project = Project(
+            organisation_id=other_org.id,
+            title='Other tenant project',
+            code=unique_value('ACCESS-PROJECT').upper(),
+            description='Must not be visible.',
+            status='active',
+            created_by_id=owner.id,
+        )
+        db.add(external_project)
+        db.flush()
+        external_study = Study(
+            organisation_id=other_org.id,
+            project_id=external_project.id,
+            title='Other tenant study',
+            code=unique_value('ACCESS-STUDY').upper(),
+            description='Must not be visible.',
+            methodology='diary',
+            status='active',
+            created_by_id=owner.id,
+        )
+        db.add(external_study)
+        db.flush()
+        external_activity = Activity(
+            organisation_id=other_org.id,
+            study_id=external_study.id,
+            title='Other tenant activity',
+            prompt='Must not be visible.',
+            activity_type='long_text',
+            required=True,
+            position=1,
+            release_offset_days=0,
+            due_offset_days=None,
+        )
+        db.add(external_activity)
+        db.add(ParticipantMessage(
+            organisation_id=first_study.organisation_id,
+            study_id=first['study_id'],
+            participant_id=second['participant_id'],
+            sender_type='researcher',
+            body='Only participant B may read this message.',
+            internal_note=False,
+        ))
+        db.commit()
+        other_study_id = same_org_other_study.id
+        other_study_activity_id = other_study_activity.id
+        external_activity_id = external_activity.id
+
+    headers = {'Authorization': f"Bearer {first['api_token']}"}
+    with client:
+        client.cookies.clear()
+        activities = client.get('/api/v1/participant/activities', headers=headers, follow_redirects=False)
+        assert activities.status_code == 200
+        visible_activity_ids = {item['activity_id'] for item in activities.json()['data']}
+        assert first['activity_id'] in visible_activity_ids
+        assert other_study_activity_id not in visible_activity_ids
+        assert external_activity_id not in visible_activity_ids
+
+        same_study_peer_message = client.get('/api/v1/participant/messages', headers=headers, follow_redirects=False)
+        assert same_study_peer_message.status_code == 200
+        assert 'Only participant B may read this message.' not in same_study_peer_message.text
+
+        requested_other_study = client.get(
+            f'/api/v1/participant/activities?study_id={other_study_id}', headers=headers, follow_redirects=False,
+        )
+        assert requested_other_study.status_code == 403
+        assert client.get(
+            f'/api/v1/participant/activities/{other_study_activity_id}', headers=headers, follow_redirects=False,
+        ).status_code == 404
+        assert client.get(
+            f'/api/v1/participant/activities/{external_activity_id}', headers=headers, follow_redirects=False,
+        ).status_code == 404
+
+        # A bearer token cannot be used as a researcher/customer session.
+        customer_route = client.get('/participants', headers=headers, follow_redirects=False)
+        assert customer_route.status_code == 303
+        assert customer_route.headers['location'] == '/login'
+        assert client.get('/admin', headers=headers, follow_redirects=False).status_code == 303
 
 
 def test_participant_api_evidence_upload_rejects_after_response_submission():

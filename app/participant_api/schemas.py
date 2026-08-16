@@ -50,7 +50,6 @@ class StudySummary(BaseModel):
 class ParticipantSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    participant_id: int
     display_name: str
     consent_status: str
 
@@ -152,7 +151,6 @@ class EvidenceMetadata(BaseModel):
     content_type: str
     size_bytes: int = Field(ge=0)
     scan_status: Literal["pending", "clean", "infected", "scan_failed"]
-    scan_detail: str | None = None
     created_at: datetime
 
 
@@ -196,7 +194,6 @@ class ParticipantSessionResponse(BaseModel):
 class ParticipantProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    participant_id: int
     display_name: str
     communication_preference: Literal["email", "sms", "phone", "none"]
     consent_status: str
