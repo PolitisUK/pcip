@@ -588,6 +588,21 @@ def test_study_governance_blocks_live_until_controller_decisions_are_recorded():
         detail = client.get(f'/studies/{study_id}')
         assert 'Study governance and launch readiness' in detail.text
         assert 'Complete' in detail.text
+        methodology = post_with_csrf(
+            f'/studies/{study_id}/methodology-configuration',
+            data={
+                'primary_methodology_id': 'M08',
+                'methodology_variant': 'inductive',
+                'research_questions': 'How do synthetic participants describe access?',
+                'protocol_reference': 'METHOD-GOV-1',
+                'protocol_version': '1.0',
+                'sampling_approach': 'Information-rich purposive sampling',
+                'data_collection_plan': 'Structured text diaries',
+                'researcher_confirmation': 'true',
+            },
+            follow_redirects=False,
+        )
+        assert methodology.status_code == 303
         live = post_with_csrf(f'/studies/{study_id}/status', data={'status_value': 'live'}, follow_redirects=False)
         assert live.status_code == 303
 

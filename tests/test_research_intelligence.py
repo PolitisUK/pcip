@@ -9,6 +9,7 @@ from app.research_intelligence import (
     build_evidence_confidence,
     create_confidence_assessment,
     create_suggestion,
+    retrieve_grounded_context,
     review_suggestion,
 )
 
@@ -25,13 +26,27 @@ def fixtures():
     return FakeDb(), user, study, response
 
 
+def methodology_configuration(**overrides):
+    values = {
+        "primary_methodology_id": "M08",
+        "methodology_variant": "inductive",
+        "library_version": "1.0.0",
+        "protocol_version": "protocol-v1",
+        "ai_enabled": True,
+        "allowed_ai_tasks_json": '["candidate_code_suggestions", "retrieval"]',
+        "researcher_confirmed_at": object(),
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 def valid_output():
     return {"suggested_codes": [{"label": "queue", "evidence": "phone queue"}], "provisional_insight": "Access barrier", "confidence": 0.7, "needs_researcher_review": True}
 
 
 def test_gated_suggestion_and_review_preserve_source_traceability():
     db, user, study, response = fixtures()
-    row = create_suggestion(db, user, study, response, valid_output())
+    row = create_suggestion(db, user, study, response, valid_output(), methodology_configuration())
     assert row.status == "awaiting_researcher_review"
     assert "phone queue" in row.source_snapshot
     review_suggestion(user, row, "accepted")
@@ -46,10 +61,47 @@ def test_missing_gate_rejected():
 
 def test_participant_or_cross_scope_actor_rejected():
     db, user, study, response = fixtures()
-    row = create_suggestion(db, user, study, response, valid_output())
+    row = create_suggestion(db, user, study, response, valid_output(), methodology_configuration())
     user.role = "observer"
     with pytest.raises(PermissionError):
         review_suggestion(user, row, "accepted")
+
+
+def test_ai_suggestion_requires_confirmed_method_and_preserves_method_provenance():
+    db, user, study, response = fixtures()
+    with pytest.raises(UnsafeAIResponse, match="confirm"):
+        create_suggestion(db, user, study, response, valid_output())
+    row = create_suggestion(db, user, study, response, valid_output(), methodology_configuration())
+    assert row.methodology_id == "M08"
+    assert row.methodology_library_version == "1.0.0"
+    assert "E01" in row.methodology_rule_references_json
+
+
+def test_method_gate_blocks_incompatible_reflexive_reliability_operation():
+    from app.methodology import MethodologyGateViolation, study_grounding
+
+    with pytest.raises(MethodologyGateViolation):
+        study_grounding(methodology_configuration(allowed_ai_tasks_json='["coding_reliability"]'), "coding_reliability")
+
+
+def test_cross_study_methodology_configuration_is_rejected():
+    db, user, study, response = fixtures()
+    with pytest.raises(PermissionError, match="configuration scope"):
+        create_suggestion(
+            db, user, study, response, valid_output(),
+            methodology_configuration(study_id=study.id + 1, organisation_id=user.organisation_id),
+        )
+
+
+def test_retrieval_is_limited_to_authorised_study_evidence():
+    db, user, study, response = fixtures()
+    context = retrieve_grounded_context(user, study, methodology_configuration(), [response])
+    assert context["evidence_ids"] == (response.id,)
+    assert context["grounding"].methodology_id == "M08"
+    other_study_response = SimpleNamespace(**vars(response))
+    other_study_response.study_id = study.id + 1
+    with pytest.raises(PermissionError, match="Evidence scope"):
+        retrieve_grounded_context(user, study, methodology_configuration(), [other_study_response])
 
 
 def source(identifier, participant):

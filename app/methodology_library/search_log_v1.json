@@ -1,0 +1,89 @@
+{
+  "version": "1.0",
+  "search_log": [
+    {
+      "topic": "Qualitative sample adequacy and saturation",
+      "why": "Core sources use purposive/theoretical sampling but vary in their treatment of saturation and do not fully reflect recent critiques.",
+      "concept": "information power; saturation; reflexive thematic analysis sample size",
+      "selection": "Peer-reviewed methodological articles directly addressing sample adequacy and method-specific saturation.",
+      "changed": "Replaced any universal saturation rule with methodology-specific adequacy and added information power as a planning heuristic."
+    },
+    {
+      "topic": "Thematic-analysis variants and intercoder reliability",
+      "why": "Core sources include coding, themes and reliability but a platform must prevent hybridization of incompatible TA families.",
+      "concept": "reflexive thematic analysis; codebook TA; coding-reliability TA; intercoder reliability",
+      "selection": "Braun and Clarke's current methodological papers, a worked RTA example and a peer-reviewed ICR methods article.",
+      "changed": "Separated reflexive TA from codebook/coding-reliability TA and made ICR method-gated rather than universal."
+    },
+    {
+      "topic": "Interview and focus-group epistemology",
+      "why": "Business core sources sometimes treat participants as information providers, whereas sociological sources raise co-production.",
+      "concept": "active interview; interview interaction; focus group interaction; feminist focus groups",
+      "selection": "Seminal monograph and peer-reviewed methodological critiques/primers.",
+      "changed": "Interview and focus-group records now require an explicit account of interaction, group process and the status of participant accounts."
+    },
+    {
+      "topic": "Contemporary ethnography and internet ethics",
+      "why": "Core ethnography is strong but rapidly changing digital, multi-sited and patchwork forms require current qualification.",
+      "concept": "multi-sited ethnography; patchwork ethnography; digital ethnography; contextual privacy; internet research ethics",
+      "selection": "Seminal review, current peer-reviewed development, academic monographs and recognized AoIR guidance.",
+      "changed": "Qualified uninterrupted immersion and added platform visibility, contextual privacy and online/offline field boundaries."
+    },
+    {
+      "topic": "Case-study inference",
+      "why": "Core materials contain interpretive, business and cross-case traditions that make different generalization claims.",
+      "concept": "case study generalization; theory building from cases; intrinsic instrumental case study",
+      "selection": "Seminal peer-reviewed methodological articles and major academic monographs representing competing traditions.",
+      "changed": "Added explicit case-study tradition and generalization fields; preserved Stake/Yin/Eisenhardt disagreement."
+    },
+    {
+      "topic": "Grounded-theory branches and situational analysis",
+      "why": "Generic grounded-theory labels conceal incompatible procedures and epistemologies.",
+      "concept": "Glaserian; Straussian; constructivist grounded theory; situational analysis",
+      "selection": "Foundational and current specialist methodology monographs.",
+      "changed": "Required variant-specific coding, theoretical sampling and saturation/sufficiency; treated situational analysis as distinct."
+    },
+    {
+      "topic": "Content and framework analysis",
+      "why": "Core sources offer coding and matrices but require clearer modern method-specific workflows.",
+      "concept": "qualitative content analysis approaches; framework method; matrix analysis",
+      "selection": "Widely used peer-reviewed methods articles and specialist academic monograph.",
+      "changed": "Separated content-analysis variants, clarified units and counts, and added the framework matrix workflow."
+    },
+    {
+      "topic": "Narrative, conversation, discourse and phenomenological distinctions",
+      "why": "Core introductory coverage risks generic code-and-theme processing across specialist traditions.",
+      "concept": "narrative inquiry; small stories; conversation analysis sequence; discourse under-analysis; descriptive phenomenology; IPA",
+      "selection": "Seminal monographs and peer-reviewed methodological articles for each tradition.",
+      "changed": "Added unit-specific analysis and prohibited generic thematic substitution for sequence, story form or phenomenological reflection."
+    },
+    {
+      "topic": "Autoethnography, visual and arts-based criteria",
+      "why": "Core handbooks preserve multiple genres but evaluation standards are contested.",
+      "concept": "analytic versus evocative autoethnography; photo elicitation; photovoice; arts-based research",
+      "selection": "Seminal debate articles and academic method texts.",
+      "changed": "Created genre-specific quality rules and separated visual/participatory claims from automatic empowerment."
+    },
+    {
+      "topic": "Participation, Indigenous and decolonizing methodology",
+      "why": "Core handbooks support co-production and decolonization but platform rules need sharper power and sovereignty safeguards.",
+      "concept": "participatory research power; participation tyranny; Indigenous methodologies; decolonization not metaphor; intersectionality methodology",
+      "selection": "Seminal peer-reviewed articles and recognized academic monographs authored within the relevant traditions.",
+      "changed": "Defined participation by decision rights, added community data sovereignty and rejected a universal decolonization badge."
+    },
+    {
+      "topic": "Mixed-method integration and triangulation",
+      "why": "Core materials endorse combinations but could be read as convergence-only or method pragmatism without integration.",
+      "concept": "mixed methods integration; triangulation; joint displays; meta-inference",
+      "selection": "Seminal organization article, peer-reviewed integration framework and reporting standards.",
+      "changed": "Made integration mandatory for mixed-method claims and retained discordance as a possible finding."
+    },
+    {
+      "topic": "Generative AI-assisted qualitative analysis",
+      "why": "Most core books predate operational generative AI, while the platform needs current, evidence-based governance.",
+      "concept": "ChatGPT qualitative data analysis; query-based analysis; AI thematic analysis; epistemological incongruence; AI reporting transparency",
+      "selection": "Peer-reviewed methodological experiments and frameworks published in 2023-2026; excluded blogs and vendor claims as authority.",
+      "changed": "Classified AI evidence as emerging/contested; required human final authority, source verification, disclosure, privacy governance and method-specific feature gating."
+    }
+  ]
+}

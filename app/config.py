@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     research_intelligence_ai_coding_enabled: bool = False
     research_intelligence_semantic_search_enabled: bool = False
     research_intelligence_evidence_confidence_enabled: bool = False
+    participant_training_allowed: bool = False
+    shared_model_training_allowed: bool = False
+    cross_customer_learning_allowed: bool = False
+    methodology_grounding_enabled: bool = True
+    methodology_library_version: str = "1.0.0"
+    ai_retrieval_provider: str = "controlled_methodology_library"
+    ai_processing_region: str = "UK/EU only (configured provider region required)"
     azure_openai_endpoint: str | None = None
     azure_openai_api_key: str | None = None
     azure_openai_deployment: str = "qual-coder"
@@ -152,6 +159,14 @@ def apply_key_vault_overrides(runtime: Settings) -> None:
 
 
 def validate_runtime_settings(runtime: Settings) -> None:
+    training_flags = (
+        "participant_training_allowed",
+        "shared_model_training_allowed",
+        "cross_customer_learning_allowed",
+    )
+    enabled_flags = [name for name in training_flags if getattr(runtime, name, False)]
+    if enabled_flags:
+        raise RuntimeError("Unsafe AI governance configuration: training and cross-customer learning must remain disabled.")
     if not _is_non_development(runtime.environment):
         return
 

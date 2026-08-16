@@ -48,6 +48,7 @@ from .models import (
     StudyAccess,
     StudyEnrolment,
     StudyGovernance,
+    StudyMethodologyConfiguration,
     StudyStatus,
     User,
 )
@@ -87,6 +88,14 @@ from .study_governance import (
     SPECIAL_CATEGORY_STATES,
     study_document_references,
     study_launch_readiness,
+)
+from .methodology import (
+    MethodologyGateViolation,
+    library_records,
+    methodology_library,
+    methodology_options,
+    source_metadata,
+    validate_configuration,
 )
 from .participant_services import (
     activity_window,
@@ -799,6 +808,15 @@ def governance_for_study(db: Session, study_row: Study) -> StudyGovernance | Non
     )
 
 
+def methodology_configuration_for_study(db: Session, study_row: Study) -> StudyMethodologyConfiguration | None:
+    return db.scalar(
+        select(StudyMethodologyConfiguration).where(
+            StudyMethodologyConfiguration.organisation_id == study_row.organisation_id,
+            StudyMethodologyConfiguration.study_id == study_row.id,
+        )
+    )
+
+
 def document_reference(value: str, label: str) -> str:
     cleaned = value.strip()
     if not cleaned:
@@ -827,9 +845,12 @@ def capture_consent_document_evidence(invitation: ParticipantInvitation, governa
 
 def require_study_launch_ready(db: Session, study_row: Study) -> None:
     readiness = study_launch_readiness(governance_for_study(db, study_row))
-    if readiness.can_launch:
-        return
     outstanding = list(readiness.missing) + list(readiness.review_required)
+    methodology_configuration = methodology_configuration_for_study(db, study_row)
+    if methodology_configuration is None or not methodology_configuration.researcher_confirmed_at:
+        outstanding.append("researcher-confirmed methodology and analysis configuration")
+    if not outstanding:
+        return
     raise HTTPException(
         400,
         "Study launch readiness is not complete: " + ", ".join(outstanding) + ".",
@@ -1902,6 +1923,16 @@ def platform_admin_dashboard(
         "platform_admin.html",
         user=u,
         organisations=organisation_rows,
+        ai_governance={
+            "provider": "Azure-approved server-side services only",
+            "deployment": settings.azure_openai_deployment if settings.azure_openai_endpoint else "No active model deployment configured",
+            "region": settings.ai_processing_region,
+            "grounding": f"Enabled · methodology library {settings.methodology_library_version}",
+            "retrieval": settings.ai_retrieval_provider,
+            "participant_training": settings.participant_training_allowed,
+            "shared_training": settings.shared_model_training_allowed,
+            "cross_customer_learning": settings.cross_customer_learning_allowed,
+        },
     )
 
 
@@ -2098,7 +2129,11 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
     suggestions=db.scalars(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.organisation_id==u.organisation_id,ResearchAnalysisSuggestion.study_id==s.id).order_by(ResearchAnalysisSuggestion.created_at.desc()).limit(20)).all() if settings.research_intelligence_enabled else []
     confidence_assessments=db.scalars(select(EvidenceConfidenceAssessment).where(EvidenceConfidenceAssessment.organisation_id==u.organisation_id,EvidenceConfidenceAssessment.study_id==s.id).order_by(EvidenceConfidenceAssessment.created_at.desc()).limit(20)).all() if settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled else []
     governance = governance_for_study(db, s)
-    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES))
+    methodology_configuration = methodology_configuration_for_study(db, s)
+    methodology_record = None
+    if methodology_configuration and methodology_configuration.primary_methodology_id:
+        methodology_record = next((item for item in library_records() if item["methodology_id"] == methodology_configuration.primary_methodology_id), None)
+    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,methodology_options=methodology_options(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
 
 @app.post("/studies/{study_id}/governance")
 def update_study_governance(
@@ -2195,6 +2230,74 @@ def update_study_governance(
     audit(db, u.organisation_id, u.id, "study.governance_updated", "study", s.id, s.title)
     db.commit()
     return RedirectResponse(f"/studies/{s.id}#governance", 303)
+
+
+@app.post("/studies/{study_id}/methodology-configuration")
+def update_methodology_configuration(
+    study_id: int,
+    primary_methodology_id: str = Form(...),
+    methodology_variant: str = Form(""),
+    secondary_methodology_values: list[str] = Form([], alias="secondary_methodologies"),
+    research_questions: str = Form(""),
+    protocol_reference: str = Form(""),
+    protocol_version: str = Form(""),
+    sampling_approach: str = Form(""),
+    data_collection_plan: str = Form(""),
+    ai_enabled: bool = Form(False),
+    allowed_ai_task_values: list[str] = Form([], alias="allowed_ai_tasks"),
+    researcher_notes: str = Form(""),
+    researcher_confirmation: bool = Form(False),
+    u=Depends(roles("owner", "admin", "researcher")),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    s = study(db, study_id, u.organisation_id)
+    require_study_permission(db, u, s, edit=True)
+    try:
+        issues = validate_configuration(
+            primary_methodology_id=primary_methodology_id,
+            methodology_variant=methodology_variant.strip(),
+            secondary_methodologies=secondary_methodology_values,
+            research_questions=research_questions.strip(),
+            protocol_reference=document_reference(protocol_reference, "Protocol reference"),
+            protocol_version=protocol_version.strip(),
+            sampling_approach=sampling_approach.strip(),
+            data_collection_plan=data_collection_plan.strip(),
+            ai_enabled=ai_enabled,
+            allowed_ai_tasks=allowed_ai_task_values,
+            researcher_confirmation=researcher_confirmation,
+        )
+    except MethodologyGateViolation as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if issues:
+        raise HTTPException(400, " ".join(issues))
+    record = next(item for item in library_records() if item["methodology_id"] == primary_methodology_id)
+    allowed = set(record["allowed_ai_tasks"])
+    requested = set(allowed_ai_task_values)
+    if not requested.issubset(allowed):
+        raise HTTPException(400, "METHODOLOGICAL REVIEW REQUIRED: unsupported AI task requested.")
+    configuration = methodology_configuration_for_study(db, s)
+    if configuration is None:
+        configuration = StudyMethodologyConfiguration(organisation_id=s.organisation_id, study_id=s.id)
+        db.add(configuration)
+    configuration.primary_methodology_id = primary_methodology_id
+    configuration.methodology_variant = methodology_variant.strip()
+    configuration.secondary_methodologies_json = json.dumps(sorted(set(secondary_methodology_values)))
+    configuration.research_questions = research_questions.strip()
+    configuration.protocol_reference = document_reference(protocol_reference, "Protocol reference")
+    configuration.protocol_version = protocol_version.strip()
+    configuration.sampling_approach = sampling_approach.strip()
+    configuration.data_collection_plan = data_collection_plan.strip()
+    configuration.ai_enabled = ai_enabled
+    configuration.allowed_ai_tasks_json = json.dumps(sorted(requested))
+    configuration.human_review_required = True
+    configuration.library_version = methodology_library()["library_version"]
+    configuration.researcher_notes = researcher_notes.strip()
+    configuration.researcher_confirmed_by_id = u.id
+    configuration.researcher_confirmed_at = datetime.now(timezone.utc)
+    audit(db, u.organisation_id, u.id, "study.methodology_configuration_confirmed", "study", s.id, primary_methodology_id)
+    db.commit()
+    return RedirectResponse(f"/studies/{s.id}#methodology", 303)
 @app.post("/studies/{study_id}/research-analysis/{suggestion_id}/review")
 def review_research_analysis(study_id:int,suggestion_id:int,decision:str=Form(...),note:str=Form(""),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     if not settings.research_intelligence_enabled: raise HTTPException(404,"Research Intelligence is disabled")
