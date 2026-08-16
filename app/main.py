@@ -3087,7 +3087,6 @@ def participant_api_portal_summary(
             enrolled=True,
         ),
         participant=ParticipantSummary(
-            participant_id=participant_row.id,
             display_name=participant_row.name,
             consent_status=participant_row.consent_status,
         ),
@@ -3536,7 +3535,6 @@ def participant_api_session_exchange(
             revocable=True,
         ),
         participant=ParticipantSummary(
-            participant_id=participant_row.id,
             display_name=participant_row.name,
             consent_status=participant_row.consent_status,
         ),
@@ -3564,7 +3562,6 @@ def participant_api_session(
             revocable=True,
         ),
         participant=ParticipantSummary(
-            participant_id=participant_row.id,
             display_name=participant_row.name,
             consent_status=participant_row.consent_status,
         ),
@@ -3577,7 +3574,6 @@ def participant_api_profile(request: Request, response: Response, db: Session = 
     _session_row, _invitation, participant_row = _resolve_participant_api_context(request, db)
     _cache_control_no_store(response)
     return ParticipantProfile(
-        participant_id=participant_row.id,
         display_name=participant_row.name,
         communication_preference=participant_row.communication_preference,
         consent_status=participant_row.consent_status,
@@ -3622,7 +3618,7 @@ def participant_api_profile_update(
         db.rollback()
         raise
     _cache_control_no_store(response)
-    return ParticipantProfile(participant_id=participant_row.id, display_name=participant_row.name, communication_preference=participant_row.communication_preference, consent_status=participant_row.consent_status)
+    return ParticipantProfile(display_name=participant_row.name, communication_preference=participant_row.communication_preference, consent_status=participant_row.consent_status)
 
 
 @app.post("/api/v1/participant/consent", response_model=ConsentAcceptanceResponse)
@@ -4099,7 +4095,6 @@ def _participant_evidence_metadata(evidence_row: EvidenceFile) -> EvidenceMetada
         content_type=evidence_row.content_type,
         size_bytes=evidence_row.size_bytes,
         scan_status=_participant_evidence_scan_status(evidence_row.scan_status),
-        scan_detail=evidence_row.scan_detail or None,
         created_at=evidence_row.created_at,
     )
 

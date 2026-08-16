@@ -13,7 +13,6 @@ from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
-
 CANONICAL_DIRECTORY = Path(
     "/Users/politisltd/Desktop/Politis/"
     "Citizen_Centric_Legal_Pack_v1.0_2026-08-15"
