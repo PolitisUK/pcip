@@ -32,6 +32,70 @@
   {% endif %}
 </section>
 
+<section class="card card--data section" id="governance">
+  <div class="section-head">
+    <div>
+      <h2>Study governance and launch readiness</h2>
+      <p class="muted">Record controller decisions before making a study live. This checklist does not make legal decisions for your organisation.</p>
+    </div>
+    <span class="badge {{ governance_readiness.status }}">{{ governance_readiness.status|replace('_', ' ')|title }}</span>
+  </div>
+  {% if governance_readiness.missing %}
+  <div class="notice neutral"><strong>Still needed before launch:</strong> {{ governance_readiness.missing|join(', ') }}.</div>
+  {% endif %}
+  {% if governance_readiness.review_required %}
+  <div class="notice neutral"><strong>Needs review before launch:</strong> {{ governance_readiness.review_required|join(', ') }}.</div>
+  {% endif %}
+  {% if can_edit %}
+  <details class="section compact-details" {% if not governance_readiness.can_launch %}open{% endif %}>
+    <summary>Configure governance</summary>
+    <div class="context-help-body">
+      <form method="post" action="/studies/{{ study.id }}/governance" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="row">
+          <div class="field"><label>Data controller</label><input name="controller_name" value="{{ governance.controller_name if governance else '' }}" required></div>
+          <div class="field"><label>Controller privacy contact</label><input type="email" name="controller_privacy_contact" value="{{ governance.controller_privacy_contact if governance else '' }}" required></div>
+          <div class="field"><label>Sponsor (if applicable)</label><input name="sponsor_name" value="{{ governance.sponsor_name if governance else '' }}"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Research contact</label><input name="research_contact" value="{{ governance.research_contact if governance else '' }}" required></div>
+          <div class="field"><label>Participant population</label><input name="participant_population" value="{{ governance.participant_population if governance else '' }}" required></div>
+        </div>
+        <div class="field"><label>Personal data categories</label><textarea name="data_categories" required>{{ governance.data_categories if governance else '' }}</textarea></div>
+        <div class="row">
+          <div class="field"><label>Special-category data assessment</label><select name="special_category_data">{% for value in governance_special_category_states %}<option value="{{ value }}" {% if governance and governance.special_category_data == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Article 6 lawful basis</label><input name="article_6_lawful_basis" value="{{ governance.article_6_lawful_basis if governance else '' }}" required></div>
+          <div class="field"><label>Article 9 condition, if applicable</label><input name="article_9_condition" value="{{ governance.article_9_condition if governance else '' }}"></div>
+        </div>
+        <div class="field"><label>Controller-approved retention approach</label><textarea name="retention_description" required>{{ governance.retention_description if governance else '' }}</textarea><small class="muted">State the study-specific approach. Do not rely on an unapproved platform default.</small></div>
+        <div class="field"><label>Security considerations</label><textarea name="security_considerations" required>{{ governance.security_considerations if governance else '' }}</textarea></div>
+        <fieldset class="field"><legend>Participant information and safeguards</legend>
+          <label class="check"><input type="checkbox" name="participation_consent_configured" value="true" {% if governance and governance.participation_consent_configured %}checked{% endif %}> Research participation consent is configured</label>
+          <label class="check"><input type="checkbox" name="participant_information_available" value="true" {% if governance and governance.participant_information_available %}checked{% endif %}> Study participant information is available</label>
+          <label class="check"><input type="checkbox" name="privacy_information_available" value="true" {% if governance and governance.privacy_information_available %}checked{% endif %}> Study privacy information is available</label>
+          <label class="check"><input type="checkbox" name="withdrawal_process_defined" value="true" {% if governance and governance.withdrawal_process_defined %}checked{% endif %}> Withdrawal process is defined</label>
+          <label class="check"><input type="checkbox" name="deletion_handling_defined" value="true" {% if governance and governance.deletion_handling_defined %}checked{% endif %}> Deletion-request handling is defined</label>
+        </fieldset>
+        <fieldset class="field"><legend>Enabled participant features assessed</legend>
+          <label class="check"><input type="checkbox" name="features_assessed" value="true" {% if governance and governance.features_assessed %}checked{% endif %}> I have assessed the enabled features for this study</label>
+          {% set selected_features = governance.enabled_features_json if governance else '' %}
+          {% for feature in governance_features %}<label class="check"><input type="checkbox" name="enabled_features" value="{{ feature }}" {% if feature in selected_features %}checked{% endif %}> {{ feature|replace('_', ' ')|title }}</label>{% endfor %}
+          <label class="check"><input type="checkbox" name="ai_features_disclosed" value="true" {% if governance and governance.ai_features_disclosed %}checked{% endif %}> AI research support, if enabled, is disclosed and approved</label>
+        </fieldset>
+        <div class="row">
+          <div class="field"><label>International-transfer assessment</label><select name="international_transfer_assessment">{% for value in governance_assessment_states %}<option value="{{ value }}" {% if governance and governance.international_transfer_assessment == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Ethics assessment</label><select name="ethics_status">{% for value in governance_assessment_states %}<option value="{{ value }}" {% if governance and governance.ethics_status == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></div>
+          <div class="field"><label>DPIA assessment</label><select name="dpia_status">{% for value in governance_assessment_states %}<option value="{{ value }}" {% if governance and governance.dpia_status == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></div>
+        </div>
+        <button>Save governance</button>
+      </form>
+    </div>
+  </details>
+  {% else %}
+  <p class="muted">An owner, administrator, or study editor can complete governance information.</p>
+  {% endif %}
+</section>
+
 {% if research_intelligence_enabled %}
 <section class="card card--data section" id="research-intelligence">
   <div class="section-head"><div><h2>Research Intelligence</h2><p class="muted">AI suggestions are provisional, cite their source, and require a researcher decision.</p></div><div class="inline"><a class="button secondary" href="/studies/{{ study.id }}/evidence-explorer">Evidence Explorer</a><a class="button secondary" href="/studies/{{ study.id }}/theme-explorer">Theme Explorer</a></div></div>

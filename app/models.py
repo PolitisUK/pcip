@@ -160,6 +160,44 @@ class Study(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class StudyGovernance(Base):
+    """Controller-supplied launch information; empty values are deliberately incomplete."""
+
+    __tablename__ = "study_governance"
+    __table_args__ = (
+        UniqueConstraint("study_id", name="uq_study_governance_study"),
+        Index("ix_study_governance_scope", "organisation_id", "study_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    controller_name: Mapped[str] = mapped_column(String(200), default="")
+    controller_privacy_contact: Mapped[str] = mapped_column(String(255), default="")
+    sponsor_name: Mapped[str] = mapped_column(String(200), default="")
+    research_contact: Mapped[str] = mapped_column(String(255), default="")
+    participant_population: Mapped[str] = mapped_column(Text, default="")
+    data_categories: Mapped[str] = mapped_column(Text, default="")
+    special_category_data: Mapped[str] = mapped_column(String(30), default="not_assessed")
+    article_6_lawful_basis: Mapped[str] = mapped_column(Text, default="")
+    article_9_condition: Mapped[str] = mapped_column(Text, default="")
+    participation_consent_configured: Mapped[bool] = mapped_column(Boolean, default=False)
+    participant_information_available: Mapped[bool] = mapped_column(Boolean, default=False)
+    privacy_information_available: Mapped[bool] = mapped_column(Boolean, default=False)
+    retention_description: Mapped[str] = mapped_column(Text, default="")
+    withdrawal_process_defined: Mapped[bool] = mapped_column(Boolean, default=False)
+    deletion_handling_defined: Mapped[bool] = mapped_column(Boolean, default=False)
+    features_assessed: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled_features_json: Mapped[str] = mapped_column(Text, default="[]")
+    ai_features_disclosed: Mapped[bool] = mapped_column(Boolean, default=False)
+    international_transfer_assessment: Mapped[str] = mapped_column(String(30), default="not_assessed")
+    ethics_status: Mapped[str] = mapped_column(String(30), default="not_assessed")
+    dpia_status: Mapped[str] = mapped_column(String(30), default="not_assessed")
+    security_considerations: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class Participant(Base):
     __tablename__ = "participants"
     __table_args__ = (UniqueConstraint("organisation_id", "reference"),)
