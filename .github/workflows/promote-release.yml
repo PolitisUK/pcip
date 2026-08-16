@@ -193,6 +193,13 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Enforce the no-migration production steady state
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A normal restart must never discover a stale true setting and run
+          # schema changes outside this explicitly approved promotion job.
+          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=false >/dev/null
       - name: Verify production evidence and rollback target
         shell: bash
         env:
@@ -210,7 +217,7 @@ jobs:
           [[ "$ROLLBACK_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "A verified rollback digest is required." >&2; exit 1; }
           az acr manifest show-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY@$ROLLBACK_DIGEST" --query digest -o tsv | grep -qx "$ROLLBACK_DIGEST"
           [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
-      - name: Promote the already-staged immutable artifact
+      - name: Promote the already-staged immutable artifact and run the one approved migration
         shell: bash
         env:
           RELEASE_SHA: ${{ needs.validate-release-evidence.outputs.release_sha }}
@@ -220,6 +227,9 @@ jobs:
           az acr import -n "$PRODUCTION_ACR" --source "$STAGING_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST" --image "$IMAGE_REPOSITORY:sha-$RELEASE_SHA"
           promoted=$(az acr manifest list-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY" --query "[?tags && contains(tags, 'sha-$RELEASE_SHA')].digest | [0]" -o tsv)
           test "$promoted" = "$IMAGE_DIGEST" || { echo "Imported production digest differs from staged artifact." >&2; exit 1; }
+          # This is the only point at which the production workflow arms a
+          # schema upgrade.  The always() cleanup below restores false even
+          # when deployment or readiness verification fails.
           az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=true >/dev/null
           az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --linux-fx-version "DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST" >/dev/null
           az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP"
@@ -241,7 +251,7 @@ jobs:
           for route in health privacy support terms cookies accessibility acceptable-use legal contact; do
             curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://citizencentric.co.uk/$route" >/dev/null
           done
-      - name: Disable automatic migrations after promotion
+      - name: Fail safe to the no-migration production steady state
         if: always()
         shell: bash
         run: az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=false >/dev/null
