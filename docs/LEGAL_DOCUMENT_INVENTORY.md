@@ -1,6 +1,6 @@
 # Citizen Centric Legal Pack v1.0 inventory
 
-Effective date: **15 August 2026**  
+Effective date: **15 August 2026**
 Platform operator: **Politis Ltd** (Company No. **13661766**, ICO **ZB738312**)
 
 This inventory records publication status, not legal approval. A document is

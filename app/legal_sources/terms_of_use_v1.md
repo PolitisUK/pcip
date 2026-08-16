@@ -1,6 +1,6 @@
 # Citizen Centric - Terms of Use (App-ready)
 
-**Operator:** Politis Ltd | Company 13661766 | ICO ZB738312  
+**Operator:** Politis Ltd | Company 13661766 | ICO ZB738312
 **Contact:** info@politisconsulting.co.uk
 
 ## Participant sign-in
