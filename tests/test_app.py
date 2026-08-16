@@ -396,6 +396,23 @@ def test_study_governance_blocks_live_until_controller_decisions_are_recorded():
         assert blocked.status_code == 400
         assert 'launch readiness' in blocked.text.lower()
 
+        missing_references = _controller_governance_payload()
+        for key in [
+            'participant_information_reference', 'participant_information_version', 'participant_information_effective_date',
+            'privacy_notice_reference', 'privacy_notice_version', 'privacy_notice_effective_date',
+            'consent_text_reference', 'consent_text_version', 'consent_text_effective_date',
+        ]:
+            missing_references[key] = ''
+        incomplete = post_with_csrf(
+            f'/studies/{study_id}/governance', data=missing_references, follow_redirects=False,
+        )
+        assert incomplete.status_code == 303
+        blocked_for_documents = post_with_csrf(
+            f'/studies/{study_id}/status', data={'status_value': 'live'}, follow_redirects=False,
+        )
+        assert blocked_for_documents.status_code == 400
+        assert 'participant information reference' in blocked_for_documents.text
+
         saved = post_with_csrf(
             f'/studies/{study_id}/governance',
             data={
@@ -411,6 +428,15 @@ def test_study_governance_blocks_live_until_controller_decisions_are_recorded():
                 'participation_consent_configured': 'true',
                 'participant_information_available': 'true',
                 'privacy_information_available': 'true',
+                'participant_information_reference': 'PI-GOV-1',
+                'participant_information_version': '1.0',
+                'participant_information_effective_date': '15 August 2026',
+                'privacy_notice_reference': 'PN-GOV-1',
+                'privacy_notice_version': '1.0',
+                'privacy_notice_effective_date': '15 August 2026',
+                'consent_text_reference': 'CT-GOV-1',
+                'consent_text_version': '1.0',
+                'consent_text_effective_date': '15 August 2026',
                 'retention_description': 'Controller-approved study retention schedule',
                 'withdrawal_process_defined': 'true',
                 'deletion_handling_defined': 'true',
@@ -429,6 +455,90 @@ def test_study_governance_blocks_live_until_controller_decisions_are_recorded():
         assert 'Complete' in detail.text
         live = post_with_csrf(f'/studies/{study_id}/status', data={'status_value': 'live'}, follow_redirects=False)
         assert live.status_code == 303
+
+
+def _controller_governance_payload(version: str = '1.0') -> dict[str, str]:
+    return {
+        'controller_name': 'Test controller',
+        'controller_privacy_contact': 'privacy@example.test',
+        'sponsor_name': '',
+        'research_contact': 'research@example.test',
+        'participant_population': 'Synthetic pilot participants',
+        'data_categories': 'Contact details and diary responses',
+        'special_category_data': 'no',
+        'article_6_lawful_basis': 'Controller-approved lawful basis',
+        'article_9_condition': '',
+        'participation_consent_configured': 'true',
+        'participant_information_available': 'true',
+        'privacy_information_available': 'true',
+        'participant_information_reference': f'PI-{version}',
+        'participant_information_version': version,
+        'participant_information_effective_date': '15 August 2026',
+        'privacy_notice_reference': f'PN-{version}',
+        'privacy_notice_version': version,
+        'privacy_notice_effective_date': '15 August 2026',
+        'consent_text_reference': f'CT-{version}',
+        'consent_text_version': version,
+        'consent_text_effective_date': '15 August 2026',
+        'retention_description': 'Controller-approved study retention schedule',
+        'withdrawal_process_defined': 'true',
+        'deletion_handling_defined': 'true',
+        'features_assessed': 'true',
+        'ai_features_disclosed': 'false',
+        'international_transfer_assessment': 'recorded',
+        'ethics_status': 'recorded',
+        'dpia_status': 'not_required',
+        'security_considerations': 'Access is limited to authorised study users.',
+    }
+
+
+def test_participant_api_exposes_scoped_document_references_and_snapshots_consent_evidence():
+    from app.models import ParticipantInvitation
+
+    token, participant_id, study_id = _create_participant_invitation_for_api('consent-documents')
+    with client:
+        configured = post_with_csrf(
+            f'/studies/{study_id}/governance',
+            data=_controller_governance_payload(),
+            follow_redirects=False,
+        )
+        assert configured.status_code == 303
+        exchange = _exchange_participant_api_session(token)
+        assert exchange.status_code == 200
+        headers = {'Authorization': f"Bearer {exchange.json()['session']['access_token']}", 'Content-Type': 'application/json'}
+
+        documents = client.get('/api/v1/participant/legal-documents?study_id=999999', headers=headers)
+        assert documents.status_code == 200
+        body = documents.json()
+        assert body['study_id'] == study_id
+        assert body['documents'] == [
+            {'document_type': 'participant_information', 'version': '1.0', 'reference': 'PI-1.0', 'effective_date': '15 August 2026'},
+            {'document_type': 'privacy_notice', 'version': '1.0', 'reference': 'PN-1.0', 'effective_date': '15 August 2026'},
+            {'document_type': 'consent_text', 'version': '1.0', 'reference': 'CT-1.0', 'effective_date': '15 August 2026'},
+        ]
+        accepted = client.post('/api/v1/participant/consent', json={'consent': True}, headers=headers)
+        assert accepted.status_code == 200
+
+        with SessionLocal() as db:
+            invitation = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id))
+            assert invitation is not None
+            assert invitation.participant_information_reference == 'PI-1.0'
+            assert invitation.privacy_notice_version == '1.0'
+            assert invitation.consent_text_effective_date == '15 August 2026'
+
+        updated = post_with_csrf(
+            f'/studies/{study_id}/governance',
+            data=_controller_governance_payload('2.0'),
+            follow_redirects=False,
+        )
+        assert updated.status_code == 303
+        refreshed_documents = client.get('/api/v1/participant/legal-documents', headers=headers)
+        assert refreshed_documents.json()['documents'][0]['version'] == '2.0'
+        with SessionLocal() as db:
+            invitation = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id))
+            assert invitation is not None
+            assert invitation.participant_information_reference == 'PI-1.0'
+            assert invitation.privacy_notice_version == '1.0'
 
 
 def test_first_project_wizard_creates_project_and_study():

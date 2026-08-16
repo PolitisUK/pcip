@@ -26,6 +26,61 @@ class LaunchReadiness:
         return self.status == "complete"
 
 
+@dataclass(frozen=True)
+class StudyDocumentReference:
+    document_type: str
+    version: str
+    reference: str
+    effective_date: str
+
+
+def study_document_references(governance: StudyGovernance | None) -> tuple[StudyDocumentReference, ...]:
+    if governance is None:
+        return ()
+    return (
+        StudyDocumentReference(
+            "participant_information",
+            governance.participant_information_version,
+            governance.participant_information_reference,
+            governance.participant_information_effective_date,
+        ),
+        StudyDocumentReference(
+            "privacy_notice",
+            governance.privacy_notice_version,
+            governance.privacy_notice_reference,
+            governance.privacy_notice_effective_date,
+        ),
+        StudyDocumentReference(
+            "consent_text",
+            governance.consent_text_version,
+            governance.consent_text_reference,
+            governance.consent_text_effective_date,
+        ),
+    )
+
+
+def missing_document_references(governance: StudyGovernance) -> tuple[str, ...]:
+    required = []
+    if governance.participant_information_available:
+        required.append("participant information")
+    if governance.privacy_information_available:
+        required.append("privacy notice")
+    if governance.participation_consent_configured:
+        required.append("consent text")
+    documents = {item.document_type: item for item in study_document_references(governance)}
+    field_name = {
+        "participant information": "participant_information",
+        "privacy notice": "privacy_notice",
+        "consent text": "consent_text",
+    }
+    missing = []
+    for label in required:
+        item = documents[field_name[label]]
+        if not (item.reference.strip() and item.version.strip() and item.effective_date.strip()):
+            missing.append(f"{label} reference, version and effective date")
+    return tuple(missing)
+
+
 def enabled_features(governance: StudyGovernance | None) -> set[str]:
     if governance is None:
         return set()
@@ -72,6 +127,7 @@ def study_launch_readiness(governance: StudyGovernance | None) -> LaunchReadines
         missing.append("withdrawal process")
     if not governance.deletion_handling_defined:
         missing.append("deletion handling")
+    missing.extend(missing_document_references(governance))
     if not governance.features_assessed:
         missing.append("enabled participant features")
     if governance.special_category_data == "not_assessed":

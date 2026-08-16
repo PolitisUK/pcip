@@ -221,6 +221,22 @@ class ConsentAcceptanceResponse(BaseModel):
     accepted_at: datetime
 
 
+class LegalDocumentReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_type: Literal["participant_information", "privacy_notice", "consent_text"]
+    version: str
+    reference: str
+    effective_date: str
+
+
+class StudyLegalDocumentsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    study_id: int
+    documents: list[LegalDocumentReference]
+
+
 class SubmissionHistoryItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
