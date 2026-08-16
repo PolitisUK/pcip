@@ -641,6 +641,18 @@ def roles(*allowed):
     return dep
 
 
+def platform_admin(u=Depends(current_user)):
+    """Restrict global operations to explicitly provisioned Politis staff.
+
+    Organisation roles are intentionally insufficient: returning a generic
+    not-found response also avoids confirming that a platform view exists to
+    customer accounts.
+    """
+    if not u.is_platform_admin:
+        raise HTTPException(404, "Not found.")
+    return u
+
+
 def set_flash(request: Request, level: str, message: str):
     request.session["flash"] = {"level": level, "message": message}
 
@@ -1772,6 +1784,44 @@ def dashboard(request:Request,u=Depends(optional_current_user),db:Session=Depend
         "can_seed": u.role in {"owner", "admin"},
     }
     return render(request,"dashboard.html",user=u,metrics=metrics,studies=studies,project_map=pmap,onboarding=onboarding,recent_events=recent_events)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def platform_admin_dashboard(
+    request: Request,
+    u=Depends(platform_admin),
+    db: Session = Depends(get_db),
+):
+    """Small, deliberately separate operational overview for Politis staff."""
+    organisation_rows = db.execute(
+        select(
+            Organisation,
+            func.count(func.distinct(Study.id)).label("study_count"),
+            func.count(func.distinct(Participant.id)).label("participant_count"),
+        )
+        .outerjoin(Study, Study.organisation_id == Organisation.id)
+        .outerjoin(
+            Participant,
+            Participant.organisation_id == Organisation.id,
+        )
+        .group_by(Organisation.id)
+        .order_by(Organisation.name)
+    ).all()
+    audit(
+        db,
+        u.organisation_id,
+        u.id,
+        "platform_admin.dashboard_viewed",
+        "platform",
+        "admin",
+    )
+    db.commit()
+    return render(
+        request,
+        "platform_admin.html",
+        user=u,
+        organisations=organisation_rows,
+    )
 
 
 @app.post("/pilot/sample-data")

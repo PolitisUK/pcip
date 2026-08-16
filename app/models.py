@@ -86,6 +86,10 @@ class User(Base):
         nullable=True,
     )
     role: Mapped[str] = mapped_column(String(30), default=Role.researcher.value)
+    # This is deliberately separate from an organisation role.  A customer
+    # owner administers only their own organisation; platform administration
+    # must be granted through the controlled bootstrap process.
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     organisation: Mapped[Organisation] = relationship(back_populates="users")
