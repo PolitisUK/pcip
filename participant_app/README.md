@@ -1,17 +1,23 @@
-# participant_app
+# Citizen Centric participant app
 
-A new Flutter project.
+The participant app uses the PCIP participant API only. Its invitation flow
+accepts an invitation token; participants are never asked to enter a service
+address, email address, or password.
 
-## Getting Started
+## API configuration
 
-This project is a starting point for a Flutter application.
+Release builds default to the approved PCIP API root configured by the existing
+Azure deployment workflow. A signed-build pipeline may set the same approved
+HTTPS root explicitly at build time:
 
-A few resources to get you started if this is your first Flutter project:
+```sh
+flutter build <platform> --dart-define=PCIP_API_BASE_URL=https://approved-pcip-api.example
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+The app fails closed for an invalid endpoint. It does not accept a
+participant-supplied endpoint and will not restore a session for another host.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+For isolated debug-only QA, a build may set `PCIP_QA_API_BASE_URL`. Local HTTP
+is additionally restricted to debug builds with `PCIP_LOCAL_QA=true` and to
+`localhost` or `10.0.2.2`; it is never selected by a release build. Do not put
+secrets in dart defines.
