@@ -18,5 +18,30 @@
     {"id":"participant-information-template","title":"Participant Information Sheet and Consent Template","audience":"study_template","public_route":null,"participant_visible":"study-specific","customer_visible":true,"source_filename":"Participant Information Sheet and Consent Template - Revised.docx","source_sha256":"49916c566c7a0dcdbe588177d722e5c715436b5d8a00eb4a648afc6f3c3c72ec","implementation":"app/legal_sources/canonical/participant_information_template_v1.md"},
     {"id":"cookie-preference-wording","title":"Cookie Banner and Preference Centre Wording","audience":"product_configuration_reference","public_route":null,"participant_visible":false,"customer_visible":false,"source_filename":"Cookie Banner and Preference Centre Wording for Citizen Centric - Revised.docx","source_sha256":"9d162476a7175ab28547ee45e977357bb94344a1bbd933363476e4140b43fd4a","implementation":"app/legal_sources/canonical/cookie_preference_wording_v1.md"},
     {"id":"study-onboarding-questionnaire","title":"Citizen Centric Study Data Protection and Customer Onboarding Questionnaire","audience":"study_template","public_route":null,"participant_visible":false,"customer_visible":true,"source_filename":"Citizen Centric Study Data Protection and Customer Onboarding Questionnaire.docx","source_sha256":"e79109c9e218f0c64916e7f5ab3b2e4db4ade3f5cf2349eed04347ea152d0af4","implementation":"app/legal_sources/canonical/study_onboarding_questionnaire_v1.md"}
+  ],
+  "source_files": [
+    {"filename":"01_Citizen_Centric_Platform_Privacy_Notice_v1.0.docx","classification":"public_website,participant","selected":"privacy"},
+    {"filename":"02_Citizen_Centric_Accessibility_Statement_v1.0.docx","classification":"public_website,participant","selected":"accessibility"},
+    {"filename":"03_Citizen_Centric_DPA_Article_28_Schedule_v1.0.docx","classification":"customer_contractual","selected":"dpa"},
+    {"filename":"04_Citizen_Centric_Subprocessor_Schedule_v1.0.docx","classification":"customer_contractual","selected":"subprocessors"},
+    {"filename":"AI Services Schedule - App Ready.md","classification":"reference_variant","selected":false},
+    {"filename":"AI Services Schedule - Revised.docx","classification":"customer_contractual","selected":"ai-services"},
+    {"filename":"Acceptable Use Policy for Citizen Centric - App Ready.md","classification":"reference_variant","selected":false},
+    {"filename":"Acceptable Use Policy for Citizen Centric - Revised.docx","classification":"public_website,participant","selected":"acceptable-use"},
+    {"filename":"Citizen Centric Cookie Policy - App Ready.md","classification":"reference_variant","selected":false},
+    {"filename":"Citizen Centric Cookie Policy - Revised.docx","classification":"public_website,participant","selected":"cookies"},
+    {"filename":"Citizen Centric Legal Information - App Ready.md","classification":"reference_variant","selected":false},
+    {"filename":"Citizen Centric Legal Information - Revised.docx","classification":"public_website,participant","selected":"legal"},
+    {"filename":"Citizen Centric Study Data Protection and Customer Onboarding Questionnaire - App Ready.md","classification":"reference_variant","selected":false},
+    {"filename":"Citizen Centric Study Data Protection and Customer Onboarding Questionnaire.docx","classification":"study_template,customer_governance","selected":"study-onboarding-questionnaire"},
+    {"filename":"Citizen Centric Terms of Use - App Ready.md","classification":"reference_variant","selected":false},
+    {"filename":"Citizen Centric Terms of Use - Revised.docx","classification":"public_website,participant","selected":"terms"},
+    {"filename":"Cookie Banner and Preference Centre Wording for Citizen Centric - App Ready.md","classification":"reference_variant","selected":false},
+    {"filename":"Cookie Banner and Preference Centre Wording for Citizen Centric - Revised.docx","classification":"product_configuration_reference","selected":"cookie-preference-wording"},
+    {"filename":"ORGANISATION SaaS TERMS AGREEMENT - App Ready.md","classification":"reference_variant","selected":false},
+    {"filename":"ORGANISATION SaaS TERMS AGREEMENT - Revised.docx","classification":"customer_contractual","selected":"saas-terms"},
+    {"filename":"Participant Information Sheet and Consent Template - App Ready.md","classification":"reference_variant","selected":false},
+    {"filename":"Participant Information Sheet and Consent Template - Revised.docx","classification":"study_template","selected":"participant-information-template"},
+    {"filename":"README - Legal Pack v1.0.txt","classification":"internal_pack_metadata","selected":false}
   ]
 }

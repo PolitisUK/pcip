@@ -297,6 +297,10 @@ def test_legal_inventory_and_public_routes_are_source_backed_and_placeholder_fre
     }
     by_id = {item['id']: item for item in inventory['documents']}
     assert {'privacy', 'terms', 'cookies', 'accessibility', 'acceptable-use', 'legal'} <= by_id.keys()
+    source_files = inventory['source_files']
+    assert len(source_files) == 23
+    assert {item['selected'] for item in source_files if item['selected']} == set(by_id)
+    assert any(item['classification'] == 'internal_pack_metadata' for item in source_files)
 
     public_routes = {
         'privacy': 'This Privacy Notice explains how personal data is handled',
