@@ -288,6 +288,41 @@ def test_customer_agreements_are_owner_admin_only_and_source_backed():
         assert 'UK GDPR Article 28 Schedule to the Citizen Centric Organisation SaaS Terms' in document.text
 
 
+def test_legal_inventory_and_public_routes_are_source_backed_and_placeholder_free():
+    inventory = json.loads(Path('docs/legal_document_inventory.json').read_text(encoding='utf-8'))
+    assert inventory['legal_pack'] == {
+        'version': '1.0',
+        'effective_date': '2026-08-15',
+        'canonical_directory': '/Users/politisltd/Desktop/Politis/Citizen_Centric_Legal_Pack_v1.0_2026-08-15',
+    }
+    by_id = {item['id']: item for item in inventory['documents']}
+    assert {'privacy', 'terms', 'cookies', 'accessibility', 'acceptable-use', 'legal'} <= by_id.keys()
+
+    public_routes = {
+        'privacy': 'This Privacy Notice explains how personal data is handled',
+        'terms': 'These Terms govern use of the participant-facing',
+        'cookies': 'This policy explains how cookies and similar technologies may be used',
+        'accessibility': 'Politis Ltd wants Citizen Centric to be usable',
+        'acceptable-use': 'This Acceptable Use Policy',
+        'legal': 'These disclosures identify the legal operator',
+    }
+    placeholder_markers = ('CLIENT INPUT REQUIRED', '[confirm', 'example.com', 'TODO', 'TBC')
+    with client:
+        client.cookies.clear()
+        for document_id, required_source_text in public_routes.items():
+            item = by_id[document_id]
+            source = Path(item['implementation'])
+            text = source.read_text(encoding='utf-8')
+            assert text.startswith(f'<!-- Canonical source: {item["source_filename"]} -->')
+            assert required_source_text in text
+
+            response = client.get(item['public_route'])
+            assert response.status_code == 200
+            assert required_source_text in response.text
+            for marker in placeholder_markers:
+                assert marker.lower() not in response.text.lower()
+
+
 def test_global_user_can_hold_memberships_in_multiple_organisations():
     from app.models import Organisation, OrganisationMembership
     from app.security import decode_session, hash_password
@@ -5398,7 +5433,7 @@ def test_participant_api_exchange_rate_limit_is_enforced():
 
 
 def test_participant_api_session_requires_valid_bearer_and_excludes_internal_fields():
-    token, participant_id, study_id = _create_participant_invitation_for_api('api-auth-session')
+    token, _participant_id, study_id = _create_participant_invitation_for_api('api-auth-session')
 
     with client:
         exchange = _exchange_participant_api_session(token)
@@ -7211,6 +7246,7 @@ def test_participant_api_activity_response_invalid_evidence_reference_does_not_m
 
 def test_participant_api_evidence_upload_and_status_support_activity_response_reference():
     from io import BytesIO
+
     from app.models import EvidenceFile
 
     context = _prepare_participant_api_activity_response_context('api-evidence-upload-foundation')
@@ -7314,7 +7350,14 @@ def test_participant_api_evidence_status_is_scoped_to_participant_context():
 
 def test_participant_api_access_matrix_is_invitation_scoped_and_denies_customer_routes():
     """A participant bearer can only read its own active invitation scope."""
-    from app.models import Activity, Organisation, ParticipantMessage, Project, Study, User
+    from app.models import (
+        Activity,
+        Organisation,
+        ParticipantMessage,
+        Project,
+        Study,
+        User,
+    )
 
     first = _prepare_participant_api_activity_response_context('api-access-matrix-a')
     second = _prepare_participant_api_activity_response_context('api-access-matrix-b')

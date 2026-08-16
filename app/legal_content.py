@@ -6,10 +6,9 @@ Legal Pack v1.0 documents.  Editorial production notes and incomplete fields
 are omitted from public rendering rather than shown to users.
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
-
 
 LEGAL_VERSION = "1.0"
 LEGAL_EFFECTIVE_DATE = "15 August 2026"
@@ -75,7 +74,7 @@ def _sections_from_markdown(filename: str) -> tuple[LegalSection, ...]:
 
     for line in lines:
         stripped = line.strip()
-        if not stripped or stripped.startswith("<!--") or stripped.startswith("# "):
+        if not stripped or stripped.startswith(("<!--", "# ")):
             continue
         if _is_editorial_or_incomplete(stripped):
             continue
@@ -84,7 +83,7 @@ def _sections_from_markdown(filename: str) -> tuple[LegalSection, ...]:
             heading = _plain_markdown(stripped.removeprefix("## "))
             paragraphs = []
             bullets = []
-        elif stripped.startswith("- ") or stripped.startswith("• "):
+        elif stripped.startswith(("- ", "• ")):
             bullets.append(_plain_markdown(stripped[2:]))
         elif stripped.startswith("|"):
             if not re.fullmatch(r"\|[\s|:-]+\|", stripped):
