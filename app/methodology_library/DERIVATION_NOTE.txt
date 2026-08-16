@@ -1,0 +1,9 @@
+Citizen Centric Methodology Library v1.0.0 - Structured Derivatives
+Derived deterministically from methodology_synthesis_report(2).md only.
+Source IDs validated against methodology_source_register(2).json.
+No new methodological claims, sources, triangulation statuses, or disagreements were added.
+Where source-register cells contained explanatory wording as well as source IDs, the original wording was preserved in *_raw fields and IDs were extracted separately.
+Source synthesis SHA-256: a5bfecf138eb0382182ac357c28c074644f83c64718a743c6f99bc911ec2b8ba
+Methodology records: 27
+Claim records: 37
+Disagreement records: 18

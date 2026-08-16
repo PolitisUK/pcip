@@ -7,10 +7,13 @@ source register, search log and bundle README are imported here as
 its stable hash and the structured library rules; neither the report nor raw
 copyrighted books are exposed through public or participant routes.
 
-The supplied bundle did not contain the three companion JSONL files named in
-the synthesis report (`methodology_knowledge_base.jsonl`,
-`methodology_claim_register.jsonl`, and `methodology_disagreements.jsonl`).
-The published library therefore records only the rules and disagreements
-explicitly represented in `library_v1.json`, with source identifiers retained.
+The supplied deterministic derivative archive is now imported verbatim as
+`methodology_knowledge_base.jsonl`, `methodology_claim_register.jsonl`,
+`methodology_disagreements.jsonl` and `DERIVATION_NOTE.txt`. Its declared
+synthesis hash matches the pinned report hash. The application validates all
+three JSONL files and uses the 27 methodology records as the full catalogue;
+the smaller operational profiles add only platform AI gates and do not alter
+the derivative source claims, statuses or disagreements.
+
 Importing a later approved bundle revision must retain this manifest and create
 a new published library version; it must never rewrite an existing version.

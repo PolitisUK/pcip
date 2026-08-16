@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import Settings, validate_runtime_settings
-from app.methodology import MethodologyGateViolation, get_methodology, methodology_library, source_metadata, study_grounding, validate_configuration
+from app.methodology import MethodologyGateViolation, get_methodology, library_records, methodology_library, source_metadata, structured_companions, study_grounding, validate_configuration
 
 
 def confirmed_configuration(**overrides):
@@ -28,6 +28,8 @@ def test_published_library_has_stable_source_provenance_and_method_profiles():
     assert get_methodology("M08")["name"] == "Reflexive thematic analysis"
     assert get_methodology("M13")["disallowed_ai_tasks"]
     assert source_metadata(("E01",))[0]["identifier"] == "10.1191/1478088706qp063oa"
+    assert len(library_records()) == 27
+    assert {"knowledge", "claims", "disagreements"} == set(structured_companions())
 
 
 @pytest.mark.parametrize("methodology_id,task", [("M08", "coding_reliability"), ("M13", "candidate_code_suggestions"), ("M15", "frequency_claim"), ("M20", "governance_decision")])

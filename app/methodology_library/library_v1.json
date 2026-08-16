@@ -7,7 +7,12 @@
     "methodology_synthesis_report.md": "sha256:a5bfecf138eb0382182ac357c28c074644f83c64718a743c6f99bc911ec2b8ba",
     "methodology_source_register.json": "sha256:8c38679423ec55298590558db0aded56b56ede84d3e2cf0533ae8ef86162a606",
     "methodology_search_log.json": "sha256:4bdf50d9a590394fadf978016e405f721e3cbbd59381a1a785f556a1887cf47b",
-    "README_methodology_synthesis.txt": "sha256:026491d114ee01bdc7560121584e2dbaac78e65a5c384fe493b35eb5331ccbd8"
+    "README_methodology_synthesis.txt": "sha256:026491d114ee01bdc7560121584e2dbaac78e65a5c384fe493b35eb5331ccbd8",
+    "Citizen_Centric_Methodology_JSONL_Derivatives_v1.0.0.zip": "sha256:aa5b28a793df9353f478aa778e99eb500af6e78913285bf9cd59e862f4696f3b",
+    "methodology_knowledge_base.jsonl": "sha256:3cc6727cda77d131b6689dedbef61b09257f6e9c405d8e4c19f3dbe17e44f7d2",
+    "methodology_claim_register.jsonl": "sha256:4205f592fc3c4da0da2d9bb2774700d404353bfda7cb37533b93516926327231",
+    "methodology_disagreements.jsonl": "sha256:e01877fd8e8531be3973c1859b9c2ca7be1b8bfcb09548290c68b194be8ab3fa",
+    "DERIVATION_NOTE.txt": "sha256:be04edda0345d21ceec0bc44d54dbf2c206de212309e42ceb286fdf6b0572193"
   },
   "records": [
     {

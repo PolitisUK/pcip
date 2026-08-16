@@ -15,6 +15,9 @@ from pathlib import Path
 
 LIBRARY_PATH = Path(__file__).with_name("methodology_library") / "library_v1.json"
 SOURCE_REGISTER_PATH = Path(__file__).with_name("methodology_library") / "source_register_v1.json"
+KNOWLEDGE_BASE_PATH = Path(__file__).with_name("methodology_library") / "methodology_knowledge_base.jsonl"
+CLAIM_REGISTER_PATH = Path(__file__).with_name("methodology_library") / "methodology_claim_register.jsonl"
+DISAGREEMENTS_PATH = Path(__file__).with_name("methodology_library") / "methodology_disagreements.jsonl"
 PUBLISHED_STATE = "PUBLISHED"
 LIBRARY_UPDATE_STATES = ("NEW", "REVIEWED", "TRIANGULATED", "APPROVED", "PUBLISHED")
 
@@ -41,11 +44,82 @@ def methodology_library() -> dict:
         raise RuntimeError("Only a published methodology library can ground live research work.")
     if tuple(payload.get("update_workflow", ())) != LIBRARY_UPDATE_STATES:
         raise RuntimeError("The methodology library has an invalid controlled update workflow.")
+    structured_companions()
     return payload
 
 
+def _jsonl_rows(path: Path) -> tuple[dict, ...]:
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    return tuple(rows)
+
+
+@lru_cache(maxsize=1)
+def structured_companions() -> dict[str, tuple[dict, ...]]:
+    """Validate the supplied deterministic JSONL derivatives before use."""
+    knowledge = _jsonl_rows(KNOWLEDGE_BASE_PATH)
+    claims = _jsonl_rows(CLAIM_REGISTER_PATH)
+    disagreements = _jsonl_rows(DISAGREEMENTS_PATH)
+    expected_hash = "a5bfecf138eb0382182ac357c28c074644f83c64718a743c6f99bc911ec2b8ba"
+    if len(knowledge) != 27 or len(claims) != 37 or len(disagreements) != 18:
+        raise RuntimeError("The controlled methodology derivatives are incomplete.")
+    rows = [*knowledge, *claims, *disagreements]
+    if any(row.get("library_version") != "1.0.0" for row in rows):
+        raise RuntimeError("The controlled methodology derivatives have an unexpected version.")
+    if any(row.get("source_sha256") != expected_hash for row in rows):
+        raise RuntimeError("The controlled methodology derivatives do not match the approved synthesis.")
+    return {"knowledge": knowledge, "claims": claims, "disagreements": disagreements}
+
+
+def _variants(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def _rule(record: dict, component: str) -> str:
+    for item in record.get("rules", []):
+        if item.get("component") == component:
+            return str(item.get("rule", ""))
+    return ""
+
+
 def library_records() -> tuple[dict, ...]:
-    return tuple(methodology_library()["records"])
+    profiles = {item["methodology_id"]: item for item in methodology_library()["records"]}
+    result = []
+    for source_record in structured_companions()["knowledge"]:
+        rule_ids = tuple(
+            source_id
+            for rule in source_record.get("rules", [])
+            for source_id in rule.get("source_ids", [])
+        )
+        derived = {
+            "methodology_id": source_record["methodology_id"],
+            "name": source_record["name"],
+            "variants": _variants(source_record.get("variants_preserved", "")),
+            "scope": source_record["scope"],
+            "definition": source_record["scope"],
+            "epistemology": _rule(source_record, "Theoretical / epistemological basis"),
+            "research_questions": _rule(source_record, "Appropriate research questions"),
+            "sampling": _rule(source_record, "Sampling"),
+            "collection": _rule(source_record, "Data collection / generation"),
+            "quality": _rule(source_record, "Rigour / quality"),
+            "ai_constraints": _rule(source_record, "What AI should not decide"),
+            "allowed_ai_tasks": ["retrieval"],
+            "disallowed_ai_tasks": ["automatic_final_finding"],
+            "provenance": tuple(dict.fromkeys(rule_ids)),
+            "triangulation_statuses": tuple(
+                dict.fromkeys(
+                    str(rule.get("triangulation_status", ""))
+                    for rule in source_record.get("rules", [])
+                    if rule.get("triangulation_status")
+                )
+            ),
+            "structured_record": source_record,
+        }
+        derived.update(profiles.get(source_record["methodology_id"], {}))
+        result.append(derived)
+    return tuple(result)
 
 
 def get_methodology(methodology_id: str) -> dict:
