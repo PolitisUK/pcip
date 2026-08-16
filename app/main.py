@@ -77,6 +77,8 @@ from .legal_content import (
     LEGAL_VERSION,
     LegalDocument,
     LegalSection,
+    CUSTOMER_LEGAL_DOCUMENTS,
+    customer_legal_document,
     public_legal_document,
 )
 from .study_governance import (
@@ -1423,7 +1425,7 @@ def public_support_page(request: Request):
         summary="How to get support for the Citizen Centric platform or a study.",
         audience="public and participant",
         publication_status="published",
-        source_file=None,
+        source_file="app/legal_sources/canonical/legal_information_v1.md",
         sections=(
             LegalSection(
                 "Support contact",
@@ -1437,6 +1439,36 @@ def public_support_page(request: Request):
     return render(
         request,
         "legal_document.html",
+        document=document,
+        legal_version=LEGAL_VERSION,
+        legal_effective_date=LEGAL_EFFECTIVE_DATE,
+    )
+
+
+@app.get("/agreements", response_class=HTMLResponse)
+def customer_agreements(request: Request, u=Depends(roles("owner", "admin"))):
+    """Customer-only legal schedules; participant credentials cannot reach it."""
+    return render(
+        request,
+        "customer_agreements.html",
+        user=u,
+        documents=tuple(CUSTOMER_LEGAL_DOCUMENTS.values()),
+    )
+
+
+@app.get("/agreements/{legal_slug}", response_class=HTMLResponse)
+def customer_agreement(
+    request: Request,
+    legal_slug: str,
+    u=Depends(roles("owner", "admin")),
+):
+    document = customer_legal_document(legal_slug)
+    if document is None:
+        raise HTTPException(404)
+    return render(
+        request,
+        "customer_legal_document.html",
+        user=u,
         document=document,
         legal_version=LEGAL_VERSION,
         legal_effective_date=LEGAL_EFFECTIVE_DATE,

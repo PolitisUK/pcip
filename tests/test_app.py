@@ -230,12 +230,18 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
 def test_public_legal_publication_uses_only_source_complete_policy_text():
     from app.legal_content import public_legal_document
 
-    source_document = public_legal_document('terms')
-    assert source_document is not None
-    assert source_document.is_published is True
-    assert source_document.source_file == 'app/legal_sources/terms_of_use_v1.md'
-    source_text = Path(source_document.source_file).read_text(encoding='utf-8')
-    assert 'CLIENT INPUT REQUIRED' not in source_text
+    for legal_slug in ('privacy', 'terms', 'cookies', 'accessibility', 'acceptable-use', 'legal'):
+        source_document = public_legal_document(legal_slug)
+        assert source_document is not None
+        assert source_document.is_published is True
+        assert source_document.source_file.startswith('app/legal_sources/canonical/')
+        rendered_text = ' '.join(
+            paragraph
+            for section in source_document.sections
+            for paragraph in section.paragraphs
+        )
+        assert 'CLIENT INPUT REQUIRED' not in rendered_text
+        assert '[confirm' not in rendered_text.lower()
 
     with client:
         client.cookies.clear()
@@ -243,8 +249,8 @@ def test_public_legal_publication_uses_only_source_complete_policy_text():
         assert terms.status_code == 200
         assert 'Version 1.0' in terms.text
         assert 'Effective 15 August 2026' in terms.text
-        assert 'Invitation token/code only.' in terms.text
-        assert 'Participant material is not used to train public/shared foundation models.' in terms.text
+        assert 'invitation token/code rather than email/password sign-in' in terms.text
+        assert 'Participant material is not used to train public or shared foundation models.' in terms.text
         assert 'info@politisconsulting.co.uk' in terms.text
 
         support = client.get('/support')
@@ -261,9 +267,25 @@ def test_public_legal_publication_uses_only_source_complete_policy_text():
             '/legal': 'Legal Information',
         }.items():
             response = client.get(path)
-            assert response.status_code == 503
+            assert response.status_code == 200
             assert title in response.text
             assert 'CLIENT INPUT REQUIRED' not in response.text
+
+
+def test_customer_agreements_are_owner_admin_only_and_source_backed():
+    with client:
+        client.cookies.clear()
+        assert client.get('/agreements', follow_redirects=False).status_code == 303
+
+        owner_login = login()
+        client.cookies.update(owner_login.cookies)
+        agreements = client.get('/agreements')
+        assert agreements.status_code == 200
+        assert 'Data Processing Agreement' in agreements.text
+
+        document = client.get('/agreements/dpa')
+        assert document.status_code == 200
+        assert 'UK GDPR Article 28 Schedule to the Citizen Centric Organisation SaaS Terms' in document.text
 
 
 def test_global_user_can_hold_memberships_in_multiple_organisations():
