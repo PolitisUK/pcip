@@ -31,6 +31,11 @@ on:
         description: Immutable sha256 digest of the previously verified production rollback artifact.
         required: true
         type: string
+      approved_image_digest:
+        description: Optional immutable digest of an already staged candidate. When supplied, the workflow verifies and promotes it without rebuilding or redeploying staging.
+        required: false
+        default: ''
+        type: string
       promote_to_production:
         description: Set true only after the staging job has passed in this run.
         required: true
@@ -75,12 +80,16 @@ jobs:
           ROLLBACK_DECISION_OWNER: ${{ inputs.rollback_decision_owner }}
           BACKUP_RECOVERY_POINT: ${{ inputs.backup_recovery_point }}
           CURRENT_ALEMBIC_REVISION: ${{ inputs.current_alembic_revision }}
+          APPROVED_IMAGE_DIGEST: ${{ inputs.approved_image_digest }}
         run: |
           set -euo pipefail
           for value in RELEASE_SHA RELEASE_OPERATOR RELEASE_WINDOW ROLLBACK_DECISION_OWNER BACKUP_RECOVERY_POINT CURRENT_ALEMBIC_REVISION; do
             test -n "${!value}" || { echo "$value is required." >&2; exit 1; }
           done
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full lowercase commit SHA." >&2; exit 1; }
+          if test -n "$APPROVED_IMAGE_DIGEST"; then
+            [[ "$APPROVED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "approved_image_digest must be an immutable sha256 digest." >&2; exit 1; }
+          fi
           git cat-file -e "${RELEASE_SHA}^{commit}"
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main || {
             echo "The release commit must already be merged into main." >&2
@@ -121,6 +130,7 @@ jobs:
           done
           az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --query state -o tsv | grep -qx Running
       - name: Build an immutable candidate in the staging registry
+        if: ${{ inputs.approved_image_digest == '' }}
         id: build
         shell: bash
         env:
@@ -139,13 +149,21 @@ jobs:
         shell: bash
         env:
           RELEASE_SHA: ${{ needs.validate-release-evidence.outputs.release_sha }}
+          APPROVED_IMAGE_DIGEST: ${{ inputs.approved_image_digest }}
         run: |
           set -euo pipefail
-          digest=$(az acr manifest list-metadata -r "$STAGING_ACR" -n "$IMAGE_REPOSITORY" --query "[?tags && contains(tags, 'sha-$RELEASE_SHA')].digest | [0]" -o tsv)
+          if test -n "$APPROVED_IMAGE_DIGEST"; then
+            az acr manifest show-metadata -r "$STAGING_ACR" -n "$IMAGE_REPOSITORY@$APPROVED_IMAGE_DIGEST" --query digest -o tsv | grep -qx "$APPROVED_IMAGE_DIGEST"
+            az acr manifest list-metadata -r "$STAGING_ACR" -n "$IMAGE_REPOSITORY" --query "[?digest=='$APPROVED_IMAGE_DIGEST' && tags && contains(tags, 'sha-$RELEASE_SHA')].digest | [0]" -o tsv | grep -qx "$APPROVED_IMAGE_DIGEST"
+            digest="$APPROVED_IMAGE_DIGEST"
+          else
+            digest=$(az acr manifest list-metadata -r "$STAGING_ACR" -n "$IMAGE_REPOSITORY" --query "[?tags && contains(tags, 'sha-$RELEASE_SHA')].digest | [0]" -o tsv)
+          fi
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Could not resolve a candidate image digest." >&2; exit 1; }
           printf 'image_digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
           echo "Staging candidate: $STAGING_ACR.azurecr.io/$IMAGE_REPOSITORY@$digest" >> "$GITHUB_STEP_SUMMARY"
       - name: Deploy the digest-pinned candidate to staging
+        if: ${{ inputs.approved_image_digest == '' }}
         shell: bash
         env:
           IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
