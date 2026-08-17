@@ -112,6 +112,8 @@ jobs:
     environment: staging
     outputs:
       image_digest: ${{ steps.digest.outputs.image_digest }}
+      source_acr: ${{ steps.source.outputs.source_acr }}
+      source_login_server: ${{ steps.source.outputs.source_login_server }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -129,6 +131,25 @@ jobs:
             test -n "${!value}" || { echo "Repository variable $value must be configured." >&2; exit 1; }
           done
           az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --query state -o tsv | grep -qx Running
+      - name: Resolve the staged artifact registry
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$STAGING_ACR" || { echo "Staging ACR name must be configured." >&2; exit 1; }
+          source_login_server=$(az acr show -n "$STAGING_ACR" --query loginServer -o tsv)
+          test -n "$source_login_server" || { echo "Staging ACR login server could not be resolved." >&2; exit 1; }
+          [[ "$source_login_server" =~ ^[a-z0-9]+\.azurecr\.io$ ]] || {
+            echo "Staging ACR login server has an unexpected format." >&2
+            exit 1
+          }
+          printf 'source_acr=%s\n' "$STAGING_ACR" >> "$GITHUB_OUTPUT"
+          printf 'source_login_server=%s\n' "$source_login_server" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Staged artifact registry"
+            echo "- Source ACR: \`$STAGING_ACR\`"
+            echo "- Source login server: \`$source_login_server\`"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Build an immutable candidate in the staging registry
         if: ${{ inputs.approved_image_digest == '' }}
         id: build
@@ -161,7 +182,7 @@ jobs:
           fi
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Could not resolve a candidate image digest." >&2; exit 1; }
           printf 'image_digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
-          echo "Staging candidate: $STAGING_ACR.azurecr.io/$IMAGE_REPOSITORY@$digest" >> "$GITHUB_STEP_SUMMARY"
+          echo "Staging candidate: ${{ steps.source.outputs.source_login_server }}/$IMAGE_REPOSITORY@$digest" >> "$GITHUB_STEP_SUMMARY"
       - name: Deploy the digest-pinned candidate to staging
         if: ${{ inputs.approved_image_digest == '' }}
         shell: bash
@@ -170,7 +191,7 @@ jobs:
         run: |
           set -euo pipefail
           az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --settings RUN_MIGRATIONS=true >/dev/null
-          az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --linux-fx-version "DOCKER|$STAGING_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST" >/dev/null
+          az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --linux-fx-version "DOCKER|${{ steps.source.outputs.source_login_server }}/$IMAGE_REPOSITORY@$IMAGE_DIGEST" >/dev/null
           az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP"
       - name: Verify staging readiness and public legal routes
         shell: bash
@@ -202,6 +223,9 @@ jobs:
     needs: [validate-release-evidence, stage]
     runs-on: ubuntu-latest
     environment: production
+    env:
+      SOURCE_ACR: ${{ needs.stage.outputs.source_acr }}
+      SOURCE_LOGIN_SERVER: ${{ needs.stage.outputs.source_login_server }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -227,14 +251,24 @@ jobs:
           IMAGE_DIGEST: ${{ needs.stage.outputs.image_digest }}
         run: |
           set -euo pipefail
-          for value in AZURE_RESOURCE_GROUP PRODUCTION_APP PRODUCTION_ACR PRODUCTION_DATABASE_SERVER; do
+          for value in AZURE_RESOURCE_GROUP PRODUCTION_APP PRODUCTION_ACR PRODUCTION_DATABASE_SERVER SOURCE_ACR SOURCE_LOGIN_SERVER IMAGE_DIGEST; do
             test -n "${!value}" || { echo "Repository variable $value must be configured." >&2; exit 1; }
           done
+          [[ "$SOURCE_ACR" =~ ^[a-z0-9]+$ ]] || { echo "Source ACR name has an unexpected format." >&2; exit 1; }
+          [[ "$SOURCE_LOGIN_SERVER" =~ ^[a-z0-9]+\.azurecr\.io$ ]] || { echo "Source ACR login server has an unexpected format." >&2; exit 1; }
+          [[ "$PRODUCTION_ACR" =~ ^[a-z0-9]+$ ]] || { echo "Destination ACR name has an unexpected format." >&2; exit 1; }
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Candidate digest must be an immutable sha256 digest." >&2; exit 1; }
+          expected_source_login_server=$(az acr show -n "$SOURCE_ACR" --query loginServer -o tsv)
+          test -n "$expected_source_login_server" || { echo "Source ACR login server could not be verified." >&2; exit 1; }
+          test "$SOURCE_LOGIN_SERVER" = "$expected_source_login_server" || {
+            echo "Source ACR login server does not match the resolved registry." >&2
+            exit 1
+          }
+          az acr manifest show-metadata -r "$SOURCE_ACR" -n "$IMAGE_REPOSITORY@$IMAGE_DIGEST" --query digest -o tsv | grep -qx "$IMAGE_DIGEST"
           az postgres flexible-server backup list -g "$AZURE_RESOURCE_GROUP" -s "$PRODUCTION_DATABASE_SERVER" --query "[?name=='$BACKUP_RECOVERY_POINT'].name | [0]" -o tsv | grep -qx "$BACKUP_RECOVERY_POINT"
           [[ "$CURRENT_ALEMBIC_REVISION" =~ ^[0-9]{4}$ ]] || { echo "Current Alembic revision must come from the approved production query." >&2; exit 1; }
           [[ "$ROLLBACK_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "A verified rollback digest is required." >&2; exit 1; }
           az acr manifest show-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY@$ROLLBACK_DIGEST" --query digest -o tsv | grep -qx "$ROLLBACK_DIGEST"
-          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
       - name: Promote the already-staged immutable artifact and run the one approved migration
         shell: bash
         env:
@@ -242,7 +276,7 @@ jobs:
           IMAGE_DIGEST: ${{ needs.stage.outputs.image_digest }}
         run: |
           set -euo pipefail
-          az acr import -n "$PRODUCTION_ACR" --source "$STAGING_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST" --image "$IMAGE_REPOSITORY:sha-$RELEASE_SHA"
+          az acr import -n "$PRODUCTION_ACR" --source "$SOURCE_LOGIN_SERVER/$IMAGE_REPOSITORY@$IMAGE_DIGEST" --image "$IMAGE_REPOSITORY:sha-$RELEASE_SHA"
           promoted=$(az acr manifest list-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY" --query "[?tags && contains(tags, 'sha-$RELEASE_SHA')].digest | [0]" -o tsv)
           test "$promoted" = "$IMAGE_DIGEST" || { echo "Imported production digest differs from staged artifact." >&2; exit 1; }
           # This is the only point at which the production workflow arms a

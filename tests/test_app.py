@@ -3295,7 +3295,13 @@ def test_release_promotion_is_digest_pinned_and_protected_by_release_evidence():
     assert 'environment: staging' in promotion
     assert 'environment: production' in promotion
     assert 'az acr import' in promotion
-    assert 'DOCKER|$STAGING_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST' in promotion
+    assert 'source_acr: ${{ steps.source.outputs.source_acr }}' in promotion
+    assert 'source_login_server: ${{ steps.source.outputs.source_login_server }}' in promotion
+    assert 'SOURCE_ACR: ${{ needs.stage.outputs.source_acr }}' in promotion
+    assert 'SOURCE_LOGIN_SERVER: ${{ needs.stage.outputs.source_login_server }}' in promotion
+    assert 'DOCKER|${{ steps.source.outputs.source_login_server }}/$IMAGE_REPOSITORY@$IMAGE_DIGEST' in promotion
+    assert '--source "$SOURCE_LOGIN_SERVER/$IMAGE_REPOSITORY@$IMAGE_DIGEST"' in promotion
+    assert 'Source ACR login server could not be verified.' in promotion
     assert 'DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST' in promotion
     assert 'A digest, not a mutable tag, is required.' in rollback
     assert 'Production promotion must use the digest-pinned Promote PCIP release candidate workflow.' in legacy
