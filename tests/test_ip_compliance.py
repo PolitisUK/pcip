@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from scripts.ip_compliance import classify_licence, source_fingerprints
+from scripts.ip_compliance import (
+    classify_licence,
+    methodology_review_items,
+    source_fingerprints,
+)
 
 
 def test_ip_compliance_refuses_absent_or_copyleft_licence_evidence():
@@ -12,6 +16,11 @@ def test_ip_compliance_refuses_absent_or_copyleft_licence_evidence():
     # Licence text may mention GPL compatibility without making the component
     # GPL-licensed; the explicit expression remains controlling evidence.
     assert classify_licence("Python-2.0", "GPL-compatible wording")[0] == "PSF-2.0"
+    assert classify_licence(
+        None,
+        "Permission is hereby granted, free of charge, to any person\nobtaining a copy\n"
+        "The above copyright notice and this permission notice shall be\nincluded",
+    )[0] == "MIT"
 
 
 def test_ip_compliance_fingerprints_all_committed_dependency_manifests():
@@ -21,3 +30,10 @@ def test_ip_compliance_fingerprints_all_committed_dependency_manifests():
     assert "participant_app/pubspec.lock" in fingerprints
     assert all(len(value) == 64 for value in fingerprints.values())
     assert Path("IP_COMPLIANCE.md").is_file()
+
+
+def test_methodology_review_keeps_metadata_out_of_the_source_comparison_queue():
+    items = methodology_review_items()
+    assert items
+    assert {item["record"] for item in items}.issubset({f"M{number:02d}" for number in range(1, 28)})
+    assert all(item["field"] in {"core_material_findings", "external_academic_findings"} for item in items)
