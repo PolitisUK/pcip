@@ -48,7 +48,6 @@ SOURCE_FILES = (
     "participant_app/android/settings.gradle.kts",
     "participant_app/android/gradle/wrapper/gradle-wrapper.properties",
     "participant_app/ios/Runner.xcodeproj/project.pbxproj",
-    "participant_app/ios/Runner/GeneratedPluginRegistrant.m",
     "app/methodology_library/SOURCE_MANIFEST.md",
     "app/methodology_library/methodology_knowledge_base.jsonl",
     "app/methodology_library/methodology_claim_register.jsonl",

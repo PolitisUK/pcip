@@ -42177,13 +42177,12 @@
       "participant_app/android/gradle/wrapper/gradle-wrapper.properties": "b690d26223576fe4e63889fad9a00df81945cb870b9476cc5a563152a1a88a74",
       "participant_app/android/settings.gradle.kts": "016759283e88ade6eba92910583feeef88b962839b957aa414296afd2952d122",
       "participant_app/ios/Runner.xcodeproj/project.pbxproj": "af45306728e9f6686f9f4060d602c8f8665a6ffec192335b027427e4fec4cb36",
-      "participant_app/ios/Runner/GeneratedPluginRegistrant.m": "abb202f73aea2e4c9ed41a55c848573587a9d02941c13a535d5ba844bf0a18e6",
       "participant_app/pubspec.lock": "31bc84f2b15c294c80837c8ed2c990561fdf1a05b495aa3a457034c640f6cd84",
       "participant_app/pubspec.yaml": "d56840eeaff0b6095b249559d2632486530da4d423565cecadc1d37b4d289d80",
       "requirements-dev.txt": "efd0dee31f00edb1e36e95b6e75c3c543052cb43e5e025a4a4bc992a65aba250",
       "requirements.lock": "673e63f9df1fdad4c44e27226c2ab7dc56213c14ce39759b68bf771ed3adf568",
       "requirements.txt": "1636184e1444fcf131f65535d268c0aaaa5e021fc77a49cfd181f2fb9f943e29",
-      "scripts/ip_compliance.py": "6ccebdb79d97149dc0cd8969928389b9deced2444cdec574e4568980f5bda51b"
+      "scripts/ip_compliance.py": "871370693a5535283ebc3230d630a9fdf6711857ed61be14cb057d268103a561"
     },
     "third_party_notices_sha256": "7a8a9d12578b3a4d28c5f79e08533ab2d6fc9b6d9958b38a299ade6ca821f23b"
   },
@@ -42193,7 +42192,7 @@
       "type": "application",
       "version": "repository source"
     },
-    "timestamp": "2026-08-17T10:13:42.114946Z",
+    "timestamp": "2026-08-17T10:17:48.243332Z",
     "tools": [
       {
         "name": "scripts/ip_compliance.py",
