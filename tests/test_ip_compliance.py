@@ -28,8 +28,10 @@ def test_ip_compliance_fingerprints_all_committed_dependency_manifests():
     assert "requirements.lock" in fingerprints
     assert "mobile/participant-app/package-lock.json" in fingerprints
     assert "participant_app/pubspec.lock" in fingerprints
+    assert "docs/IP_TRADEMARK_EVIDENCE.md" in fingerprints
     assert all(len(value) == 64 for value in fingerprints.values())
     assert Path("IP_COMPLIANCE.md").is_file()
+    assert Path("docs/IP_TRADEMARK_EVIDENCE.md").is_file()
 
 
 def test_methodology_review_keeps_metadata_out_of_the_source_comparison_queue():

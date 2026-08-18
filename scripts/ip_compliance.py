@@ -34,6 +34,7 @@ NOTICE_PATH = ROOT / "THIRD_PARTY_NOTICES.md"
 REPORT_PATH = DOCS / "IP_AUDIT_REPORT.md"
 ASSET_PATH = DOCS / "IP_ASSET_PROVENANCE_TEMPLATE.csv"
 METHODOLOGY_REVIEW_PATH = DOCS / "IP_METHODOLOGY_COPYRIGHT_REVIEW.md"
+TRADEMARK_EVIDENCE_PATH = DOCS / "IP_TRADEMARK_EVIDENCE.md"
 NPM_NOTICE_CACHE = Path("/private/tmp/pcip-ip-npm-notices")
 
 SOURCE_FILES = (
@@ -52,6 +53,7 @@ SOURCE_FILES = (
     "app/methodology_library/methodology_knowledge_base.jsonl",
     "app/methodology_library/methodology_claim_register.jsonl",
     "app/methodology_library/methodology_disagreements.jsonl",
+    "docs/IP_TRADEMARK_EVIDENCE.md",
     "scripts/ip_compliance.py",
 )
 
@@ -726,6 +728,7 @@ def write_report(components: list[dict[str, Any]], assets: list[dict[str, str]],
         "## HUMAN/LEGAL REVIEW", "",
         "- Review every component flagged `HUMAN_LEGAL_REVIEW`, `BLOCKER_STRONG_COPYLEFT`, `BLOCKER_NETWORK_COPYLEFT`, `BLOCKER_NON_COMMERCIAL` or `BLOCKER_UNKNOWN` in the generated inventory before release. Do not treat an absent flag as legal advice.",
         "- `npm:node-forge@1.4.0` declares a BSD-3-Clause/GPL-2.0 choice; record the selected compatible licence and preserve its notice before distribution.",
+        "- Owner-supplied trademark evidence is recorded in `docs/IP_TRADEMARK_EVIDENCE.md`: UK00003775365; owner supplied as Politis Ltd; associated mark supplied as the Politis figurative/logo mark. It is not independent confirmation of registration/status, nor evidence of copyright/licence for a particular repository asset.",
         "- Trademark clearance for Citizen Centric, Citizen-Centric, logos, icons, product names and slogans remains a human/legal release gate. This audit makes no ownership, registration or clearance conclusion.",
         f"- Repository-only methodology triage reviewed 82 controlled derivative records and identified {len(methodology_items)} long narrative fields for source-side comparison. See `docs/IP_METHODOLOGY_COPYRIGHT_REVIEW.md`. It makes no infringement conclusion and does not rewrite claims or provenance.",
         "",
@@ -760,7 +763,7 @@ def write_report(components: list[dict[str, Any]], assets: list[dict[str, str]],
 
 
 def generated_files() -> tuple[Path, ...]:
-    return SBOM_PATH, INVENTORY_PATH, NOTICE_PATH, REPORT_PATH, ASSET_PATH, METHODOLOGY_REVIEW_PATH
+    return SBOM_PATH, INVENTORY_PATH, NOTICE_PATH, REPORT_PATH, ASSET_PATH, METHODOLOGY_REVIEW_PATH, TRADEMARK_EVIDENCE_PATH
 
 
 def generate() -> None:

@@ -42172,6 +42172,7 @@
       "app/methodology_library/methodology_claim_register.jsonl": "4205f592fc3c4da0da2d9bb2774700d404353bfda7cb37533b93516926327231",
       "app/methodology_library/methodology_disagreements.jsonl": "e01877fd8e8531be3973c1859b9c2ca7be1b8bfcb09548290c68b194be8ab3fa",
       "app/methodology_library/methodology_knowledge_base.jsonl": "3cc6727cda77d131b6689dedbef61b09257f6e9c405d8e4c19f3dbe17e44f7d2",
+      "docs/IP_TRADEMARK_EVIDENCE.md": "b42deb0a82e0977a04470b1b16514c4bc48f938ca4a0cc29aee574dd17d2af89",
       "mobile/participant-app/package-lock.json": "d699a20b6e489b898c1c44817e8e6be6c049c76c946d546fa011c005e8dfc01f",
       "mobile/participant-app/package.json": "fa897744064458cc064be83e30d68b361de854841a7a899545ad1df336d3a156",
       "participant_app/android/gradle/wrapper/gradle-wrapper.properties": "b690d26223576fe4e63889fad9a00df81945cb870b9476cc5a563152a1a88a74",
@@ -42182,7 +42183,7 @@
       "requirements-dev.txt": "efd0dee31f00edb1e36e95b6e75c3c543052cb43e5e025a4a4bc992a65aba250",
       "requirements.lock": "673e63f9df1fdad4c44e27226c2ab7dc56213c14ce39759b68bf771ed3adf568",
       "requirements.txt": "1636184e1444fcf131f65535d268c0aaaa5e021fc77a49cfd181f2fb9f943e29",
-      "scripts/ip_compliance.py": "871370693a5535283ebc3230d630a9fdf6711857ed61be14cb057d268103a561"
+      "scripts/ip_compliance.py": "13a48afe8e5ab6dae0c2cf2fbf4cda14ae3322fe7651372fc0e201959e7ebb06"
     },
     "third_party_notices_sha256": "7a8a9d12578b3a4d28c5f79e08533ab2d6fc9b6d9958b38a299ade6ca821f23b"
   },
@@ -42192,7 +42193,7 @@
       "type": "application",
       "version": "repository source"
     },
-    "timestamp": "2026-08-17T10:17:48.243332Z",
+    "timestamp": "2026-08-18T05:56:19.523626Z",
     "tools": [
       {
         "name": "scripts/ip_compliance.py",
