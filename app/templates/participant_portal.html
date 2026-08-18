@@ -170,7 +170,7 @@
     <section id="privacy" class="card section privacy-card">
       <p class="eyebrow">Your account</p>
       <h2>Privacy and control</h2>
-      <p>You can ask the research team to delete or anonymise your Citizen Centric data. You can also withdraw from Citizen Centric research at any time.</p>
+      <p>You can withdraw from this study, withdraw and delete identifiable active study data, or use the app to delete your Citizen Centric account. These choices are separate.</p>
 
       <div class="privacy-action">
         <h3>Download your study data</h3>
@@ -183,31 +183,22 @@
       </div>
 
       <details>
-        <summary>Request deletion or anonymisation</summary>
+        <summary>Withdraw and delete my active study data</summary>
         <form method="post" action="/participant-portal/privacy/deletion-request" class="stack section">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <label for="deletion-reason">Anything you want the research team to know (optional)</label>
-          <textarea id="deletion-reason" name="reason" maxlength="2000"></textarea>
-          <p class="muted">The team will review the request and may delete or anonymise records where retention obligations apply.</p>
-          <button class="secondary" type="submit">Send data request</button>
+          <p class="muted">This ends your study access and starts deletion of identifiable active study data. Irreversibly anonymised information cannot be linked back to you. Protected backups expire under the applicable retention schedule; narrowly required legal or security records may be retained only where lawful.</p>
+          <label><input type="checkbox" name="confirmed" value="true" required> I understand and want to withdraw and delete my active study data.</label>
+          <button class="danger" type="submit" data-confirm="Withdraw and delete your active study data? You will be signed out.">Withdraw and delete my data</button>
         </form>
       </details>
 
       <details>
-        <summary>Withdraw from Citizen Centric research</summary>
+        <summary>Withdraw from this study</summary>
         <form method="post" action="/participant-portal/privacy/withdrawal-request" class="stack section">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <label for="withdrawal-contact">How may the team contact you about this request?</label>
-          <select id="withdrawal-contact" name="contact_preference">
-            <option value="none">Do not contact me</option>
-            <option value="email">Email</option>
-            <option value="sms">Text message</option>
-            <option value="phone">Phone</option>
-          </select>
-          <label for="withdrawal-reason">Reason (optional)</label>
-          <textarea id="withdrawal-reason" name="reason" maxlength="2000"></textarea>
-          <p class="notice">Withdrawing ends your access to all Citizen Centric studies immediately. Existing research records are handled under the relevant study privacy terms.</p>
-          <button class="danger" type="submit" data-confirm="Withdraw from all Citizen Centric research now? You will be signed out immediately.">Withdraw and sign out</button>
+          <p class="notice">Withdrawing ends your access to this study immediately and stops further collection. It does not automatically delete existing information.</p>
+          <label><input type="checkbox" name="confirmed" value="true" required> I understand and want to withdraw from this study.</label>
+          <button class="danger" type="submit" data-confirm="Withdraw from this study now? You will be signed out.">Withdraw and sign out</button>
         </form>
       </details>
     </section>

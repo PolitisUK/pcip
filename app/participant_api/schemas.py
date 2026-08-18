@@ -328,7 +328,7 @@ class PrivacyRequestAcknowledgement(BaseModel):
 
     request_id: int
     request_type: Literal["withdrawal", "deletion"]
-    status: Literal["received"]
+    status: Literal["received", "in_progress", "completed", "failed_retrying", "requires_controller_review"]
     submitted_at: datetime
     message: str | None = None
 
@@ -338,16 +338,16 @@ class WithdrawalRequest(BaseModel):
 
     scope: Literal["study", "all"] = "study"
     study_id: int | None = Field(default=None, ge=1)
-    reason: str | None = None
-    contact_preference: Literal["email", "sms", "phone", "none"] | None = None
+    confirmed: Literal[True]
 
 
 class DeletionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    mode_preference: Literal["auto", "delete", "anonymise"] = "auto"
-    reason: str | None = None
+    mode_preference: Literal["delete"] = "delete"
     study_id: int | None = Field(default=None, ge=1)
+    scope: Literal["study", "account"] = "study"
+    confirmed: Literal[True]
 
 
 class PortalSummaryResponse(BaseModel):

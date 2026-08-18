@@ -572,7 +572,8 @@ def test_study_governance_blocks_live_until_controller_decisions_are_recorded():
                 'consent_text_reference': 'CT-GOV-1',
                 'consent_text_version': '1.0',
                 'consent_text_effective_date': '15 August 2026',
-                'retention_description': 'Controller-approved study retention schedule',
+                    'retention_description': 'Controller-approved study retention schedule',
+                    'deletion_retention_exception': 'None',
                 'withdrawal_process_defined': 'true',
                 'deletion_handling_defined': 'true',
                 'features_assessed': 'true',
@@ -631,6 +632,7 @@ def _controller_governance_payload(version: str = '1.0') -> dict[str, str]:
         'consent_text_version': version,
         'consent_text_effective_date': '15 August 2026',
         'retention_description': 'Controller-approved study retention schedule',
+        'deletion_retention_exception': 'None',
         'withdrawal_process_defined': 'true',
         'deletion_handling_defined': 'true',
         'features_assessed': 'true',
@@ -1401,8 +1403,8 @@ def test_participant_website_surfaces_account_privacy_controls_and_no_store():
         assert portal.status_code == 200
         assert portal.headers.get('cache-control') == 'no-store'
         assert 'Privacy and control' in portal.text
-        assert 'Request deletion or anonymisation' in portal.text
-        assert 'Withdraw from Citizen Centric research' in portal.text
+        assert 'Withdraw and delete my active study data' in portal.text
+        assert 'Withdraw from this study' in portal.text
         assert 'Citizen Centric' in portal.text
         assert re.search(r'\bPCIP\b', portal.text, re.IGNORECASE) is None
 
@@ -1571,35 +1573,27 @@ def test_participant_website_data_export_is_minimised_scoped_audited_and_no_stor
         assert audit_row.detail == str(context['study_id'])
 
 
-def test_participant_website_deletion_request_is_audited_without_deleting_account():
-    from app.models import AuditEvent, Participant
+def test_participant_website_deletion_request_removes_active_study_data_without_retaining_reason():
+    from app.models import Participant, ParticipantPrivacyRequest
 
     context = _prepare_participant_api_activity_response_context('website-deletion')
 
     with client:
         requested = post_with_csrf(
             '/participant-portal/privacy/deletion-request',
-            data={'reason': 'Please remove data that is no longer required'},
+            data={'confirmed': 'true'},
             follow_redirects=False,
         )
         assert requested.status_code == 303
-        assert requested.headers['location'] == '/participant-portal#privacy'
-        portal = client.get('/participant-portal')
-        assert 'data deletion request was received' in portal.text
+        assert requested.headers['location'] == '/join-study'
 
     with SessionLocal() as db:
         participant_row = db.get(Participant, context['participant_id'])
         assert participant_row is not None
-        event = db.scalar(
-            select(AuditEvent)
-            .where(
-                AuditEvent.action == 'participant.deletion_requested',
-                AuditEvent.entity_id == str(context['participant_id']),
-            )
-            .order_by(AuditEvent.id.desc())
-        )
-        assert event is not None
-        assert 'Please remove data that is no longer required' in event.detail
+        request_row = db.scalar(select(ParticipantPrivacyRequest).order_by(ParticipantPrivacyRequest.id.desc()))
+        assert request_row is not None
+        assert request_row.status == 'completed'
+        assert request_row.study_id == context['study_id']
 
 
 def test_participant_website_withdrawal_revokes_portal_access_and_updates_consent():
@@ -1610,7 +1604,7 @@ def test_participant_website_withdrawal_revokes_portal_access_and_updates_consen
     with client:
         withdrawn = post_with_csrf(
             '/participant-portal/privacy/withdrawal-request',
-            data={'reason': 'I no longer wish to participate', 'contact_preference': 'email'},
+            data={'confirmed': 'true'},
             follow_redirects=False,
         )
         assert withdrawn.status_code == 303
@@ -1629,7 +1623,7 @@ def test_participant_website_withdrawal_revokes_portal_access_and_updates_consen
     with SessionLocal() as db:
         participant_row = db.get(Participant, context['participant_id'])
         assert participant_row is not None
-        assert participant_row.consent_status == 'withdrawn'
+        assert participant_row.consent_status == 'granted'
         enrolment = db.scalar(
             select(StudyEnrolment).where(
                 StudyEnrolment.study_id == context['study_id'],
@@ -6771,7 +6765,7 @@ def test_participant_api_activity_detail_enforces_scope_consent_enrolment_and_pa
 
 
 def _prepare_participant_api_activity_response_context(email_suffix: str):
-    from app.models import Activity
+    from app.models import Activity, Participant, ParticipantInvitation
 
     token, participant_id, study_id = _create_participant_invitation_for_api(email_suffix)
 
@@ -6793,6 +6787,15 @@ def _prepare_participant_api_activity_response_context(email_suffix: str):
         )
         assert activity_row is not None
         activity_id = activity_row.id
+        participant_row = db.get(Participant, participant_id)
+        invitation_row = db.scalar(
+            select(ParticipantInvitation).where(
+                ParticipantInvitation.participant_id == participant_id,
+                ParticipantInvitation.study_id == study_id,
+            )
+        )
+        assert participant_row is not None
+        assert invitation_row is not None
 
     return {
         'token': token,
@@ -6800,6 +6803,8 @@ def _prepare_participant_api_activity_response_context(email_suffix: str):
         'participant_id': participant_id,
         'study_id': study_id,
         'activity_id': activity_id,
+        'organisation_id': participant_row.organisation_id,
+        'invitation_id': invitation_row.id,
     }
 
 
@@ -7618,7 +7623,7 @@ def test_participant_api_messages_list_and_create_excludes_internal_notes():
 
 
 def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_only():
-    from app.models import Participant, StudyEnrolment
+    from app.models import Participant, ParticipantInvitation, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment
 
     context = _prepare_participant_api_activity_response_context('api-privacy-withdrawal')
 
@@ -7628,8 +7633,7 @@ def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_on
             json={
                 'scope': 'study',
                 'study_id': context['study_id'],
-                'reason': 'No longer able to continue',
-                'contact_preference': 'email',
+                'confirmed': True,
             },
             headers={
                 'Authorization': f"Bearer {context['api_token']}",
@@ -7640,12 +7644,12 @@ def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_on
         assert response.status_code == 202
         body = response.json()
         assert body['request_type'] == 'withdrawal'
-        assert body['status'] == 'received'
+        assert body['status'] == 'completed'
         assert body['request_id'] >= 1
 
         duplicate = client.post(
             '/api/v1/participant/privacy/withdrawal-requests',
-            json={'scope': 'study', 'study_id': context['study_id']},
+            json={'scope': 'study', 'study_id': context['study_id'], 'confirmed': True},
             headers={
                 'Authorization': f"Bearer {context['api_token']}",
                 'Idempotency-Key': 'withdrawal-1234',
@@ -7667,20 +7671,41 @@ def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_on
         )
         assert enrolment is not None
         assert enrolment.status == 'withdrawn'
+        invitation = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.id == context['invitation_id']))
+        assert invitation is not None and invitation.revoked_at is not None
+        assert db.scalar(select(PublicAuthSession).where(PublicAuthSession.participant_invitation_id == invitation.id, PublicAuthSession.revoked_at.is_(None))) is None
+        privacy_request = db.get(ParticipantPrivacyRequest, body['request_id'])
+        assert privacy_request is not None
+        assert privacy_request.status == 'completed'
 
 
-def test_participant_api_privacy_deletion_request_is_acknowledged_without_immediate_deletion():
-    from app.models import Participant
+def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_only_minimised_lifecycle_evidence():
+    from app.models import ActivityResponse, EvidenceFile, OutboxEmail, Participant, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment
 
     context = _prepare_participant_api_activity_response_context('api-privacy-deletion')
+
+    with SessionLocal() as db:
+        response_row = ActivityResponse(
+            organisation_id=context['organisation_id'], study_id=context['study_id'],
+            activity_id=context['activity_id'], participant_id=context['participant_id'],
+            value_json='{"answer":"remove me"}', status='draft',
+        )
+        db.add(response_row); db.flush()
+        db.add(ParticipantMessage(organisation_id=context['organisation_id'], study_id=context['study_id'], participant_id=context['participant_id'], sender_type='participant', body='remove me'))
+        db.add(EvidenceFile(organisation_id=context['organisation_id'], study_id=context['study_id'], activity_id=context['activity_id'], participant_id=context['participant_id'], response_id=response_row.id, original_name='remove.txt', stored_name='delete-test.txt', content_type='text/plain'))
+        # Legacy rows have no verified participant link and must not be deleted
+        # by recipient matching, even where their content might be sensitive.
+        db.add(OutboxEmail(organisation_id=context['organisation_id'], recipient='legacy@example.org', subject='Legacy', body='unlinked legacy email'))
+        db.commit()
 
     with client:
         response = client.post(
             '/api/v1/participant/privacy/deletion-requests',
             json={
-                'mode_preference': 'auto',
+                'mode_preference': 'delete',
                 'study_id': context['study_id'],
-                'reason': 'Please remove my account data',
+                'scope': 'account',
+                'confirmed': True,
             },
             headers={
                 'Authorization': f"Bearer {context['api_token']}",
@@ -7691,20 +7716,139 @@ def test_participant_api_privacy_deletion_request_is_acknowledged_without_immedi
         assert response.status_code == 202
         body = response.json()
         assert body['request_type'] == 'deletion'
-        assert body['status'] == 'received'
+        assert body['status'] == 'completed'
         assert body['request_id'] >= 1
 
         duplicate = client.post(
             '/api/v1/participant/privacy/deletion-requests',
-            json={'mode_preference': 'auto'},
+            json={'mode_preference': 'delete', 'confirmed': True},
             headers={
                 'Authorization': f"Bearer {context['api_token']}",
                 'Idempotency-Key': 'deletion-1234',
             },
             follow_redirects=False,
         )
-        assert duplicate.status_code == 409
+        assert duplicate.status_code == 401
 
     with SessionLocal() as db:
-        participant_row = db.get(Participant, context['participant_id'])
-        assert participant_row is not None
+        assert db.get(Participant, context['participant_id']) is None
+        assert db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(EvidenceFile).where(EvidenceFile.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(ParticipantMessage).where(ParticipantMessage.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(StudyEnrolment).where(StudyEnrolment.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(PublicAuthSession).where(PublicAuthSession.participant_invitation_id == context['invitation_id'])) is None
+        assert db.scalar(select(OutboxEmail).where(OutboxEmail.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(OutboxEmail).where(OutboxEmail.recipient == 'legacy@example.org')) is not None
+        request_row = db.get(ParticipantPrivacyRequest, body['request_id'])
+        assert request_row is not None
+        assert request_row.status == 'completed'
+        assert request_row.participant_id is None
+
+
+def test_participant_api_privacy_deletion_storage_failure_is_retryable_and_does_not_delete_other_participants(monkeypatch):
+    from app.models import ActivityResponse, EvidenceFile, Participant, ParticipantPrivacyRequest
+    import app.main as main_module
+
+    first = _prepare_participant_api_activity_response_context('api-privacy-delete-failure-a')
+    second = _prepare_participant_api_activity_response_context('api-privacy-delete-failure-b')
+    with SessionLocal() as db:
+        response_row = ActivityResponse(organisation_id=first['organisation_id'], study_id=first['study_id'], activity_id=first['activity_id'], participant_id=first['participant_id'], value_json='{}')
+        db.add(response_row); db.flush()
+        db.add(EvidenceFile(organisation_id=first['organisation_id'], study_id=first['study_id'], activity_id=first['activity_id'], participant_id=first['participant_id'], response_id=response_row.id, original_name='retry.txt', stored_name='retry-test.txt', content_type='text/plain'))
+        db.commit()
+
+    def unavailable(_key):
+        raise RuntimeError('storage temporarily unavailable')
+
+    monkeypatch.setattr(main_module.storage, 'delete', unavailable)
+    with client:
+        response = client.post(
+            '/api/v1/participant/privacy/deletion-requests',
+            json={'mode_preference': 'delete', 'scope': 'account', 'confirmed': True},
+            headers={'Authorization': f"Bearer {first['api_token']}", 'Idempotency-Key': 'deletion-retry-1234'},
+            follow_redirects=False,
+        )
+        assert response.status_code == 202
+        assert response.json()['status'] == 'failed_retrying'
+
+    with SessionLocal() as db:
+        assert db.get(Participant, first['participant_id']) is not None
+        assert db.get(Participant, second['participant_id']) is not None
+        request_row = db.get(ParticipantPrivacyRequest, response.json()['request_id'])
+        assert request_row is not None
+        assert request_row.status == 'failed_retrying'
+        assert request_row.retriable is True
+        assert request_row.retry_count == 1
+
+
+def test_participant_api_deletion_retains_minimised_request_when_controller_documents_exception():
+    from app.models import Participant, ParticipantPrivacyRequest, StudyGovernance
+
+    context = _prepare_participant_api_activity_response_context('api-privacy-controller-exception')
+    with SessionLocal() as db:
+        governance = db.scalar(select(StudyGovernance).where(StudyGovernance.study_id == context['study_id']))
+        assert governance is not None
+        governance.deletion_retention_exception = 'Statutory retention exception recorded by the controller.'
+        db.commit()
+
+    with client:
+        response = client.post(
+            '/api/v1/participant/privacy/deletion-requests',
+            json={'mode_preference': 'delete', 'scope': 'account', 'confirmed': True},
+            headers={'Authorization': f"Bearer {context['api_token']}", 'Idempotency-Key': 'deletion-exception-1234'},
+            follow_redirects=False,
+        )
+        assert response.status_code == 202
+        assert response.json()['status'] == 'requires_controller_review'
+
+    with SessionLocal() as db:
+        assert db.get(Participant, context['participant_id']) is not None
+        request_row = db.get(ParticipantPrivacyRequest, response.json()['request_id'])
+        assert request_row is not None
+        assert request_row.status == 'requires_controller_review'
+        assert request_row.retriable is False
+        assert 'controller_documented_retention_exception' in request_row.retention_exceptions_json
+
+
+def test_participant_privacy_api_rejects_unnecessary_reason_text_and_unsupported_anonymisation_choice():
+    context = _prepare_participant_api_activity_response_context('api-privacy-minimisation')
+    with client:
+        withdrawal = client.post(
+            '/api/v1/participant/privacy/withdrawal-requests',
+            json={'confirmed': True, 'reason': 'Do not retain this text.'},
+            headers={'Authorization': f"Bearer {context['api_token']}", 'Idempotency-Key': 'withdrawal-minimise-1234'},
+        )
+        assert withdrawal.status_code == 422
+        deletion = client.post(
+            '/api/v1/participant/privacy/deletion-requests',
+            json={'confirmed': True, 'mode_preference': 'anonymise'},
+            headers={'Authorization': f"Bearer {context['api_token']}", 'Idempotency-Key': 'delete-minimise-1234'},
+        )
+        assert deletion.status_code == 422
+
+
+def test_outbox_retention_is_explicit_and_does_not_rely_on_recipient_matching():
+    from datetime import timedelta
+    from app.models import OutboxEmail
+    from app.services import purge_expired_outbox
+
+    context = _prepare_participant_api_activity_response_context('outbox-retention')
+    with SessionLocal() as db:
+        linked = db.scalar(select(OutboxEmail).where(OutboxEmail.participant_id == context['participant_id']))
+        assert linked is not None
+        assert linked.study_id == context['study_id']
+        assert linked.retention_expires_at > linked.created_at
+        expired = OutboxEmail(
+            organisation_id=context['organisation_id'],
+            recipient='expired@example.org',
+            subject='Expired',
+            body='No participant link needed for expiry.',
+            retention_expires_at=now() - timedelta(seconds=1),
+        )
+        db.add(expired)
+        db.flush()
+        expired_id = expired.id
+        assert purge_expired_outbox(db) >= 1
+        db.commit()
+        assert db.get(OutboxEmail, expired_id) is None

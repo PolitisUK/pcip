@@ -5,8 +5,8 @@ void main() {
   test(
     'participant legal documents are versioned and independently available',
     () {
-      expect(legalPackVersion, '1.0');
-      expect(legalPackEffectiveDate, '15 August 2026');
+      expect(legalPackVersion, '1.1');
+      expect(legalPackEffectiveDate, '18 August 2026');
       expect(
         participantLegalDocuments.map((document) => document.id),
         containsAll([

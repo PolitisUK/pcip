@@ -114,6 +114,7 @@ def study_launch_readiness(governance: StudyGovernance | None) -> LaunchReadines
         "data categories": governance.data_categories,
         "Article 6 lawful basis": governance.article_6_lawful_basis,
         "retention approach": governance.retention_description,
+        "withdrawal/deletion retention exception position": governance.deletion_retention_exception,
         "security considerations": governance.security_considerations,
     }
     missing.extend(label for label, value in required_text.items() if not value.strip())

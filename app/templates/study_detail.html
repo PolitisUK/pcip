@@ -104,6 +104,7 @@
           <div class="field"><label>Article 9 condition, if applicable</label><input name="article_9_condition" value="{{ governance.article_9_condition if governance else '' }}"></div>
         </div>
         <div class="field"><label>Controller-approved retention approach</label><textarea name="retention_description" required>{{ governance.retention_description if governance else '' }}</textarea><small class="muted">State the study-specific approach. Do not rely on an unapproved platform default.</small></div>
+        <div class="field"><label>Withdrawal/deletion retention exception position</label><textarea name="deletion_retention_exception" required>{{ governance.deletion_retention_exception if governance else '' }}</textarea><small class="muted">State “None” or identify only a specific lawful retention or research exemption, its category and period. This is a controller decision.</small></div>
         <div class="field"><label>Security considerations</label><textarea name="security_considerations" required>{{ governance.security_considerations if governance else '' }}</textarea></div>
         <fieldset class="field"><legend>Participant information and safeguards</legend>
           <label class="check"><input type="checkbox" name="participation_consent_configured" value="true" {% if governance and governance.participation_consent_configured %}checked{% endif %}> Research participation consent is configured</label>
