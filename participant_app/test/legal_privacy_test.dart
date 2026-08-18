@@ -41,4 +41,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Taking part through Citizen Centric'), findsOneWidget);
   });
+
+  testWidgets('privacy choices distinguish withdrawal, study deletion and account deletion',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PrivacyChoices(
+          api: Api(Uri.parse('https://citizencentric.co.uk'), 'synthetic-token'),
+          onSessionEnded: () async {},
+        ),
+      ),
+    );
+
+    expect(find.text('Withdraw from this study'), findsOneWidget);
+    expect(find.text('Withdraw and delete my data'), findsOneWidget);
+    expect(find.text('Delete my Citizen Centric account'), findsOneWidget);
+  });
 }

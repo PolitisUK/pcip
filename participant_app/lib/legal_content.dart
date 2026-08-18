@@ -24,8 +24,8 @@ class LegalSection {
   final List<String> paragraphs;
 }
 
-const legalPackVersion = '1.0';
-const legalPackEffectiveDate = '15 August 2026';
+const legalPackVersion = '1.1';
+const legalPackEffectiveDate = '18 August 2026';
 const legalContactEmail = 'info@politisconsulting.co.uk';
 const legalCompanyName = 'Politis Ltd';
 const legalCompanyNumber = '13661766';
@@ -45,7 +45,7 @@ const participantInformationDocument = LegalDocument(
       'You can provide text, messages, photographs, documents or audio only when the relevant study asks for them and you choose to use those features.',
     ]),
     LegalSection('Your choices', [
-      'You can ask to withdraw from a study or request deletion of your data. They are different requests. The study information and privacy information explain how the research organisation handles records that may already have been anonymised or cannot be linked back to you.',
+      'You can withdraw from this study, withdraw and delete identifiable active study data, or delete your Citizen Centric account for this organisation. These are different actions. Information that has already been irreversibly anonymised or aggregated cannot be linked back to you; pseudonymised information remains personal data.',
     ]),
   ],
 );
@@ -81,11 +81,12 @@ const privacyNoticeDocument = LegalDocument(
       'Politis Ltd is registered in England and Wales. Registered office: The Old Courthouse, Orsett Road, Grays, Essex, England, RM17 5DD. Company number 13661766. ICO registration reference ZB738312.',
     ]),
     LegalSection('Keeping information', [
-      'Information is kept only for as long as necessary for its purpose. Study Data follows the controller-approved retention period documented for the study. Where Politis Ltd acts as processor, it follows the controller’s documented retention and deletion instructions, subject to legal obligations.',
+      'Information is kept only for as long as necessary for its purpose. Study Data follows the controller-approved retention period documented for the study. Where Politis Ltd acts as processor, it follows documented retention and deletion instructions, subject to lawful legal, security or accountability exceptions.',
+      'When deletion is confirmed, identifiable active study data is removed from active systems where technically and lawfully possible. Protected backup copies expire under the applicable backup schedule and are not used for ordinary research access.',
       'We do not use a single arbitrary retention period for every study.',
     ]),
     LegalSection('Your rights and requests', [
-      'You can use the app to ask to withdraw from a study or request deletion of your data. These requests are sent to the server for handling; they are not a local-only action. You can also contact the research organisation named in your study information or Politis Ltd at info@politisconsulting.co.uk.',
+      'You can use the app to withdraw from a study, withdraw and delete active study data, or delete your Citizen Centric account for this organisation. These actions are sent to the server; they are not local-only actions. The app will not say deletion is complete until the service confirms active-system deletion.',
     ]),
     LegalSection('Where information is processed', [
       'The approved platform policy is to host and process personal data in the UK and/or EU/EEA. Your study information should identify any study-specific arrangements that apply.',
@@ -177,7 +178,7 @@ const dataRightsDocument = LegalDocument(
   summary: 'How to ask for help with your information.',
   sections: [
     LegalSection('Requests in the app', [
-      'The Privacy choices area lets you ask to withdraw from a study or request deletion. A deletion request is not the same as an immediate deletion, and the app will not promise that it has already been completed.',
+      'The Privacy choices area lets you withdraw from a study, withdraw and delete active study data, or delete your Citizen Centric account for this organisation. A deletion request can take a short time and the app will not promise completion until the service confirms it.',
     ]),
     LegalSection('Other requests', [
       'For access, correction or other data-protection requests, contact the research organisation named in your study information. You can also contact Politis Ltd at info@politisconsulting.co.uk about the Citizen Centric service.',

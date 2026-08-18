@@ -1,9 +1,9 @@
 """Versioned catalogue of the approved Citizen Centric legal sources.
 
 The legal centre is source-backed.  The Markdown files in
-``legal_sources/canonical`` are faithful text extractions of the approved
-Legal Pack v1.0 documents.  Editorial production notes and incomplete fields
-are omitted from public rendering rather than shown to users.
+``legal_sources/canonical`` preserves the approved Legal Pack v1.0 sources
+and controlled successor documents. Editorial production notes and incomplete
+fields are omitted from public rendering rather than shown to users.
 """
 
 import re
@@ -38,6 +38,8 @@ class LegalDocument:
     audience: str
     publication_status: str
     source_file: str
+    version: str = LEGAL_VERSION
+    effective_date: str = LEGAL_EFFECTIVE_DATE
     sections: tuple[LegalSection, ...] = ()
 
     @property
@@ -96,16 +98,16 @@ def _sections_from_markdown(filename: str) -> tuple[LegalSection, ...]:
     return tuple(sections)
 
 
-def _source_document(*, document_id: str, title: str, summary: str, filename: str, audience: str) -> LegalDocument:
+def _source_document(*, document_id: str, title: str, summary: str, filename: str, audience: str, version: str = LEGAL_VERSION, effective_date: str = LEGAL_EFFECTIVE_DATE) -> LegalDocument:
     return LegalDocument(
         document_id=document_id, title=title, summary=summary, audience=audience,
-        publication_status="published", source_file=f"app/legal_sources/{filename}",
+        publication_status="published", source_file=f"app/legal_sources/{filename}", version=version, effective_date=effective_date,
         sections=_sections_from_markdown(filename),
     )
 
 
 LEGAL_DOCUMENTS = {
-    "privacy": _source_document(document_id="privacy", title="Privacy Notice", summary="How Citizen Centric handles personal data.", filename="canonical/privacy_notice_v1.md", audience="public and participant"),
+    "privacy": _source_document(document_id="privacy", title="Privacy Notice", summary="How Citizen Centric handles personal data.", filename="canonical/privacy_notice_v1_1.md", audience="public and participant", version="1.1", effective_date="18 August 2026"),
     "terms": _source_document(document_id="terms", title="Terms of Use", summary="Terms for participant and public use of Citizen Centric.", filename="canonical/terms_of_use_v1.md", audience="public and participant"),
     "cookies": _source_document(document_id="cookies", title="Cookie and Similar Technologies Policy", summary="How cookies, app storage and similar technologies are used.", filename="canonical/cookie_policy_v1.md", audience="public and participant"),
     "accessibility": _source_document(document_id="accessibility", title="Accessibility Statement", summary="Our current approach to accessible use of Citizen Centric.", filename="canonical/accessibility_statement_v1.md", audience="public and participant"),
@@ -115,7 +117,7 @@ LEGAL_DOCUMENTS = {
 
 CUSTOMER_LEGAL_DOCUMENTS = {
     "saas-terms": _source_document(document_id="saas-terms", title="Organisation SaaS Terms Agreement", summary="Customer agreement template and contractual terms.", filename="canonical/organisation_saas_terms_v1.md", audience="customer"),
-    "dpa": _source_document(document_id="dpa", title="Data Processing Agreement", summary="UK GDPR Article 28 schedule for Citizen Centric customers.", filename="canonical/dpa_article_28_v1.md", audience="customer"),
+    "dpa": _source_document(document_id="dpa", title="Data Processing Agreement", summary="UK GDPR Article 28 schedule for Citizen Centric customers.", filename="canonical/dpa_article_28_v1_1.md", audience="customer", version="1.1", effective_date="18 August 2026"),
     "subprocessors": _source_document(document_id="subprocessors", title="Subprocessor Schedule", summary="Customer-facing schedule of Citizen Centric service providers.", filename="canonical/subprocessor_schedule_v1.md", audience="customer"),
     "ai-services": _source_document(document_id="ai-services", title="AI Services Schedule", summary="Customer contractual schedule for approved AI-assisted services.", filename="canonical/ai_services_schedule_v1.md", audience="customer"),
 }

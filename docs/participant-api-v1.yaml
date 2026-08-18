@@ -417,7 +417,7 @@ paths:
   /api/v1/participant/privacy/withdrawal-requests:
     post:
       tags: [Privacy]
-      summary: Submit consent withdrawal request.
+      summary: Confirm withdrawal from the current study and immediately revoke study access.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -428,7 +428,7 @@ paths:
               $ref: '#/components/schemas/WithdrawalRequest'
       responses:
         '202':
-          description: Withdrawal request accepted.
+          description: Withdrawal completed and participant study access revoked.
           content:
             application/json:
               schema:
@@ -450,7 +450,7 @@ paths:
   /api/v1/participant/privacy/deletion-requests:
     post:
       tags: [Privacy]
-      summary: Submit deletion or anonymisation request.
+      summary: Confirm withdrawal plus active-system deletion for the current study or organisation-scoped participant account.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -461,7 +461,7 @@ paths:
               $ref: '#/components/schemas/DeletionRequest'
       responses:
         '202':
-          description: Deletion request accepted.
+          description: Deletion lifecycle started; completion is reported only after active-system deletion succeeds.
           content:
             application/json:
               schema:
@@ -1178,7 +1178,7 @@ components:
           enum: [withdrawal, deletion]
         status:
           type: string
-          enum: [received]
+          enum: [received, in_progress, completed, failed_retrying, requires_controller_review]
         submitted_at:
           type: string
           format: date-time
@@ -1188,6 +1188,7 @@ components:
     WithdrawalRequest:
       type: object
       additionalProperties: false
+      required: [confirmed]
       properties:
         scope:
           type: string
@@ -1197,34 +1198,33 @@ components:
           type: integer
           minimum: 1
           nullable: true
-        reason:
-          type: string
-          maxLength: 2000
-          nullable: true
-        contact_preference:
-          type: string
-          enum: [email, sms, phone, none]
-          nullable: true
+        confirmed:
+          type: boolean
+          enum: [true]
     DeletionRequest:
       type: object
       additionalProperties: false
+      required: [confirmed]
       properties:
         mode_preference:
           type: string
-          enum: [auto, delete, anonymise]
-          default: auto
-        reason:
-          type: string
-          maxLength: 2000
-          nullable: true
+          enum: [delete]
+          default: delete
         study_id:
           type: integer
           minimum: 1
           nullable: true
+        scope:
+          type: string
+          enum: [study, account]
+          default: study
+        confirmed:
+          type: boolean
+          enum: [true]
 x-contract-notes:
-  implementation_status: proposed_only
+  implementation_status: implemented
   notes:
-    - This contract is not yet implemented in FastAPI routes.
+    - Privacy actions are participant-authenticated and scoped server-side; request bodies cannot select another participant.
     - Participant identity, ownership and scope are inferred exclusively server-side.
     - Invitation tokens are accepted only at session exchange and never returned.
     - Evidence download remains blocked unless scan status is exactly clean.

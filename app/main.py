@@ -35,6 +35,7 @@ from .models import (
     Participant,
     ParticipantInvitation,
     ParticipantMessage,
+    ParticipantPrivacyRequest,
     ParticipantStatus,
     PasswordReset,
     Project,
@@ -69,13 +70,12 @@ from .research_api import (
 )
 from .theme_explorer import create_theme, parse_suggestion_ids
 from .storage import storage
+from .privacy_lifecycle import process_deletion_request, revoke_participant_access
 from .scanner import scan_file
 from .entra import oauth, configured as entra_configured
 from .observability import configure_observability
 from .legal_content import (
     CONTACT_EMAIL,
-    LEGAL_EFFECTIVE_DATE,
-    LEGAL_VERSION,
     LegalDocument,
     LegalSection,
     CUSTOMER_LEGAL_DOCUMENTS,
@@ -1136,30 +1136,22 @@ def apply_participant_withdrawal(
     participant_row: Participant,
     scope: str,
 ):
-    enrolment_query = select(StudyEnrolment).where(
-        StudyEnrolment.organisation_id == invitation.organisation_id,
-        StudyEnrolment.participant_id == participant_row.id,
+    study_id = invitation.study_id if scope == "study" else None
+    revoke_participant_access(
+        db,
+        organisation_id=invitation.organisation_id,
+        participant_id=participant_row.id,
+        study_id=study_id,
     )
-    invitation_query = select(ParticipantInvitation.id).where(
-        ParticipantInvitation.organisation_id == invitation.organisation_id,
-        ParticipantInvitation.participant_id == participant_row.id,
-    )
-    if scope == "study":
-        enrolment_query = enrolment_query.where(StudyEnrolment.study_id == invitation.study_id)
-        invitation_query = invitation_query.where(ParticipantInvitation.study_id == invitation.study_id)
-    enrolments = list(db.scalars(enrolment_query))
-    for enrolment in enrolments:
-        enrolment.status = "withdrawn"
-    invitation_ids = list(db.scalars(invitation_query))
-    if invitation_ids:
-        db.execute(
-            update(PublicAuthSession)
-            .where(
-                PublicAuthSession.participant_invitation_id.in_(invitation_ids),
-                PublicAuthSession.revoked_at.is_(None),
+    enrolments = list(
+        db.scalars(
+            select(StudyEnrolment).where(
+                StudyEnrolment.organisation_id == invitation.organisation_id,
+                StudyEnrolment.participant_id == participant_row.id,
+                *([StudyEnrolment.study_id == study_id] if study_id is not None else []),
             )
-            .values(revoked_at=now())
         )
+    )
     if scope == "all":
         participant_row.consent_status = ConsentStatus.withdrawn.value
         participant_row.status = ParticipantStatus.withdrawn.value
@@ -1427,8 +1419,8 @@ def public_legal_page(request: Request):
         request,
         "legal_document.html",
         document=document,
-        legal_version=LEGAL_VERSION,
-        legal_effective_date=LEGAL_EFFECTIVE_DATE,
+        legal_version=document.version,
+        legal_effective_date=document.effective_date,
     )
 
 
@@ -1461,8 +1453,8 @@ def public_support_page(request: Request):
         request,
         "legal_document.html",
         document=document,
-        legal_version=LEGAL_VERSION,
-        legal_effective_date=LEGAL_EFFECTIVE_DATE,
+        legal_version=document.version,
+        legal_effective_date=document.effective_date,
     )
 
 
@@ -1491,8 +1483,8 @@ def customer_agreement(
         "customer_legal_document.html",
         user=u,
         document=document,
-        legal_version=LEGAL_VERSION,
-        legal_effective_date=LEGAL_EFFECTIVE_DATE,
+        legal_version=document.version,
+        legal_effective_date=document.effective_date,
     )
 
 
@@ -2160,6 +2152,7 @@ def update_study_governance(
     consent_text_version: str = Form(""),
     consent_text_effective_date: str = Form(""),
     retention_description: str = Form(""),
+    deletion_retention_exception: str = Form(""),
     withdrawal_process_defined: bool = Form(False),
     deletion_handling_defined: bool = Form(False),
     features_assessed: bool = Form(False),
@@ -2197,6 +2190,7 @@ def update_study_governance(
         "article_6_lawful_basis": article_6_lawful_basis,
         "article_9_condition": article_9_condition,
         "retention_description": retention_description,
+        "deletion_retention_exception": deletion_retention_exception,
         "security_considerations": security_considerations,
     }.items():
         setattr(governance, name, value.strip())
@@ -3322,23 +3316,34 @@ def participant_portal_sign_out(request: Request, csrf_ok: None = Depends(csrf_p
 @app.post("/participant-portal/privacy/deletion-request")
 def participant_portal_deletion_request(
     request: Request,
-    reason: str = Form("", max_length=2000),
+    confirmed: bool = Form(False),
     csrf_ok: None = Depends(csrf_protect),
     db: Session = Depends(get_db),
 ):
-    _session_row, inv, participant_row, _study_row, _enrolment = require_participant_portal_context(request, db)
-    audit_event = AuditEvent(
+    if not confirmed:
+        raise HTTPException(400, "Please confirm that you want to withdraw and delete your active study data.")
+    _session_row, inv, participant_row, study_row, _enrolment = require_participant_portal_context(request, db)
+    apply_participant_withdrawal(db, inv, participant_row, "study")
+    privacy_request = ParticipantPrivacyRequest(
         organisation_id=inv.organisation_id,
-        actor_user_id=None,
-        action="participant.deletion_requested",
-        entity_type="participant",
-        entity_id=str(participant_row.id),
-        detail=json.dumps({"mode_preference": "auto", "study_id": inv.study_id, "reason": reason.strip()}),
+        participant_id=participant_row.id,
+        study_id=study_row.id,
+        request_type="deletion",
+        scope="study",
+        status="received",
     )
-    db.add(audit_event)
+    db.add(privacy_request)
+    db.flush()
     db.commit()
-    set_flash(request, "success", "Your data deletion request was received. The research team will review it securely.")
-    return RedirectResponse("/participant-portal#privacy", 303)
+    completed = process_deletion_request(db, storage, privacy_request)
+    set_flash(
+        request,
+        "success",
+        "Your identifiable active study data has been deleted." if completed else "Your access has ended. Deletion is being safely retried and is not yet complete.",
+    )
+    response = RedirectResponse("/join-study", 303)
+    clear_public_auth_cookie(response)
+    return response
 
 
 def participant_self_export_payload(
@@ -3483,26 +3488,28 @@ def participant_portal_data_export(
 @app.post("/participant-portal/privacy/withdrawal-request")
 def participant_portal_withdrawal_request(
     request: Request,
-    reason: str = Form("", max_length=2000),
-    contact_preference: str = Form("none"),
+    confirmed: bool = Form(False),
     csrf_ok: None = Depends(csrf_protect),
     db: Session = Depends(get_db),
 ):
+    if not confirmed:
+        raise HTTPException(400, "Please confirm that you want to withdraw from this study.")
     _session_row, inv, participant_row, study_row, _enrolment = require_participant_portal_context(request, db)
-    if contact_preference not in COMMUNICATION_PREFERENCES:
-        raise HTTPException(400, "Choose a valid contact preference.")
-    apply_participant_withdrawal(db, inv, participant_row, "all")
-    audit(
-        db,
-        inv.organisation_id,
-        None,
-        "participant.withdrawal_requested",
-        "participant",
-        participant_row.id,
-        json.dumps({"scope": "all", "study_id": study_row.id, "contact_preference": contact_preference, "reason": reason.strip()}),
+    apply_participant_withdrawal(db, inv, participant_row, "study")
+    db.add(
+        ParticipantPrivacyRequest(
+            organisation_id=inv.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            request_type="withdrawal",
+            scope="study",
+            status="completed",
+            categories_json=json.dumps(["study_access", "participant_sessions", "invitations", "future_collection"]),
+            completed_at=now(),
+        )
     )
     db.commit()
-    set_flash(request, "success", "You have withdrawn from Citizen Centric research. The research team has been notified.")
+    set_flash(request, "success", "You have withdrawn from this study. You can no longer submit material for it.")
     response = RedirectResponse("/join-study", 303)
     clear_public_auth_cookie(response)
     return response
@@ -4734,24 +4741,19 @@ def participant_api_withdrawal_request(
     try:
         _record_participant_idempotency(db, invitation.id, "privacy_withdrawal", idempotency_key)
         apply_participant_withdrawal(db, invitation, participant_row, payload.scope)
-        audit_event = AuditEvent(
+        privacy_request = ParticipantPrivacyRequest(
             organisation_id=invitation.organisation_id,
-            actor_user_id=None,
-            action="participant.withdrawal_requested",
-            entity_type="participant",
-            entity_id=str(participant_row.id),
-            detail=json.dumps(
-                {
-                    "scope": payload.scope,
-                    "study_id": study_row.id,
-                    "contact_preference": payload.contact_preference,
-                    "reason": payload.reason or "",
-                }
-            ),
+            participant_id=participant_row.id,
+            study_id=study_row.id if payload.scope == "study" else None,
+            request_type="withdrawal",
+            scope=payload.scope,
+            status="completed",
+            categories_json=json.dumps(["study_access", "participant_sessions", "invitations", "future_collection"]),
+            completed_at=now(),
         )
-        db.add(audit_event)
+        db.add(privacy_request)
         db.flush()
-        request_id = int(audit_event.id)
+        request_id = int(privacy_request.id)
         db.commit()
     except HTTPException:
         db.rollback()
@@ -4767,9 +4769,9 @@ def participant_api_withdrawal_request(
     return PrivacyRequestAcknowledgement(
         request_id=request_id,
         request_type="withdrawal",
-        status="received",
+        status="completed",
         submitted_at=now(),
-        message="Withdrawal request received.",
+        message="You have withdrawn from this study. You can no longer submit material for it.",
     )
 
 
@@ -4782,29 +4784,31 @@ def participant_api_deletion_request(
     _content_type_ok: None = Depends(_require_json_content_type),
     db: Session = Depends(get_db),
 ):
-    invitation, participant_row, _study_row = _resolve_participant_api_study_scope(request, db, write_scope=True)
+    invitation, participant_row, study_row = _resolve_participant_api_study_scope(request, db, write_scope=True)
     if payload.study_id is not None and payload.study_id != invitation.study_id:
         raise HTTPException(403, "Requested study is outside participant scope.")
 
     try:
         _record_participant_idempotency(db, invitation.id, "privacy_deletion", idempotency_key)
-        audit_event = AuditEvent(
-            organisation_id=invitation.organisation_id,
-            actor_user_id=None,
-            action="participant.deletion_requested",
-            entity_type="participant",
-            entity_id=str(participant_row.id),
-            detail=json.dumps(
-                {
-                    "mode_preference": payload.mode_preference,
-                    "study_id": invitation.study_id,
-                    "reason": payload.reason or "",
-                }
-            ),
+        # Access revocation takes effect before deletion work, even when a
+        # storage provider must be retried later.
+        apply_participant_withdrawal(
+            db,
+            invitation,
+            participant_row,
+            "all" if payload.scope == "account" else "study",
         )
-        db.add(audit_event)
+        privacy_request = ParticipantPrivacyRequest(
+            organisation_id=invitation.organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id if payload.scope == "study" else None,
+            request_type="deletion",
+            scope=payload.scope,
+            status="received",
+        )
+        db.add(privacy_request)
         db.flush()
-        request_id = int(audit_event.id)
+        request_id = int(privacy_request.id)
         db.commit()
     except HTTPException:
         db.rollback()
@@ -4816,14 +4820,79 @@ def participant_api_deletion_request(
         db.rollback()
         raise
 
+    governance_study_ids = [study_row.id]
+    if payload.scope == "account":
+        governance_study_ids = list(
+            db.scalars(
+                select(StudyEnrolment.study_id).where(
+                    StudyEnrolment.organisation_id == invitation.organisation_id,
+                    StudyEnrolment.participant_id == participant_row.id,
+                )
+            )
+        )
+    governance_rows = list(
+        db.scalars(
+            select(StudyGovernance).where(
+                StudyGovernance.organisation_id == invitation.organisation_id,
+                StudyGovernance.study_id.in_(governance_study_ids),
+            )
+        )
+    )
+    controller_review_required = any(
+        item.deletion_retention_exception.strip().lower() not in {"", "none", "none."}
+        for item in governance_rows
+    )
+    if controller_review_required:
+        privacy_request.status = "requires_controller_review"
+        privacy_request.retention_exceptions_json = json.dumps(["controller_documented_retention_exception"])
+        db.commit()
+        deletion_completed = False
+    else:
+        deletion_completed = process_deletion_request(db, storage, privacy_request)
+    current = db.get(ParticipantPrivacyRequest, request_id)
     _cache_control_no_store(response)
     return PrivacyRequestAcknowledgement(
         request_id=request_id,
         request_type="deletion",
-        status="received",
+        status="completed" if deletion_completed else (current.status if current else "failed_retrying"),
         submitted_at=now(),
-        message="Deletion request received.",
+        message=(
+            "Your identifiable active study data has been deleted. Protected backups expire under the applicable retention schedule."
+            if deletion_completed
+            else (
+                "Your access has ended. The study controller must review a documented retention exception before deletion can be completed."
+                if current and current.status == "requires_controller_review"
+                else "Your access has ended. We are safely retrying deletion of active data; it is not yet marked complete."
+            )
+        ),
     )
+
+
+@app.post("/privacy/deletion-requests/{request_id}/retry")
+def retry_participant_deletion_request(
+    request_id: int,
+    u=Depends(roles("owner", "admin")),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    """Controlled retry for a failed live-system deletion; no raw data is logged."""
+    privacy_request = db.scalar(
+        select(ParticipantPrivacyRequest).where(
+            ParticipantPrivacyRequest.id == request_id,
+            ParticipantPrivacyRequest.organisation_id == u.organisation_id,
+            ParticipantPrivacyRequest.request_type == "deletion",
+        )
+    )
+    if not privacy_request:
+        raise HTTPException(404, "Deletion request not found.")
+    if privacy_request.status == "completed":
+        return {"request_id": request_id, "status": "completed"}
+    completed = process_deletion_request(db, storage, privacy_request)
+    refreshed = db.get(ParticipantPrivacyRequest, request_id)
+    return {
+        "request_id": request_id,
+        "status": "completed" if completed else (refreshed.status if refreshed else "failed_retrying"),
+    }
 
 @app.delete("/api/v1/participant/session", response_model=LogoutResponse)
 def participant_api_session_logout(

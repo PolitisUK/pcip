@@ -37,6 +37,8 @@ Internal researcher AI outputs are not participant-facing.
 
 Customer-specific study governance, including lawful basis, Article 9 condition, DPIA/ethics and retention, must be approved before launch.
 
+For participant deletion, active Azure database/storage records are removed through the Citizen Centric deletion lifecycle where applicable. Protected backup copies follow the relevant Azure and platform backup-retention controls; they are not used to circumvent an active deletion request. Azure AI/Search inputs or derived records that remain participant-linked are within the controller-instructed deletion review.
+
 3. Changes to subprocessors
 
 Politis Ltd may update this Schedule as the production architecture changes. Customers will be given reasonable advance notice of material additions or replacements where required by the DPA and will have the opportunity to raise a reasonable objection on data-protection grounds.

@@ -62,7 +62,9 @@ Ask to withdraw from the study using the study contact details or the withdrawal
 
 What happens if you withdraw: No further research data should be collected from you for the withdrawn study after the withdrawal takes effect, except where continued processing is required or permitted by law. Information that has already been irreversibly anonymised, aggregated or incorporated into completed analysis may no longer be capable of being linked back to you and may not be removable.
 
-Effect of withdrawal on access and existing submissions: [CLIENT INPUT REQUIRED: Explain what happens to study access, queued submissions, identifiable data already collected, and any retention required for research integrity, legal or regulatory reasons.]
+Effect of withdrawal on access and existing submissions: Once withdrawal takes effect, no further data is collected through Citizen Centric for this study, study access is revoked and queued material must not be sent. You can choose withdrawal alone or withdrawal plus deletion. If deletion is chosen, identifiable active Study Data is deleted subject only to a specifically documented lawful retention requirement or research exemption. Information that has already been genuinely anonymised or aggregated cannot be reversed or linked back to you; pseudonymised information remains personal data. Protected backup copies expire under the applicable controlled retention schedule.
+
+[CLIENT INPUT REQUIRED: Identify ONLY any study-specific lawful retention or research exemption that modifies the standard Citizen Centric withdrawal/deletion position. If none, state “None”.]
 
 6. Risks, Burdens and Safeguarding
 

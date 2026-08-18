@@ -198,6 +198,7 @@ class StudyGovernance(Base):
     consent_text_version: Mapped[str] = mapped_column(String(80), default="")
     consent_text_effective_date: Mapped[str] = mapped_column(String(30), default="")
     retention_description: Mapped[str] = mapped_column(Text, default="")
+    deletion_retention_exception: Mapped[str] = mapped_column(Text, default="")
     withdrawal_process_defined: Mapped[bool] = mapped_column(Boolean, default=False)
     deletion_handling_defined: Mapped[bool] = mapped_column(Boolean, default=False)
     features_assessed: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -407,6 +408,36 @@ class PublicAuthSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ParticipantPrivacyRequest(Base):
+    """Minimal lifecycle evidence for a participant withdrawal/deletion request.
+
+    ``participant_id`` is cleared after an account deletion so this record can
+    prove the request was completed without retaining a live identity link or
+    any participant content.  It intentionally has no free-text reason field.
+    """
+
+    __tablename__ = "participant_privacy_requests"
+    __table_args__ = (
+        Index("ix_participant_privacy_request_scope", "organisation_id", "study_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id"), nullable=True, index=True)
+    study_id: Mapped[int | None] = mapped_column(ForeignKey("studies.id"), nullable=True, index=True)
+    request_type: Mapped[str] = mapped_column(String(30), index=True)
+    scope: Mapped[str] = mapped_column(String(30), default="study")
+    status: Mapped[str] = mapped_column(String(40), default="received", index=True)
+    retriable: Mapped[bool] = mapped_column(Boolean, default=False)
+    categories_json: Mapped[str] = mapped_column(Text, default="[]")
+    retention_exceptions_json: Mapped[str] = mapped_column(Text, default="[]")
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_error_code: Mapped[str] = mapped_column(String(80), default="")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 Index(
