@@ -1,8 +1,7 @@
 """Scope new participant outbox email and set a short retention expiry."""
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision = "0016"
 down_revision = "0015"
@@ -34,8 +33,18 @@ def upgrade():
         )
     with op.batch_alter_table("outbox_emails") as batch:
         batch.alter_column("retention_expires_at", nullable=False)
-        batch.create_index("ix_outbox_emails_retention_expires_at", ["retention_expires_at"])
-        batch.create_index("ix_outbox_emails_participant_scope", ["organisation_id", "participant_id", "study_id"])
+    # Migration 0001 creates the current SQLAlchemy metadata in an empty
+    # database, so these indexes may already exist there.  Existing
+    # installations at 0015 need them created by this migration.
+    indexes = {index["name"] for index in sa.inspect(bind).get_indexes("outbox_emails")}
+    if "ix_outbox_emails_retention_expires_at" not in indexes:
+        op.create_index("ix_outbox_emails_retention_expires_at", "outbox_emails", ["retention_expires_at"])
+    if "ix_outbox_emails_participant_scope" not in indexes:
+        op.create_index(
+            "ix_outbox_emails_participant_scope",
+            "outbox_emails",
+            ["organisation_id", "participant_id", "study_id"],
+        )
 
 
 def downgrade():

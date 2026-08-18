@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -13,6 +15,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from .db import Base
 
 
@@ -539,6 +542,15 @@ class AuditEvent(Base):
 
 class OutboxEmail(Base):
     __tablename__ = "outbox_emails"
+    __table_args__ = (
+        Index("ix_outbox_emails_retention_expires_at", "retention_expires_at"),
+        Index(
+            "ix_outbox_emails_participant_scope",
+            "organisation_id",
+            "participant_id",
+            "study_id",
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
     participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id"), nullable=True)
