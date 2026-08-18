@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from sqlalchemy import (
     Boolean,
@@ -18,6 +18,11 @@ from .db import Base
 
 def utcnow():
     return datetime.now(timezone.utc)
+
+
+def default_outbox_retention_expiry():
+    """Safe default for direct model construction; queue_email uses settings."""
+    return utcnow() + timedelta(days=30)
 
 
 class Role(str, Enum):
@@ -425,8 +430,8 @@ class ParticipantPrivacyRequest(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
-    participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id"), nullable=True, index=True)
-    study_id: Mapped[int | None] = mapped_column(ForeignKey("studies.id"), nullable=True, index=True)
+    participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id"), nullable=True)
+    study_id: Mapped[int | None] = mapped_column(ForeignKey("studies.id"), nullable=True)
     request_type: Mapped[str] = mapped_column(String(30), index=True)
     scope: Mapped[str] = mapped_column(String(30), default="study")
     status: Mapped[str] = mapped_column(String(40), default="received", index=True)
@@ -536,12 +541,15 @@ class OutboxEmail(Base):
     __tablename__ = "outbox_emails"
     id: Mapped[int] = mapped_column(primary_key=True)
     organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id"), nullable=True)
+    study_id: Mapped[int | None] = mapped_column(ForeignKey("studies.id"), nullable=True)
     recipient: Mapped[str] = mapped_column(String(255))
     subject: Mapped[str] = mapped_column(String(255))
     body: Mapped[str] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    retention_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=default_outbox_retention_expiry)
 
 
 class StudyAccess(Base):

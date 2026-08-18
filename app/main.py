@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
+import asyncio
 import re
 import logging
 import time
@@ -54,7 +55,7 @@ from .models import (
     User,
 )
 from .security import hash_password, verify_password, new_token, token_hash, encode_session, decode_session
-from .services import audit, queue_email
+from .services import audit, purge_expired_outbox, queue_email
 from .research_intelligence import (
     create_confidence_assessment,
     review_confidence_assessment,
@@ -174,7 +175,15 @@ configure_observability(settings)
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     startup()
-    yield
+    retention_task = asyncio.create_task(_outbox_retention_worker())
+    try:
+        yield
+    finally:
+        retention_task.cancel()
+        try:
+            await retention_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
@@ -246,6 +255,18 @@ PUBLIC_SCOPE_PARTICIPANT_PORTAL = "participant_portal"
 def now(): return datetime.now(timezone.utc)
 def naive_now(): return now().replace(tzinfo=None)
 def unexpired(v): return bool(v and v.replace(tzinfo=None) > naive_now())
+
+
+async def _outbox_retention_worker():
+    """Apply the short mail-retention policy while the application is live."""
+    while True:
+        await asyncio.sleep(60 * 60)
+        try:
+            with SessionLocal() as db:
+                purge_expired_outbox(db)
+                db.commit()
+        except Exception:
+            logger.exception("outbox_retention_cleanup_failed")
 
 
 
@@ -1353,6 +1374,8 @@ def startup():
             if "blob_uri" not in evidence_cols: c.execute(text("ALTER TABLE evidence_files ADD COLUMN blob_uri TEXT DEFAULT ''"))
             if "scan_completed_at" not in evidence_cols: c.execute(text("ALTER TABLE evidence_files ADD COLUMN scan_completed_at DATETIME"))
     with SessionLocal() as db:
+        purge_expired_outbox(db)
+        db.commit()
         if settings.seed_demo_data and not db.scalar(select(func.count(User.id))):
             org=Organisation(name="Politis Demo Council",slug="politis-demo"); db.add(org); db.flush()
             u=User(organisation_id=org.id,name="Platform Owner",email="admin@politis.local",password_hash=hash_password("PolitisDemo!"),role="owner"); db.add(u); db.flush()
@@ -2851,7 +2874,15 @@ def send_participant_invite(db,u,s,p):
         invited_by_id=u.id,
         expires_at=now() + timedelta(days=30),
     )
-    queue_email(db,u.organisation_id,p.email,f"Invitation: {s.title}",f"Join the study: {settings.base_url}/join-study?token={raw}"); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title); db.commit()
+    queue_email(
+        db,
+        u.organisation_id,
+        p.email,
+        f"Invitation: {s.title}",
+        f"Join the study: {settings.base_url}/join-study?token={raw}",
+        participant_id=p.id,
+        study_id=s.id,
+    ); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title); db.commit()
 @app.post("/studies/{study_id}/invite/{participant_id}")
 def invite_participant(study_id:int,participant_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); p=participant(db,participant_id,u.organisation_id)

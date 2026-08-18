@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     privacy_retention_days: int | None = None
     privacy_retention_statuses: str = "withdrawn,completed"
     privacy_retention_action: str = "anonymise"
+    # Operational email can contain invitation links and must have a short,
+    # technical retention period independent of study-data retention.
+    outbox_email_retention_days: int = 30
     research_intelligence_enabled: bool = False
     research_intelligence_ai_coding_enabled: bool = False
     research_intelligence_semantic_search_enabled: bool = False

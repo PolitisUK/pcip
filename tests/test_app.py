@@ -7680,7 +7680,7 @@ def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_on
 
 
 def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_only_minimised_lifecycle_evidence():
-    from app.models import ActivityResponse, EvidenceFile, Participant, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment
+    from app.models import ActivityResponse, EvidenceFile, OutboxEmail, Participant, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment
 
     context = _prepare_participant_api_activity_response_context('api-privacy-deletion')
 
@@ -7693,6 +7693,9 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         db.add(response_row); db.flush()
         db.add(ParticipantMessage(organisation_id=context['organisation_id'], study_id=context['study_id'], participant_id=context['participant_id'], sender_type='participant', body='remove me'))
         db.add(EvidenceFile(organisation_id=context['organisation_id'], study_id=context['study_id'], activity_id=context['activity_id'], participant_id=context['participant_id'], response_id=response_row.id, original_name='remove.txt', stored_name='delete-test.txt', content_type='text/plain'))
+        # Legacy rows have no verified participant link and must not be deleted
+        # by recipient matching, even where their content might be sensitive.
+        db.add(OutboxEmail(organisation_id=context['organisation_id'], recipient='legacy@example.org', subject='Legacy', body='unlinked legacy email'))
         db.commit()
 
     with client:
@@ -7735,6 +7738,8 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         assert db.scalar(select(StudyEnrolment).where(StudyEnrolment.participant_id == context['participant_id'])) is None
         assert db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == context['participant_id'])) is None
         assert db.scalar(select(PublicAuthSession).where(PublicAuthSession.participant_invitation_id == context['invitation_id'])) is None
+        assert db.scalar(select(OutboxEmail).where(OutboxEmail.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(OutboxEmail).where(OutboxEmail.recipient == 'legacy@example.org')) is not None
         request_row = db.get(ParticipantPrivacyRequest, body['request_id'])
         assert request_row is not None
         assert request_row.status == 'completed'
@@ -7821,3 +7826,29 @@ def test_participant_privacy_api_rejects_unnecessary_reason_text_and_unsupported
             headers={'Authorization': f"Bearer {context['api_token']}", 'Idempotency-Key': 'delete-minimise-1234'},
         )
         assert deletion.status_code == 422
+
+
+def test_outbox_retention_is_explicit_and_does_not_rely_on_recipient_matching():
+    from datetime import timedelta
+    from app.models import OutboxEmail
+    from app.services import purge_expired_outbox
+
+    context = _prepare_participant_api_activity_response_context('outbox-retention')
+    with SessionLocal() as db:
+        linked = db.scalar(select(OutboxEmail).where(OutboxEmail.participant_id == context['participant_id']))
+        assert linked is not None
+        assert linked.study_id == context['study_id']
+        assert linked.retention_expires_at > linked.created_at
+        expired = OutboxEmail(
+            organisation_id=context['organisation_id'],
+            recipient='expired@example.org',
+            subject='Expired',
+            body='No participant link needed for expiry.',
+            retention_expires_at=now() - timedelta(seconds=1),
+        )
+        db.add(expired)
+        db.flush()
+        expired_id = expired.id
+        assert purge_expired_outbox(db) >= 1
+        db.commit()
+        assert db.get(OutboxEmail, expired_id) is None

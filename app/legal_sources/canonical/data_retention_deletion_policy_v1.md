@@ -12,6 +12,10 @@ On a confirmed participant withdrawal plus deletion request, Citizen Centric fir
 
 Storage or database failures are retained as `FAILED_RETRYING` with a retriable flag and minimised error metadata. A controlled retry is idempotent. Completion records only deletion categories and timestamps; they do not preserve participant content or free-text reasons.
 
+## Operational email
+
+New participant invitation emails are prospectively linked to the participant and study. They have a 30-day technical retention expiry and are removed by the deletion lifecycle when that verified link is in scope. Historic outbox rows do not have that link and can contain recipient addresses, invitation links/tokens, study context or message content; they are never deleted by recipient matching. On adoption, existing unlinked rows receive a 30-day forward expiry rather than being bulk-deleted. Their expiry control applies without creating a false historical participant link.
+
 ## Retention exceptions
 
 An exception requires a documented controller lawful basis or a specific legal/security/accountability purpose, the minimum necessary data, restricted access, a defined retention period, and removal from ordinary research use. Submitted research content is not retained merely “for audit”.
@@ -22,7 +26,7 @@ Irreversibly anonymised aggregate information that cannot reasonably be linked b
 
 ## Backups and disaster recovery
 
-Deletion applies to active systems. Protected backups expire through the approved backup-retention cycle and are not used for ordinary research access. If a backup containing deleted data is restored for genuine disaster recovery, outstanding and completed deletion controls must be reapplied before normal service resumes where technically feasible. The deployment-specific maximum backup retention period must be recorded in the production operations register; this policy does not invent one.
+Deletion applies to active systems. The current production Azure configuration retains PostgreSQL point-in-time recovery copies for 14 days and Blob soft-delete/container soft-delete copies for 14 days; blob versioning and App Service backup are not enabled. Protected backups are not used for ordinary research access. If a backup containing deleted data is restored for genuine disaster recovery, outstanding and completed deletion controls must be reapplied before normal service resumes where technically feasible.
 
 ## Controller instructions
 

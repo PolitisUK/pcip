@@ -23,6 +23,7 @@ from .models import (
     ParticipantInvitation,
     ParticipantMessage,
     ParticipantPrivacyRequest,
+    OutboxEmail,
     PublicAuthSession,
     ResearchAnalysisSuggestion,
     ResearchTheme,
@@ -43,6 +44,7 @@ ACTIVE_DELETION_CATEGORIES = (
     "invitations",
     "participant_sessions",
     "participant_profile",
+    "prospectively_scoped_outbox_emails",
 )
 
 
@@ -217,6 +219,15 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
         for row in response_rows:
             db.delete(row)
         for row in db.scalars(message_query):
+            db.delete(row)
+
+        scoped_outbox_query = select(OutboxEmail).where(
+            OutboxEmail.organisation_id == organisation_id,
+            OutboxEmail.participant_id == participant_id,
+        )
+        if study_id is not None:
+            scoped_outbox_query = scoped_outbox_query.where(OutboxEmail.study_id == study_id)
+        for row in db.scalars(scoped_outbox_query):
             db.delete(row)
 
         invitations = list(db.scalars(invitation_query))

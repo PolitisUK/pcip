@@ -82,7 +82,7 @@ const privacyNoticeDocument = LegalDocument(
     ]),
     LegalSection('Keeping information', [
       'Information is kept only for as long as necessary for its purpose. Study Data follows the controller-approved retention period documented for the study. Where Politis Ltd acts as processor, it follows documented retention and deletion instructions, subject to lawful legal, security or accountability exceptions.',
-      'When deletion is confirmed, identifiable active study data is removed from active systems where technically and lawfully possible. Protected backup copies expire under the applicable backup schedule and are not used for ordinary research access.',
+      'When deletion is confirmed, identifiable active study data is removed from active systems where technically and lawfully possible. Protected production backup copies expire after up to 14 days and are not used for ordinary research access.',
       'We do not use a single arbitrary retention period for every study.',
     ]),
     LegalSection('Your rights and requests', [
