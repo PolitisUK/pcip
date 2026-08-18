@@ -1,6 +1,6 @@
 # Participant privacy v1.1 approval pack
 
-**Status: OWNER / LEGAL APPROVAL REQUIRED — not approved by this document.**
+**Status: APPROVED — Politis Ltd owner legal/privacy approval recorded for PR #77 on 18 August 2026.**
 
 This pack is a plain-English adoption record for the controlled Privacy Notice
 v1.1, Data Processing Agreement v1.1 and Data Retention and Deletion Policy
@@ -74,7 +74,7 @@ deletion guidance](https://developer.apple.com/support/offering-account-deletion
 
 ## Approval statement
 
-**Politis Ltd approval required:**
+**Politis Ltd approval recorded:**
 
 > I approve adoption of the Citizen Centric Privacy Notice v1.1 (effective 18
 > August 2026), Data Processing Agreement v1.1 (effective 18 August 2026) and
@@ -84,6 +84,6 @@ deletion guidance](https://developer.apple.com/support/offering-account-deletion
 
 | Approval role | Name | Signature / approval reference | Date |
 | --- | --- | --- | --- |
-| Politis Ltd authorised approver | _Required_ | _Required_ | _Required_ |
-| Legal reviewer | _Required_ | _Required_ | _Required_ |
+| Politis Ltd authorised approver | Owner-supplied Politis Ltd approval | PR #77 owner legal/privacy approval | 18 August 2026 |
+| Legal reviewer | No separate identity supplied | The owner approval records the legal/privacy position; no separate reviewer is asserted | 18 August 2026 |
 | Data protection / controller representative | _Required where applicable_ | _Required_ | _Required_ |
