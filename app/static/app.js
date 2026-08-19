@@ -30,3 +30,23 @@ document.addEventListener("submit", function (event) {
   }
   submitter.textContent = "Working...";
 });
+
+function restoreWorkingControls() {
+  document.querySelectorAll("button.is-loading, input.is-loading, .btn.is-loading").forEach(function (control) {
+    control.classList.remove("is-loading");
+    control.removeAttribute("aria-busy");
+    control.disabled = false;
+    if (control.dataset.loadingLabel) {
+      control.textContent = control.dataset.loadingLabel;
+    }
+  });
+}
+
+// Browsers may restore this DOM from their back/forward cache after a form
+// navigation. Restore transient UI state before a researcher can be trapped
+// behind a stale disabled “Working…” action.
+window.addEventListener("pageshow", restoreWorkingControls);
+window.addEventListener("pagehide", function () {
+  // Keep bfcache snapshots free of client-only submission state.
+  restoreWorkingControls();
+});

@@ -1,0 +1,8 @@
+<nav class="workspace-nav" aria-label="Research workspace">
+  <a href="/projects/{{ project.id }}/workspace" {% if workspace_section == 'overview' %}aria-current="page"{% endif %}>Overview</a>
+  <a href="/projects/{{ project.id }}/workspace/entries" {% if workspace_section == 'entries' %}aria-current="page"{% endif %}>Entries</a>
+  <a href="/projects/{{ project.id }}/workspace/participants" {% if workspace_section == 'participants' %}aria-current="page"{% endif %}>Participants</a>
+  <a href="/projects/{{ project.id }}/workspace/evidence" {% if workspace_section == 'evidence' %}aria-current="page"{% endif %}>Evidence</a>
+  <a href="/projects/{{ project.id }}/workspace/themes" {% if workspace_section == 'themes' %}aria-current="page"{% endif %}>Themes / codes</a>
+  <a href="/projects/{{ project.id }}/workspace/analysis" {% if workspace_section == 'analysis' %}aria-current="page"{% endif %}>Analysis</a>
+</nav>

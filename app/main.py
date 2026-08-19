@@ -8,6 +8,7 @@ import time
 import csv, io, json, secrets
 from collections import OrderedDict, deque
 from threading import Lock
+from urllib.parse import urlencode
 from .csrf import get_csrf_token, csrf_protect
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response, Query, Header, Path as ApiPath
 from fastapi.exceptions import RequestValidationError
@@ -70,6 +71,7 @@ from .research_api import (
     ThemeResponse,
 )
 from .theme_explorer import create_theme, parse_suggestion_ids
+from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
 from .scanner import scan_file
@@ -733,6 +735,7 @@ def render(request, name, user=None, **ctx):
             "csp_nonce": getattr(request.state, "csp_nonce", ""),
             "flash_notice": flash_notice,
             "flash_error": flash_error,
+            "response_body": response_body,
             **ctx,
         },
     )
@@ -1088,6 +1091,126 @@ def require_project_permission(
     if not permission or (edit and permission != "manage"):
         raise HTTPException(403, "You do not have access to this project.")
     return permission
+
+
+def project_studies_for_user(db: Session, user: User, project_row: Project) -> list[Study]:
+    """Return studies visible through the same rules used by project navigation."""
+    stmt = select(Study).where(
+        Study.organisation_id == user.organisation_id,
+        Study.project_id == project_row.id,
+    )
+    if user.role not in {"owner", "admin", "observer"}:
+        stmt = stmt.where(Study.id.in_(study_scope_for_user(user)))
+    return db.scalars(stmt.order_by(Study.created_at.asc())).all()
+
+
+def project_workspace_scope(db: Session, user: User, project_id: int) -> tuple[Project, list[Study]]:
+    project_row = project(db, project_id, user.organisation_id)
+    require_project_permission(db, user, project_row)
+    return project_row, project_studies_for_user(db, user, project_row)
+
+
+def researcher_methodology_categories() -> list[dict[str, str]]:
+    """Plain-English defaults; controlled identifiers remain an advanced option."""
+    return [
+        {"id": "M03", "label": "Ethnographic & observational", "description": "Understand everyday settings, practices and interactions."},
+        {"id": "M08", "label": "Thematic analysis", "description": "Develop and interpret patterns across qualitative material."},
+        {"id": "M10", "label": "Content & framework analysis", "description": "Organise material with a transparent coding or matrix approach."},
+        {"id": "M12", "label": "Narrative & discourse", "description": "Examine stories, language and meaning-making."},
+        {"id": "M15", "label": "Experiential & interpretive", "description": "Explore lived experience and interpretation."},
+        {"id": "M20", "label": "Participatory & co-produced", "description": "Work with communities as active research partners."},
+        {"id": "M23", "label": "Critical & intersectional", "description": "Examine power, inequality and intersecting experiences."},
+        {"id": "M17", "label": "Documentary & archival", "description": "Study documents, records and historical material."},
+        {"id": "M21", "label": "Mixed & comparative", "description": "Compare cases or integrate complementary methods."},
+        {"id": "M01", "label": "Other / Advanced", "description": "Use the controlled advanced choices where needed."},
+    ]
+
+
+def _workspace_entry_statement(user: User, study_ids: list[int]):
+    return (
+        select(ActivityResponse, Participant, Activity)
+        .join(Participant, Participant.id == ActivityResponse.participant_id)
+        .join(Activity, Activity.id == ActivityResponse.activity_id)
+        .where(
+            ActivityResponse.organisation_id == user.organisation_id,
+            ActivityResponse.study_id.in_(study_ids),
+            ActivityResponse.status == "submitted",
+        )
+    )
+
+
+def project_workspace_entries(
+    db: Session,
+    user: User,
+    studies: list[Study],
+    *,
+    participant_id: int | None = None,
+    prompt_id: int | None = None,
+    code: str = "",
+    q: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    evidence: str = "all",
+    newest_first: bool = True,
+    page: int = 1,
+    per_page: int = 30,
+) -> tuple[list[dict], int, int]:
+    """Page source entries while prefetching only their related research context."""
+    study_ids = [row.id for row in studies]
+    if not study_ids:
+        return [], 0, 0
+    stmt = _workspace_entry_statement(user, study_ids)
+    if participant_id:
+        stmt = stmt.where(ActivityResponse.participant_id == participant_id)
+    if prompt_id:
+        stmt = stmt.where(ActivityResponse.activity_id == prompt_id)
+    if q.strip():
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(or_(ActivityResponse.value_json.ilike(term), Activity.prompt.ilike(term), Activity.title.ilike(term)))
+    if code.strip():
+        # Codes are intentionally stored in flexible response payloads today.
+        # SQL narrowing avoids materialising an entire project before parsing.
+        stmt = stmt.where(ActivityResponse.value_json.ilike(f"%{code.strip()}%"))
+    for raw, comparison in ((date_from, ">="), (date_to, "<=")):
+        if raw:
+            try:
+                parsed = datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
+            except ValueError:
+                raise HTTPException(422, "Dates must use YYYY-MM-DD.")
+            if comparison == ">=":
+                stmt = stmt.where(ActivityResponse.submitted_at >= parsed)
+            else:
+                stmt = stmt.where(ActivityResponse.submitted_at < parsed + timedelta(days=1))
+    evidence_exists = select(EvidenceFile.id).where(
+        EvidenceFile.organisation_id == user.organisation_id,
+        EvidenceFile.response_id == ActivityResponse.id,
+    ).exists()
+    if evidence == "yes":
+        stmt = stmt.where(evidence_exists)
+    elif evidence == "no":
+        stmt = stmt.where(~evidence_exists)
+    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+    ordering = ActivityResponse.submitted_at.desc() if newest_first else ActivityResponse.submitted_at.asc()
+    rows = db.execute(stmt.order_by(ordering, ActivityResponse.id.desc()).offset((page - 1) * per_page).limit(per_page)).all()
+    response_ids = [response.id for response, _, _ in rows]
+    evidence_by_response: dict[int, list[EvidenceFile]] = {}
+    if response_ids:
+        for item in db.scalars(select(EvidenceFile).where(EvidenceFile.organisation_id == user.organisation_id, EvidenceFile.response_id.in_(response_ids)).order_by(EvidenceFile.created_at)).all():
+            evidence_by_response.setdefault(item.response_id, []).append(item)
+    items = []
+    wanted_code = code.strip().casefold()
+    for response, participant_row, activity in rows:
+        codes = response_codes(response.value_json)
+        if wanted_code and not any(wanted_code in item.casefold() for item in codes):
+            # The SQL prefilter is intentionally broad; preserve exact code filtering.
+            continue
+        body = response_body(response.value_json)
+        items.append({
+            "response": response, "participant": participant_row, "activity": activity,
+            "body": body, "codes": codes, "context": response_context(response.value_json),
+            "evidence": evidence_by_response.get(response.id, []),
+        })
+    return items, total, max(1, (total + per_page - 1) // per_page)
 
 
 def set_public_auth_cookie(response: RedirectResponse, value: str, max_age_seconds: int):
@@ -2094,6 +2217,105 @@ def project_detail(project_id:int,request:Request,u=Depends(current_user),db:Ses
         studies_stmt=studies_stmt.where(Study.id.in_(study_scope_for_user(u)))
     studies=db.scalars(studies_stmt.order_by(Study.updated_at.desc())).all()
     return render(request,"project_detail.html",user=u,project=p,studies=studies,statuses=[x.value for x in StudyStatus],can_edit=permission=="manage")
+
+
+def _workspace_context(project_row: Project, studies: list[Study]) -> dict:
+    return {"project": project_row, "workspace_studies": studies}
+
+
+def page_url(request: Request, page: int) -> str:
+    params = dict(request.query_params)
+    params["page"] = str(page)
+    return f"{request.url.path}?{urlencode(params)}"
+
+
+@app.get("/projects/{project_id}/workspace", response_class=HTMLResponse)
+def project_workspace(project_id: int, request: Request, u=Depends(current_user), db: Session = Depends(get_db)):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    study_ids = [row.id for row in studies]
+    counts = {"participants": 0, "entries": 0, "evidence": 0}
+    date_range = (None, None)
+    recent_entries: list[dict] = []
+    themes = []
+    if study_ids:
+        counts["participants"] = int(db.scalar(select(func.count(func.distinct(StudyEnrolment.participant_id))).where(StudyEnrolment.organisation_id == u.organisation_id, StudyEnrolment.study_id.in_(study_ids))) or 0)
+        counts["entries"] = int(db.scalar(select(func.count(ActivityResponse.id)).where(ActivityResponse.organisation_id == u.organisation_id, ActivityResponse.study_id.in_(study_ids), ActivityResponse.status == "submitted")) or 0)
+        counts["evidence"] = int(db.scalar(select(func.count(EvidenceFile.id)).where(EvidenceFile.organisation_id == u.organisation_id, EvidenceFile.study_id.in_(study_ids))) or 0)
+        date_range = db.execute(select(func.min(ActivityResponse.submitted_at), func.max(ActivityResponse.submitted_at)).where(ActivityResponse.organisation_id == u.organisation_id, ActivityResponse.study_id.in_(study_ids), ActivityResponse.status == "submitted")).one()
+        recent_entries, _, _ = project_workspace_entries(db, u, studies, page=1, per_page=5)
+        themes = db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id == u.organisation_id, ResearchTheme.study_id.in_(study_ids)).order_by(ResearchTheme.updated_at.desc()).limit(6)).all()
+    return render(request, "research_workspace.html", user=u, **_workspace_context(project_row, studies), counts=counts, date_range=date_range, recent_entries=recent_entries, themes=themes)
+
+
+@app.get("/projects/{project_id}/workspace/entries", response_class=HTMLResponse)
+def project_workspace_entries_page(
+    project_id: int, request: Request, participant_id: int | None = Query(None, ge=1), prompt_id: int | None = Query(None, ge=1),
+    code: str = Query("", max_length=120), q: str = Query("", max_length=200), date_from: str = Query("", max_length=10), date_to: str = Query("", max_length=10),
+    evidence: str = Query("all", pattern="^(all|yes|no)$"), order: str = Query("newest", pattern="^(newest|oldest)$"), page: int = Query(1, ge=1),
+    u=Depends(current_user), db: Session = Depends(get_db),
+):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    items, total, pages = project_workspace_entries(db, u, studies, participant_id=participant_id, prompt_id=prompt_id, code=code, q=q, date_from=date_from, date_to=date_to, evidence=evidence, newest_first=order == "newest", page=page)
+    study_ids = [row.id for row in studies]
+    participant_rows = db.scalars(select(Participant).join(StudyEnrolment, StudyEnrolment.participant_id == Participant.id).where(Participant.organisation_id == u.organisation_id, StudyEnrolment.organisation_id == u.organisation_id, StudyEnrolment.study_id.in_(study_ids)).distinct().order_by(Participant.reference)).all() if study_ids else []
+    prompts = db.scalars(select(Activity).where(Activity.organisation_id == u.organisation_id, Activity.study_id.in_(study_ids)).order_by(Activity.position, Activity.title)).all() if study_ids else []
+    response_rows = db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id == u.organisation_id, ActivityResponse.study_id.in_(study_ids), ActivityResponse.status == "submitted").limit(5000)).all() if study_ids else []
+    codes = [name for name, _ in code_counts(response_rows).most_common()]
+    return render(request, "research_entries.html", user=u, **_workspace_context(project_row, studies), items=items, total=total, pages=pages, page=page, previous_url=page_url(request, page - 1) if page > 1 else None, next_url=page_url(request, page + 1) if page < pages else None, participant_rows=participant_rows, prompts=prompts, codes=codes, filters={"participant_id": participant_id, "prompt_id": prompt_id, "code": code, "q": q, "date_from": date_from, "date_to": date_to, "evidence": evidence, "order": order})
+
+
+@app.get("/projects/{project_id}/workspace/participants", response_class=HTMLResponse)
+def project_workspace_participants(project_id: int, request: Request, q: str = Query("", max_length=120), u=Depends(current_user), db: Session = Depends(get_db)):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    study_ids = [row.id for row in studies]
+    stmt = select(Participant).join(StudyEnrolment, StudyEnrolment.participant_id == Participant.id).where(Participant.organisation_id == u.organisation_id, StudyEnrolment.organisation_id == u.organisation_id, StudyEnrolment.study_id.in_(study_ids)).distinct() if study_ids else select(Participant).where(False)
+    if q.strip():
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(or_(Participant.name.ilike(term), Participant.reference.ilike(term), Participant.tags.ilike(term)))
+    rows = db.scalars(stmt.order_by(Participant.reference)).all()
+    response_counts = dict(db.execute(select(ActivityResponse.participant_id, func.count(ActivityResponse.id)).where(ActivityResponse.organisation_id == u.organisation_id, ActivityResponse.study_id.in_(study_ids), ActivityResponse.status == "submitted").group_by(ActivityResponse.participant_id)).all()) if study_ids else {}
+    return render(request, "research_participants.html", user=u, **_workspace_context(project_row, studies), participants=rows, response_counts=response_counts, q=q)
+
+
+@app.get("/projects/{project_id}/workspace/evidence", response_class=HTMLResponse)
+def project_workspace_evidence(project_id: int, request: Request, participant_id: int | None = Query(None, ge=1), page: int = Query(1, ge=1), u=Depends(current_user), db: Session = Depends(get_db)):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    study_ids = [row.id for row in studies]
+    stmt = select(EvidenceFile).where(EvidenceFile.organisation_id == u.organisation_id, EvidenceFile.study_id.in_(study_ids)) if study_ids else select(EvidenceFile).where(False)
+    if participant_id:
+        stmt = stmt.where(EvidenceFile.participant_id == participant_id)
+    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+    evidence_rows = db.scalars(stmt.order_by(EvidenceFile.created_at.desc()).offset((page - 1) * 36).limit(36)).all()
+    participant_ids = {item.participant_id for item in evidence_rows}
+    activity_ids = {item.activity_id for item in evidence_rows}
+    response_ids = {item.response_id for item in evidence_rows if item.response_id}
+    participants = {row.id: row for row in db.scalars(select(Participant).where(Participant.organisation_id == u.organisation_id, Participant.id.in_(participant_ids))).all()} if participant_ids else {}
+    activities = {row.id: row for row in db.scalars(select(Activity).where(Activity.organisation_id == u.organisation_id, Activity.id.in_(activity_ids))).all()} if activity_ids else {}
+    responses = {row.id: row for row in db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id == u.organisation_id, ActivityResponse.id.in_(response_ids))).all()} if response_ids else {}
+    participant_rows = db.scalars(select(Participant).join(StudyEnrolment, StudyEnrolment.participant_id == Participant.id).where(Participant.organisation_id == u.organisation_id, StudyEnrolment.organisation_id == u.organisation_id, StudyEnrolment.study_id.in_(study_ids)).distinct().order_by(Participant.reference)).all() if study_ids else []
+    return render(request, "research_evidence.html", user=u, **_workspace_context(project_row, studies), evidence_rows=evidence_rows, participants=participants, activities=activities, responses=responses, participant_rows=participant_rows, participant_id=participant_id, page=page, pages=max(1, (total + 35) // 36), total=total)
+
+
+@app.get("/projects/{project_id}/workspace/themes", response_class=HTMLResponse)
+def project_workspace_themes(project_id: int, request: Request, u=Depends(current_user), db: Session = Depends(get_db)):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    study_ids = [row.id for row in studies]
+    responses = db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id == u.organisation_id, ActivityResponse.study_id.in_(study_ids), ActivityResponse.status == "submitted").limit(5000)).all() if study_ids else []
+    counts = code_counts(responses)
+    participants_by_code: dict[str, set[int]] = {}
+    for response in responses:
+        for item in response_codes(response.value_json):
+            participants_by_code.setdefault(item, set()).add(response.participant_id)
+    return render(request, "research_themes.html", user=u, **_workspace_context(project_row, studies), codes=counts.most_common(), participants_by_code=participants_by_code, source_limit_reached=len(responses) == 5000)
+
+
+@app.get("/projects/{project_id}/workspace/analysis", response_class=HTMLResponse)
+def project_workspace_analysis(project_id: int, request: Request, u=Depends(current_user), db: Session = Depends(get_db)):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    study_ids = [row.id for row in studies]
+    themes = db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id == u.organisation_id, ResearchTheme.study_id.in_(study_ids)).order_by(ResearchTheme.updated_at.desc())).all() if study_ids else []
+    suggestions = db.scalars(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.organisation_id == u.organisation_id, ResearchAnalysisSuggestion.study_id.in_(study_ids)).order_by(ResearchAnalysisSuggestion.created_at.desc()).limit(30)).all() if study_ids and settings.research_intelligence_enabled else []
+    return render(request, "research_analysis.html", user=u, **_workspace_context(project_row, studies), themes=themes, suggestions=suggestions, ai_available=False)
 @app.post("/projects/{project_id}/edit")
 def edit_project(project_id:int,title:str=Form(...),description:str=Form(""),status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); require_project_permission(db,u,p,edit=True); enum_value(status_value,ProjectStatus,"project status"); p.title=title.strip(); p.description=description.strip(); p.status=status_value; audit(db,u.organisation_id,u.id,"project.updated","project",p.id,p.title); db.commit(); return RedirectResponse(f"/projects/{p.id}",303)
@@ -2148,7 +2370,7 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
     methodology_record = None
     if methodology_configuration and methodology_configuration.primary_methodology_id:
         methodology_record = next((item for item in library_records() if item["methodology_id"] == methodology_configuration.primary_methodology_id), None)
-    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,methodology_options=methodology_options(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
+    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,methodology_options=methodology_options(),methodology_categories=researcher_methodology_categories(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
 
 @app.post("/studies/{study_id}/governance")
 def update_study_governance(
@@ -2732,7 +2954,30 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
                 message.read_at = now()
     privacy_counts = participant_related_counts(db, p.id, u.organisation_id) if u.role in {"owner", "admin"} else None
     privacy_workflow_token = request.session.get(privacy_workflow_key(p.id)) if u.role in {"owner", "admin"} else None
-    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=[m for m in messages if not m.internal_note],internal_notes=[m for m in messages if m.internal_note],statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token)
+    activity_ids = {row.activity_id for row in responses}
+    activities = {row.id: row for row in db.scalars(select(Activity).where(Activity.organisation_id == u.organisation_id, Activity.id.in_(activity_ids))).all()} if activity_ids else {}
+    evidence_by_response: dict[int, list[EvidenceFile]] = {}
+    for item in evidence_files:
+        if item.response_id:
+            evidence_by_response.setdefault(item.response_id, []).append(item)
+    timeline = [
+        {"response": row, "activity": activities.get(row.activity_id), "body": response_body(row.value_json), "codes": response_codes(row.value_json), "context": response_context(row.value_json), "evidence": evidence_by_response.get(row.id, [])}
+        for row in sorted(responses, key=lambda item: (item.submitted_at or item.updated_at, item.id))
+        if row.status == "submitted" and response_body(row.value_json)
+    ]
+    visible_participant_ids = set()
+    if u.role in {"owner", "admin", "observer"}:
+        visible_participant_ids = set(db.scalars(select(Participant.id).where(Participant.organisation_id == u.organisation_id)).all())
+    else:
+        visible_participant_ids = set(db.scalars(select(StudyEnrolment.participant_id).where(StudyEnrolment.organisation_id == u.organisation_id, StudyEnrolment.study_id.in_(list(studies)))).all())
+        if p.created_by_id == u.id:
+            visible_participant_ids.add(p.id)
+    dossier_participants = db.scalars(select(Participant).where(Participant.organisation_id == u.organisation_id, Participant.id.in_(visible_participant_ids)).order_by(Participant.reference)).all() if visible_participant_ids else []
+    dossier_ids = [row.id for row in dossier_participants]
+    position = dossier_ids.index(p.id) if p.id in dossier_ids else -1
+    previous_participant = dossier_participants[position - 1] if position > 0 else None
+    next_participant = dossier_participants[position + 1] if position >= 0 and position + 1 < len(dossier_participants) else None
+    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=[m for m in messages if not m.internal_note],internal_notes=[m for m in messages if m.internal_note],statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token,timeline=timeline,previous_participant=previous_participant,next_participant=next_participant)
 
 
 @app.get("/participants/{participant_id}/export")

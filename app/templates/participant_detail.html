@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ participant.name }}{% endblock %}
-{% block page_description %}<p class="page-description">Review participant details, manage privacy actions, and see related enrolments and messages.</p>{% endblock %}
+{% block page_description %}<p class="page-description">A participant dossier with their longitudinal submitted material, context and associated evidence.</p>{% endblock %}
 {% block content %}
+<p class="breadcrumbs"><a href="/participants">Participants</a> <span aria-hidden="true">/</span> {{ participant.reference }}</p>
+<nav class="dossier-nav" aria-label="Participant navigation">{% if previous_participant %}<a class="btn secondary" href="/participants/{{ previous_participant.id }}">Previous: {{ previous_participant.reference }}</a>{% endif %}<a class="btn secondary" href="/participants">All participants</a>{% if next_participant %}<a class="btn secondary" href="/participants/{{ next_participant.id }}">Next: {{ next_participant.reference }}</a>{% endif %}</nav>
 <section class="two-col">
   <div class="card card--hero">
     <p class="muted">{{ participant.reference }}</p>
-    <h2>Participant record</h2>
+    <h2>Participant dossier</h2>
     <p><strong>Email:</strong> {{ participant.email or 'Not recorded' }}</p>
     <p><strong>Phone:</strong> {{ participant.phone or 'Not recorded' }}</p>
     <p><strong>Created:</strong> {{ participant.created_at.strftime('%d %b %Y') }}</p>
@@ -93,18 +95,11 @@
   </table>
 </section>
 
-<section class="card card--data section">
-  <h2>Activity responses</h2>
-  <table class="table">
-    <thead><tr><th>Study</th><th>Status</th><th>Updated</th></tr></thead>
-    <tbody>
-      {% for r in responses %}
-      <tr><td>{{ studies[r.study_id].title }}</td><td><span class="badge {{ r.status }}">{{ r.status|title }}</span></td><td>{{ r.updated_at.strftime('%d %b %Y %H:%M') }}</td></tr>
-      {% else %}
-      <tr><td colspan="3" class="empty">No responses yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<section class="section" id="research-timeline">
+  <div class="section-head"><div><h2>Longitudinal research timeline</h2><p class="muted">Complete submitted responses are ordered from earliest to latest, with their prompt and associated evidence.</p></div></div>
+  {% for item in timeline %}
+  <article class="entry-card"><header class="entry-card__header"><div><h3>{{ studies[item.response.study_id].title if item.response.study_id in studies else 'Study' }}</h3><p><strong>{{ item.activity.title if item.activity else 'Activity' }}</strong>{% if item.activity and item.activity.prompt %} · {{ item.activity.prompt }}{% endif %}</p></div><time>{{ item.response.submitted_at.strftime('%d %b %Y, %H:%M') if item.response.submitted_at else item.response.updated_at.strftime('%d %b %Y, %H:%M') }}</time></header>{% if item.context %}<p class="entry-context">{% for name, value in item.context.items() %}<span><strong>{{ name|replace('_', ' ')|title }}:</strong> {{ value }}</span>{% endfor %}</p>{% endif %}<div class="entry-card__body">{{ item.body }}</div>{% if item.codes %}<p class="code-list">{% for code in item.codes %}<span class="code-chip">{{ code }}</span>{% endfor %}</p>{% endif %}{% if item.evidence %}<section class="entry-evidence"><h3>Associated evidence</h3><div class="evidence-strip">{% for evidence in item.evidence %}{% if evidence.content_type.startswith('image/') and evidence.scan_status == 'clean' %}<a href="/evidence/{{ evidence.id }}"><img src="/evidence/{{ evidence.id }}" alt="{{ evidence.original_name }}"></a>{% else %}<a class="file-chip" href="/evidence/{{ evidence.id }}">{{ evidence.original_name }}</a>{% endif %}{% endfor %}</div></section>{% endif %}</article>
+  {% else %}<section class="card empty"><h3>No submitted research material</h3><p>This participant has no submitted text entries in the studies you can access.</p></section>{% endfor %}
 </section>
 
 <section class="card card--data section">

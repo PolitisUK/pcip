@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Participants · {{ project.title }}{% endblock %}
+{% block page_description %}<p class="page-description">Open a participant dossier to read their longitudinal material in context.</p>{% endblock %}
+{% block content %}
+<p class="breadcrumbs"><a href="/projects/{{ project.id }}/workspace">{{ project.title }} research workspace</a> <span aria-hidden="true">/</span> Participants</p>{% set workspace_section = 'participants' %}{% include "_workspace_nav.html" %}
+<section class="card card--data section"><form method="get" class="inline"><div class="field"><label for="participant-search">Find participant</label><input id="participant-search" name="q" value="{{ q }}" placeholder="Reference, name or tag"></div><button>Search</button>{% if q %}<a class="btn secondary" href="/projects/{{ project.id }}/workspace/participants">Clear</a>{% endif %}</form></section>
+<section class="participant-grid section">{% for participant in participants %}<article class="participant-card"><p class="muted">{{ participant.reference }}</p><h2><a href="/participants/{{ participant.id }}">{{ participant.name }}</a></h2><p>{{ response_counts.get(participant.id, 0) }} submitted entr{{ 'y' if response_counts.get(participant.id, 0) == 1 else 'ies' }}</p>{% if participant.tags %}<p class="muted">{{ participant.tags }}</p>{% endif %}<a class="btn secondary" href="/participants/{{ participant.id }}">Open dossier</a></article>{% else %}<article class="card empty"><h2>No participants found</h2><p>There are no matching participants in the studies you can access.</p></article>{% endfor %}</section>
+{% endblock %}
