@@ -7852,3 +7852,94 @@ def test_outbox_retention_is_explicit_and_does_not_rely_on_recipient_matching():
         assert purge_expired_outbox(db) >= 1
         db.commit()
         assert db.get(OutboxEmail, expired_id) is None
+
+
+def test_project_research_workspace_shows_full_source_entries_and_scopes_access():
+    """The workspace remains project/organisation scoped while exposing source text."""
+    from app.models import (
+        Activity,
+        ActivityResponse,
+        Organisation,
+        Participant,
+        Project,
+        Study,
+    )
+
+    suffix = unique_value("workspace")
+    with SessionLocal() as db:
+        administrator = db.scalar(select(User).where(User.email == "admin@politis.local"))
+        project = Project(
+            organisation_id=administrator.organisation_id,
+            title=f"Workspace {suffix}",
+            code=suffix.upper(),
+            created_by_id=administrator.id,
+        )
+        db.add(project)
+        db.flush()
+        study = Study(
+            organisation_id=administrator.organisation_id,
+            project_id=project.id,
+            title="Longitudinal diary",
+            code=f"S{suffix.upper()}",
+            created_by_id=administrator.id,
+        )
+        participant = Participant(
+            organisation_id=administrator.organisation_id,
+            reference=f"P-{suffix}".upper(),
+            name="Dossier participant",
+            created_by_id=administrator.id,
+        )
+        db.add_all([study, participant])
+        db.flush()
+        activity = Activity(
+            organisation_id=administrator.organisation_id,
+            study_id=study.id,
+            title="Week one",
+            prompt="What changed this week?",
+        )
+        db.add(activity)
+        db.flush()
+        response = ActivityResponse(
+            organisation_id=administrator.organisation_id,
+            study_id=study.id,
+            activity_id=activity.id,
+            participant_id=participant.id,
+            status="submitted",
+            submitted_at=now(),
+            value_json=json.dumps({
+                "text": "The complete longitudinal account is visible in the workspace.",
+                "researcher_codes": ["Access > delay"],
+                "place": "Town centre",
+            }),
+        )
+        db.add(response)
+        other_org = Organisation(name=f"Other {suffix}", slug=f"other-{suffix}".lower())
+        db.add(other_org)
+        db.flush()
+        other_project = Project(
+            organisation_id=other_org.id,
+            title="Unauthorised workspace",
+            code=f"OTHER-{suffix}".upper(),
+            created_by_id=administrator.id,
+        )
+        db.add(other_project)
+        db.commit()
+        project_id, participant_id, other_project_id = project.id, participant.id, other_project.id
+
+    with client:
+        auth()
+        overview = client.get(f"/projects/{project_id}/workspace")
+        entries = client.get(f"/projects/{project_id}/workspace/entries?code=Access")
+        dossier = client.get(f"/participants/{participant_id}")
+        assert overview.status_code == 200
+        assert "Research workspace" in overview.text
+        assert entries.status_code == 200
+        assert "The complete longitudinal account is visible in the workspace." in entries.text
+        assert "Access &gt; delay" in entries.text
+        assert dossier.status_code == 200
+        assert "Longitudinal research timeline" in dossier.text
+        assert client.get(f"/projects/{other_project_id}/workspace").status_code == 404
+
+    with client:
+        client.cookies.clear()
+        assert client.get(f"/projects/{project_id}/workspace", follow_redirects=False).status_code == 303

@@ -34,25 +34,23 @@
 
 <section class="card card--data section" id="methodology">
   <div class="section-head">
-    <div><h2>Methodology and analysis configuration</h2><p class="muted">Choose the methodology, variant and protocol before enabling any researcher AI support. This is researcher-only and is never shown to participants.</p></div>
-    <span class="badge">Library {{ methodology_library_version }}</span>
+    <div><h2>Methodology and analysis configuration</h2><p class="muted">Start with a clear primary approach. Detailed classifications remain available only when they are genuinely needed for the study protocol.</p></div>
   </div>
   {% if methodology_configuration and methodology_configuration.researcher_confirmed_at %}
   <p class="success" role="status">Confirmed by a researcher. Human review remains required for every AI-assisted output.</p>
   {% else %}
   <p class="notice neutral">A researcher-confirmed methodology configuration is required before a study can launch or use AI research support.</p>
   {% endif %}
-  {% if methodology_record %}
-  <details class="compact-details"><summary>Method profile and source provenance</summary><div class="context-help-body"><p><strong>{{ methodology_record.name }}</strong> · {{ methodology_record.scope }}</p><p>{{ methodology_record.definition }}</p><p><strong>Quality:</strong> {{ methodology_record.quality }}</p><p><strong>AI boundary:</strong> {{ methodology_record.ai_constraints }}</p><p class="muted">The controlled library stores references and summaries, not copyrighted source text.</p><ul>{% for source in methodology_sources %}<li><strong>{{ source.id }}</strong> · {{ source.authors }} ({{ source.year }}), <em>{{ source.title }}</em>{% if source.identifier %} · {{ source.identifier }}{% endif %}</li>{% endfor %}</ul></div></details>
-  {% endif %}
+  {% if methodology_record %}<p class="notice neutral"><strong>Current approach:</strong> {{ methodology_record.name }}. Methodological and AI safeguards are applied to this study configuration.</p>{% endif %}
+  <details class="compact-details"><summary>Choose an approach</summary><div class="approach-list">{% for item in methodology_categories %}<p><strong>{{ item.label }}</strong> — {{ item.description }}</p>{% endfor %}</div></details>
   {% if can_edit %}
   <details class="section compact-details" {% if not methodology_configuration %}open{% endif %}>
     <summary>Configure methodology</summary>
     <div class="context-help-body">
       <form method="post" action="/studies/{{ study.id }}/methodology-configuration" class="stack">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div class="row"><div class="field"><label for="primary-methodology">Primary methodology</label><select id="primary-methodology" name="primary_methodology_id" required>{% for item in methodology_options %}<option value="{{ item.id }}" {% if methodology_configuration and methodology_configuration.primary_methodology_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div><div class="field"><label for="methodology-variant">Variant</label><input id="methodology-variant" name="methodology_variant" value="{{ methodology_configuration.methodology_variant if methodology_configuration else '' }}" placeholder="Use a listed variant"></div></div>
-        <div class="field"><label>Secondary methods (only where justified)</label>{% for item in methodology_options %}<label class="check"><input type="checkbox" name="secondary_methodologies" value="{{ item.id }}" {% if methodology_configuration and item.id in methodology_configuration.secondary_methodologies_json %}checked{% endif %}> {{ item.name }}</label>{% endfor %}</div>
+        <div class="row"><div class="field"><label for="primary-methodology">Primary approach</label><select id="primary-methodology" name="primary_methodology_id" required><optgroup label="Researcher-friendly approaches">{% for item in methodology_categories %}<option value="{{ item.id }}" {% if methodology_configuration and methodology_configuration.primary_methodology_id == item.id %}selected{% endif %}>{{ item.label }}</option>{% endfor %}</optgroup><optgroup label="Advanced methodology options">{% for item in methodology_options %}<option value="{{ item.id }}" {% if methodology_configuration and methodology_configuration.primary_methodology_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</optgroup></select><small class="muted">Choose an advanced option only when the study protocol requires it.</small></div><div class="field"><label for="methodology-variant">Variant or emphasis</label><input id="methodology-variant" name="methodology_variant" value="{{ methodology_configuration.methodology_variant if methodology_configuration else '' }}" placeholder="Optional approved variant"></div></div>
+        <details class="compact-details"><summary>Advanced methodology options</summary><div class="context-help-body"><p>Additional and specialist approaches can be recorded where justified by the protocol. This preserves existing metadata without making a large taxonomy the normal workflow.</p><div class="field"><label>Additional approaches</label>{% for item in methodology_options %}<label class="check"><input type="checkbox" name="secondary_methodologies" value="{{ item.id }}" {% if methodology_configuration and item.id in methodology_configuration.secondary_methodologies_json %}checked{% endif %}> {{ item.name }}</label>{% endfor %}</div></div></details>
         <div class="field"><label>Research questions</label><textarea name="research_questions" required>{{ methodology_configuration.research_questions if methodology_configuration else '' }}</textarea></div>
         <div class="row"><div class="field"><label>Protocol or analysis-plan reference</label><input name="protocol_reference" required value="{{ methodology_configuration.protocol_reference if methodology_configuration else '' }}"></div><div class="field"><label>Protocol version</label><input name="protocol_version" required value="{{ methodology_configuration.protocol_version if methodology_configuration else '' }}"></div></div>
         <div class="field"><label>Sampling approach</label><textarea name="sampling_approach" required>{{ methodology_configuration.sampling_approach if methodology_configuration else '' }}</textarea></div>
@@ -65,7 +63,7 @@
     </div>
   </details>
   {% endif %}
-  <details class="compact-details"><summary>Methodological cautions</summary><ul>{% for disagreement in methodology_disagreements %}<li><strong>{{ disagreement.status|replace('_', ' ')|title }}:</strong> {{ disagreement.warning }}</li>{% endfor %}</ul></details>
+  <details class="compact-details"><summary>Methodology and provenance</summary><p class="muted">Controlled methodological references support governance and AI safeguards. Their internal library records are not part of the ordinary researcher interface.</p></details>
 </section>
 
 <section class="card card--data section" id="governance">

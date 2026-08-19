@@ -9,7 +9,7 @@
       <p>{{ project.description or 'No description supplied.' }}</p>
       <p class="muted">Project code: {{ project.code }}</p>
     </div>
-    <a class="btn secondary" href="/projects">Back to projects</a>
+    <div class="inline"><a class="btn" href="/projects/{{ project.id }}/workspace">Open research workspace</a><a class="btn secondary" href="/projects">Back to projects</a></div>
   </div>
 
   {% if can_edit %}

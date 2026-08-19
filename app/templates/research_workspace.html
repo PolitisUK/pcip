@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ project.title }} · Research workspace{% endblock %}
+{% block page_description %}<p class="page-description">A source-first workspace for reading and comparing participant material across the studies you can access.</p>{% endblock %}
+{% block content %}
+<p class="breadcrumbs"><a href="/projects">Projects</a> <span aria-hidden="true">/</span> <a href="/projects/{{ project.id }}">{{ project.title }}</a> <span aria-hidden="true">/</span> Research workspace</p>
+{% set workspace_section = 'overview' %}{% include "_workspace_nav.html" %}
+<section class="card card--hero section"><div class="section-head"><div><span class="badge {{ project.status }}">{{ project.status|title }}</span><h2>{{ project.title }}</h2><p>{{ project.description or 'No project description supplied.' }}</p></div><a class="btn secondary" href="/projects/{{ project.id }}">Project settings</a></div></section>
+<section class="research-metrics section" aria-label="Research material summary">
+  <article class="metric-card"><span>Participants</span><strong>{{ counts.participants }}</strong></article>
+  <article class="metric-card"><span>Entries</span><strong>{{ counts.entries }}</strong></article>
+  <article class="metric-card"><span>Evidence items</span><strong>{{ counts.evidence }}</strong></article>
+  <article class="metric-card"><span>Date range</span><strong class="metric-card__date">{% if date_range[0] %}{{ date_range[0].strftime('%d %b %Y') }}<br>– {{ date_range[1].strftime('%d %b %Y') }}{% else %}No entries yet{% endif %}</strong></article>
+</section>
+<section class="two-col section"><section class="card card--data"><div class="section-head"><div><h2>Recent material</h2><p class="muted">Latest submitted participant entries.</p></div><a href="/projects/{{ project.id }}/workspace/entries">Browse all entries</a></div>{% for item in recent_entries %}<article class="source-summary"><strong><a href="/participants/{{ item.participant.id }}">{{ item.participant.reference }}</a></strong><span>{{ item.response.submitted_at.strftime('%d %b %Y %H:%M') if item.response.submitted_at else 'Undated' }}</span><p>{{ item.activity.title }}</p><p class="muted">{{ item.body[:180] }}{% if item.body|length > 180 %}…{% endif %}</p></article>{% else %}<p class="empty">No submitted participant entries are available in the studies you can access.</p>{% endfor %}</section>
+<section class="card card--data"><div class="section-head"><div><h2>Working themes</h2><p class="muted">Researcher-created themes, where available.</p></div><a href="/projects/{{ project.id }}/workspace/themes">Explore codes</a></div>{% for theme in themes %}<article class="source-summary"><strong>{{ theme.name }}</strong><p>{{ theme.description or 'No description supplied.' }}</p></article>{% else %}<p class="empty">No working themes have been created for these studies.</p>{% endfor %}</section></section>
+{% endblock %}
