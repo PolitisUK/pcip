@@ -187,7 +187,7 @@
         <form method="post" action="/participant-portal/privacy/deletion-request" class="stack section">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <p class="muted">This ends your study access and starts deletion of identifiable active study data. Irreversibly anonymised information cannot be linked back to you. Protected backups expire under the applicable retention schedule; narrowly required legal or security records may be retained only where lawful.</p>
-          <label><input type="checkbox" name="confirmed" value="true" required> I understand and want to withdraw and delete my active study data.</label>
+          <label class="control-row"><input type="checkbox" name="confirmed" value="true" required> I understand and want to withdraw and delete my active study data.</label>
           <button class="danger" type="submit" data-confirm="Withdraw and delete your active study data? You will be signed out.">Withdraw and delete my data</button>
         </form>
       </details>
@@ -197,7 +197,7 @@
         <form method="post" action="/participant-portal/privacy/withdrawal-request" class="stack section">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <p class="notice">Withdrawing ends your access to this study immediately and stops further collection. It does not automatically delete existing information.</p>
-          <label><input type="checkbox" name="confirmed" value="true" required> I understand and want to withdraw from this study.</label>
+          <label class="control-row"><input type="checkbox" name="confirmed" value="true" required> I understand and want to withdraw from this study.</label>
           <button class="danger" type="submit" data-confirm="Withdraw from this study now? You will be signed out.">Withdraw and sign out</button>
         </form>
       </details>

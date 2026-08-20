@@ -22,12 +22,12 @@
 		<form method="post" action="/login" class="stack section">
 			<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 			<div class="field">
-				<label>Email</label>
-				<input type="email" name="email" autocomplete="email" required>
+				<label for="login-email">Email</label>
+				<input id="login-email" type="email" name="email" autocomplete="email" required>
 			</div>
 			<div class="field">
-				<label>Password</label>
-				<input type="password" name="password" autocomplete="current-password" required>
+				<label for="login-password">Password</label>
+				<input id="login-password" type="password" name="password" autocomplete="current-password" required>
 			</div>
 			<button>Sign in</button>
 		</form>

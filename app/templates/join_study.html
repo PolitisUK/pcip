@@ -12,7 +12,7 @@
 		<p>{{ study.description }}</p>
 		<form method="post" action="/join-study" class="stack">
 			<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-			<label class="check"><input type="checkbox" name="consent" value="true" required> I have read the study information and consent to participate.</label>
+			<label class="control-row"><input type="checkbox" name="consent" value="true" required> I have read the study information and consent to participate.</label>
 			<button>Join study</button>
 		</form>
 		{% else %}

@@ -81,6 +81,37 @@ def test_health_and_version():
         assert data['version'] == '0.6.0'
 
 
+def test_checkbox_control_rows_cannot_inherit_full_width_field_input_layout():
+    """Protect checkbox/radio geometry, not merely input/label association."""
+    css = Path('app/static/app.css').read_text()
+    field_input_rule = css[
+        css.index('.field input:not([type="checkbox"]):not([type="radio"])'):
+        css.index('}', css.index('.field input:not([type="checkbox"]):not([type="radio"])'))
+    ]
+    control_row_rule = css[
+        css.index('.control-row,'):
+        css.index('}', css.index('.control-row,'))
+    ]
+    control_input_rule = css[
+        css.index('.control-row input[type="checkbox"],'):
+        css.index('}', css.index('.control-row input[type="checkbox"],'))
+    ]
+
+    assert 'width: 100%;' in field_input_rule
+    assert 'grid-template-columns: var(--control-row-input) minmax(0, 1fr);' in control_row_rule
+    assert 'inline-size: 1.1rem;' in control_input_rule
+    assert 'min-inline-size: 1.1rem;' in control_input_rule
+
+    for template_name in (
+        'study_detail.html',
+        'first_project_wizard.html',
+        'join_study.html',
+        'participant_portal.html',
+    ):
+        template = Path('app/templates', template_name).read_text()
+        assert 'class="control-row"><input type="checkbox"' in template
+
+
 def test_readiness_checks_database():
     with client:
         data = client.get('/health/ready')
