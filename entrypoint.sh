@@ -34,7 +34,7 @@ if [ "${RUN_RIVERMERE_PRODUCTION_DEMO_SEED:-false}" = "true" ]; then
     --confirm-nonlocal-demo \
     --confirm-production-demo \
     --create-production-demo-organisation \
-    --grant-sole-platform-admin-access
+    --grant-configured-production-owner-access
   PYTHONPATH=. python scripts/seed_rivermere_demo.py \
     --environment production \
     --organisation-slug rivermere-town-council \

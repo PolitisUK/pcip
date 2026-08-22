@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     key_vault_secret_entra_client_secret: str = "entra-client-secret"
     key_vault_secret_azure_openai_api_key: str = "azure-openai-api-key"
     startup_validate_migrations: bool = True
+    # Supplied transiently by the protected production release environment.
+    # This is deliberately an opaque database primary key, never an email or
+    # other mutable account attribute.
+    rivermere_production_owner_user_id: str | None = None
     # Retention must be deliberately configured by the controller.  A generic
     # platform period is not an approved study retention schedule.
     privacy_retention_days: int | None = None
