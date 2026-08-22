@@ -10,6 +10,11 @@ on:
         description: Container image tag
         required: true
         default: 0.6.0
+      seed_rivermere_demo:
+        description: Run and verify the idempotent Rivermere v1.1 import in the staging application container
+        required: true
+        type: boolean
+        default: false
 permissions:
   id-token: write
   contents: read
@@ -97,6 +102,13 @@ jobs:
             -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
             -n "${{ steps.resources.outputs.app }}" \
             --linux-fx-version "DOCKER|${{ steps.resources.outputs.acr_login_server }}/${{ steps.resources.outputs.image_repository }}:${DEPLOY_TAG}"
+      - name: Enable the staging-only Rivermere startup runner
+        if: ${{ inputs.seed_rivermere_demo }}
+        run: >-
+          az webapp config appsettings set
+          -g "${{ vars.AZURE_RESOURCE_GROUP }}"
+          -n "${{ steps.resources.outputs.app }}"
+          --settings RUN_RIVERMERE_DEMO_SEED=true
       - name: Enable container diagnostics
         continue-on-error: true
         run: >-
@@ -144,6 +156,36 @@ jobs:
             fi
             echo "Stable readiness check $stable_check/6 passed."
           done
+      - name: Clear the staging-only Rivermere startup runner
+        if: ${{ always() && inputs.seed_rivermere_demo }}
+        run: >-
+          az webapp config appsettings set
+          -g "${{ vars.AZURE_RESOURCE_GROUP }}"
+          -n "${{ steps.resources.outputs.app }}"
+          --settings RUN_RIVERMERE_DEMO_SEED=false
+      - name: Restart after clearing the Rivermere startup runner
+        if: ${{ success() && inputs.seed_rivermere_demo }}
+        run: az webapp restart -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ steps.resources.outputs.app }}"
+      - name: Verify readiness after clearing the Rivermere startup runner
+        if: ${{ success() && inputs.seed_rivermere_demo }}
+        shell: bash
+        run: |
+          APP_HOST=$(az webapp show \
+            -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -n "${{ steps.resources.outputs.app }}" \
+            --query defaultHostName \
+            -o tsv)
+          for attempt in {1..24}; do
+            body=$(curl --fail --silent --show-error "https://${APP_HOST}/health/ready" || true)
+            if printf '%s' "$body" | grep -q '"status":"ready"'; then
+              echo "Readiness passed after the staging seed flag was cleared."
+              exit 0
+            fi
+            echo "Waiting for readiness after clearing the seed flag ($attempt/24)..."
+            sleep 10
+          done
+          echo "Application did not recover after the staging seed flag was cleared." >&2
+          exit 1
       - name: Refresh Azure login for diagnostics
         if: ${{ failure() }}
         uses: azure/login@v2

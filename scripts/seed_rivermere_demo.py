@@ -26,6 +26,11 @@ def main() -> int:
     parser.add_argument("--confirm-local-development", action="store_true", help="Required acknowledgement for disposable local development data.")
     parser.add_argument("--confirm-nonlocal-demo", action="store_true", help="Required acknowledgement before staging or another nonlocal target is touched.")
     parser.add_argument("--confirm-production-demo", action="store_true", help="Separate confirmation required for the production fictional/demo organisation.")
+    parser.add_argument(
+        "--create-staging-demo-organisation",
+        action="store_true",
+        help="Create the exact fictional Rivermere organisation and non-login demo researcher when they are absent in staging.",
+    )
     parser.add_argument("--remove", choices=["everyday-life", "chapel-lane"], help="Remove only the selected Rivermere demonstration project.")
     parser.add_argument("--verify", action="store_true", help="Read-only verification against the bundled v1.1 content pack.")
     args = parser.parse_args()
@@ -38,6 +43,10 @@ def main() -> int:
     is_local = requested_environment in {"development", "dev", "test", "testing"}
     if args.verify and args.remove:
         parser.error("--verify and --remove cannot be used together")
+    if args.create_staging_demo_organisation and requested_environment != "staging":
+        parser.error("--create-staging-demo-organisation is restricted to staging; no records were changed")
+    if args.create_staging_demo_organisation and (args.verify or args.remove):
+        parser.error("--create-staging-demo-organisation is only valid when seeding; no records were changed")
     if not args.verify and is_local and not args.confirm_local_development:
         parser.error("--confirm-local-development is required; no records were changed")
     if not args.verify and not is_local and not args.confirm_nonlocal_demo:
@@ -66,7 +75,12 @@ def main() -> int:
             action = f"removed:{code}"
         else:
             replacement = replace_superseded_rivermere_demo(db, storage) if is_local else None
-            result = seed_rivermere(db, storage, organisation_slug=args.organisation_slug, create_organisation=is_local).as_dict()
+            result = seed_rivermere(
+                db,
+                storage,
+                organisation_slug=args.organisation_slug,
+                create_organisation=is_local or args.create_staging_demo_organisation,
+            ).as_dict()
             if replacement:
                 result["superseded_v1_removed"] = replacement
             action = "seeded"
