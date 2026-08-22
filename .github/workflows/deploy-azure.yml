@@ -25,7 +25,7 @@ jobs:
           set -euo pipefail
           environment_name=$(printf '%s' "$REQUESTED_ENVIRONMENT" | tr '[:upper:]' '[:lower:]')
           if [ "$environment_name" != "staging" ]; then
-            echo "This workflow deploys only the explicitly configured staging application. Production promotion must use Promote PCIP release candidate." >&2
+            echo "This workflow deploys only the explicitly configured staging application. Production promotion must use the digest-pinned Promote PCIP release candidate workflow." >&2
             exit 1
           fi
 
