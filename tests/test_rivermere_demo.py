@@ -28,11 +28,13 @@ from app.models import (
     ActivityResponse,
     EvidenceFile,
     Organisation,
+    OrganisationMembership,
     Participant,
     Project,
     ResearchTheme,
     Study,
     StudyEnrolment,
+    User,
 )
 from app.storage import LocalStorage
 
@@ -210,3 +212,81 @@ def test_designated_organisation_and_projects_exist_once(rivermere_database):
         assert organisation.name == "Rivermere Town Council"
         projects = db.scalars(select(Project).where(Project.organisation_id == organisation.id).order_by(Project.code)).all()
         assert [project.code for project in projects] == [EVERYDAY_PROJECT_CODE, CHAPEL_PROJECT_CODE]
+
+
+def test_production_access_is_granted_only_to_the_sole_active_platform_admin(rivermere_database):
+    factory, storage = rivermere_database
+    with factory() as db:
+        home = Organisation(name="Politis Operations", slug="politis-operations")
+        db.add(home)
+        db.flush()
+        administrator = User(
+            organisation_id=home.id,
+            name="Platform Administrator",
+            email="platform-admin@example.invalid",
+            password_hash=None,
+            role="owner",
+            is_platform_admin=True,
+            is_active=True,
+        )
+        db.add(administrator)
+        db.flush()
+        db.add(OrganisationMembership(
+            user_id=administrator.id,
+            organisation_id=home.id,
+            role="owner",
+            is_active=True,
+        ))
+        db.commit()
+
+        counts = seed_rivermere(
+            db,
+            storage,
+            create_organisation=True,
+            grant_sole_platform_admin_access=True,
+        )
+        rivermere = db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG))
+        membership = db.scalar(select(OrganisationMembership).where(
+            OrganisationMembership.user_id == administrator.id,
+            OrganisationMembership.organisation_id == rivermere.id,
+        ))
+        assert membership.role == "owner"
+        assert membership.is_active is True
+        assert counts.memberships == 2
+
+        repeat = seed_rivermere(
+            db,
+            storage,
+            create_organisation=True,
+            grant_sole_platform_admin_access=True,
+        )
+        assert repeat.memberships == 0
+
+
+def test_production_access_fails_closed_when_platform_admin_is_ambiguous(rivermere_database):
+    factory, storage = rivermere_database
+    with factory() as db:
+        home = Organisation(name="Politis Operations", slug="politis-operations")
+        db.add(home)
+        db.flush()
+        for number in (1, 2):
+            db.add(User(
+                organisation_id=home.id,
+                name=f"Platform Administrator {number}",
+                email=f"platform-admin-{number}@example.invalid",
+                password_hash=None,
+                role="owner",
+                is_platform_admin=True,
+                is_active=True,
+            ))
+        db.commit()
+
+        with pytest.raises(UnsafeDemoTarget, match="exactly one active platform administrator"):
+            seed_rivermere(
+                db,
+                storage,
+                create_organisation=True,
+                grant_sole_platform_admin_access=True,
+            )
+        db.rollback()
+        assert db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG)) is None
