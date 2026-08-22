@@ -3332,6 +3332,18 @@ def test_release_promotion_is_digest_pinned_and_protected_by_release_evidence():
     assert 'Production promotion must use the digest-pinned Promote PCIP release candidate workflow.' in legacy
 
 
+def test_release_promotion_checks_readiness_separately_from_public_legal_routes():
+    promotion = Path('.github/workflows/promote-release.yml').read_text()
+    public_legal_routes = (
+        'for route in privacy support terms cookies accessibility acceptable-use legal contact; do'
+    )
+
+    assert '"https://$host/health/ready"' in promotion
+    assert promotion.count('"https://citizencentric.co.uk/health/ready"') == 0
+    assert promotion.count(public_legal_routes) == 2
+    assert 'for route in health privacy support terms cookies accessibility acceptable-use legal contact; do' not in promotion
+
+
 def test_development_environment_allows_local_defaults():
     candidate = hosted_settings(
         environment='development',
