@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import io
 import json
+import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +25,7 @@ from app.models import (
     Activity,
     ActivityResponse,
     AuditEvent,
+    DemoImportStatus,
     EvidenceConfidenceAssessment,
     EvidenceFile,
     Organisation,
@@ -42,6 +45,8 @@ from app.models import (
     User,
 )
 
+logger = logging.getLogger(__name__)
+
 RIVERMERE_SLUG = "rivermere-town-council"
 RIVERMERE_NAME = "Rivermere Town Council"
 EVERYDAY_PROJECT_CODE = "RIV-2035"
@@ -59,6 +64,36 @@ LEGACY_PROJECT_CODES = {EVERYDAY_PROJECT_CODE, "RIV-CHAPEL"}
 
 class UnsafeDemoTarget(RuntimeError):
     """Raised before a command can modify an unsuitable target."""
+
+
+def _milestone(phase: str, started: float | None = None) -> None:
+    payload: dict[str, object] = {"event": "rivermere_import", "phase": phase}
+    if started is not None:
+        payload["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    logger.info(json.dumps(payload, sort_keys=True))
+
+
+def update_rivermere_import_status(status: str, phase: str, *, error_category: str | None = None) -> None:
+    """Persist diagnostic state independently of the all-or-nothing seed session."""
+    from app.db import SessionLocal
+
+    now = datetime.now(timezone.utc)
+    try:
+        with SessionLocal() as status_db:
+            row = status_db.get(DemoImportStatus, "rivermere")
+            if row is None:
+                row = DemoImportStatus(dataset="rivermere", status=status, phase=phase, content_version=CONTENT_VERSION)
+                status_db.add(row)
+            row.status, row.phase, row.content_version, row.error_category = status, phase, CONTENT_VERSION, error_category
+            if status == "running" and row.started_at is None:
+                row.started_at = now
+            if status == "committed":
+                row.committed_at = now
+            if status == "verified":
+                row.verified_at = now
+            status_db.commit()
+    except Exception as exc:
+        logger.error(json.dumps({"event": "rivermere_import_status", "error_category": exc.__class__.__name__}))
 
 
 @dataclass
@@ -509,6 +544,8 @@ def seed_rivermere(
     demo_owner_email: str | None = None,
 ) -> SeedCounts:
     """Create the exact v1.1 data once; a repeat call only verifies existing rows."""
+    started = time.monotonic()
+    _milestone("seed_started", started)
     if grant_sole_platform_admin_access and grant_configured_production_owner_access:
         raise UnsafeDemoTarget("Production Rivermere access must use one owner selection mechanism.")
     explicit_owner = (
@@ -520,10 +557,12 @@ def seed_rivermere(
         if grant_configured_production_owner_access
         else None
     )
+    _milestone("owner_configuration_validated", started)
     _assert_rivermere_seed_state_is_safe(db, organisation_slug)
     datasets = rivermere_datasets()
     counts = SeedCounts()
     organisation = _find_or_create_organisation(db, organisation_slug, create=create_organisation)
+    _milestone("organisation_resolved", started)
     operator = _ensure_operator(db, organisation, counts, create=create_organisation)
     if grant_sole_platform_admin_access:
         _grant_sole_platform_admin_access(db, organisation, counts)
@@ -535,19 +574,27 @@ def seed_rivermere(
             owner=explicit_owner,
         )
     for code in (EVERYDAY_PROJECT_CODE, CHAPEL_PROJECT_CODE):
+        _milestone(f"project_{code}_started", started)
         data = datasets[code]
         project = _get_or_create_project(db, organisation.id, operator.id, data, counts)
         study = _get_or_create_study(db, organisation.id, operator.id, project, data, counts)
         participants = _participants(db, organisation.id, operator.id, study, data, counts)
+        _milestone(f"project_{code}_participants_completed", started)
         activities = _activities(db, organisation.id, study, data, counts)
+        _milestone(f"project_{code}_activities_completed", started)
         responses = _responses(db, organisation.id, study, data, participants, activities, counts)
+        _milestone(f"project_{code}_responses_completed", started)
         _media(db, storage, organisation.id, study, data, responses, counts)
+        _milestone(f"project_{code}_media_completed", started)
         _memos(db, organisation.id, operator.id, study, data, counts)
+        _milestone(f"project_{code}_memos_completed", started)
     db.add(AuditEvent(
         organisation_id=organisation.id, actor_user_id=operator.id, action="demo.rivermere.v1_1.seeded", entity_type="organisation",
         entity_id=str(organisation.id), detail=f"fictional_demo=true content_version={CONTENT_VERSION} {json.dumps(counts.as_dict(), sort_keys=True)}",
     ))
+    _milestone("database_commit_started", started)
     db.commit()
+    _milestone("database_commit_completed", started)
     return counts
 
 
