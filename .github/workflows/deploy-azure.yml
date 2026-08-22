@@ -1,11 +1,11 @@
-name: Legacy PCIP Azure deployment (non-production only)
+name: PCIP staging application deployment
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: Non-production Azure environment name. Production promotion uses Promote PCIP release candidate.
+        description: Must be staging. Production promotion uses Promote PCIP release candidate.
         required: true
-        default: dev
+        default: staging
       image_tag:
         description: Container image tag
         required: true
@@ -24,8 +24,8 @@ jobs:
         run: |
           set -euo pipefail
           environment_name=$(printf '%s' "$REQUESTED_ENVIRONMENT" | tr '[:upper:]' '[:lower:]')
-          if [ "$environment_name" = "production" ]; then
-            echo "Production promotion must use the digest-pinned Promote PCIP release candidate workflow." >&2
+          if [ "$environment_name" != "staging" ]; then
+            echo "This workflow deploys only the explicitly configured staging application. Production promotion must use Promote PCIP release candidate." >&2
             exit 1
           fi
 
@@ -46,145 +46,31 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Validate Azure resource naming parameters
-        id: deployment_parameters
-        shell: bash
-        env:
-          CONFIGURED_PREFIX: ${{ vars.PCIP_PREFIX }}
-          REQUESTED_ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          set -euo pipefail
-
-          PREFIX="${CONFIGURED_PREFIX:-pcip}"
-          PREFIX=$(printf '%s' "$PREFIX" | tr '[:upper:]' '[:lower:]')
-          ENVIRONMENT_NAME=$(printf '%s' "$REQUESTED_ENVIRONMENT" | tr '[:upper:]' '[:lower:]')
-          RESOURCE_NAME_PATTERN='^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
-
-          if [[ ! "$PREFIX" =~ $RESOURCE_NAME_PATTERN ]]; then
-            echo "PCIP_PREFIX must contain only letters, numbers, and internal hyphens." >&2
-            exit 1
-          fi
-
-          if [[ ! "$ENVIRONMENT_NAME" =~ $RESOURCE_NAME_PATTERN ]]; then
-            echo "The deployment environment must contain only letters, numbers, and internal hyphens." >&2
-            exit 1
-          fi
-
-          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
-          echo "environment_name=$ENVIRONMENT_NAME" >> "$GITHUB_OUTPUT"
-      - name: Deploy Azure resources
-        uses: azure/arm-deploy@v2
-        with:
-          scope: resourcegroup
-          resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
-          template: infra/main.bicep
-          failOnStdErr: false
-          parameters: >-
-            prefix=${{ steps.deployment_parameters.outputs.prefix }}
-            environmentName=${{ steps.deployment_parameters.outputs.environment_name }}
-            containerImageTag=${{ inputs.image_tag }}-${{ github.run_number }}
-            postgresAdminUser=${{ vars.POSTGRES_ADMIN_USER }}
-            postgresAdminPassword=${{ secrets.POSTGRES_ADMIN_PASSWORD }}
-            secretKey=${{ secrets.PCIP_SECRET_KEY }}
-            defenderWebhookSecret=${{ secrets.DEFENDER_WEBHOOK_SECRET }}
-            entraTenantId=${{ vars.ENTRA_TENANT_ID }}
-            entraClientId=${{ vars.ENTRA_CLIENT_ID }}
-            entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET }}
-            entraAllowedDomains=${{ vars.ENTRA_ALLOWED_DOMAINS }}
-            entraDefaultOrganisationSlug=${{ vars.ENTRA_DEFAULT_ORGANISATION_SLUG }}
-            runMigrations=${{ inputs.environment == 'Production' || inputs.environment == 'production' }}
-          deploymentName: pcip-${{ inputs.environment }}-${{ github.run_number }}
-      - name: Synchronize live production app configuration and permissions
-        if: ${{ inputs.environment == 'Production' || inputs.environment == 'production' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          RG="${{ vars.AZURE_RESOURCE_GROUP }}"
-          DEPLOYMENT="pcip-${{ inputs.environment }}-${{ github.run_number }}"
-          LIVE_APP="citizencentric-pcip-prod"
-
-          INFRA_APP=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.appName.value -o tsv)
-          ACR=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.registryName.value -o tsv)
-          STORAGE=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.storageAccountName.value -o tsv)
-          VAULT=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.keyVaultName.value -o tsv)
-
-          echo "Infrastructure app: $INFRA_APP"
-          echo "Live app: $LIVE_APP"
-          echo "Registry: $ACR"
-          echo "Storage: $STORAGE"
-          echo "Key Vault: $VAULT"
-
-          LIVE_PRINCIPAL=$(az webapp identity assign -g "$RG" -n "$LIVE_APP" --query principalId -o tsv)
-          ACR_SCOPE=$(az acr show -g "$RG" -n "$ACR" --query id -o tsv)
-          STORAGE_SCOPE=$(az storage account show -g "$RG" -n "$STORAGE" --query id -o tsv)
-          VAULT_SCOPE=$(az keyvault show -g "$RG" -n "$VAULT" --query id -o tsv)
-          CONTAINER_SCOPE="$STORAGE_SCOPE/blobServices/default/containers/evidence"
-
-          ensure_role() {
-            ROLE="$1"
-            SCOPE="$2"
-            EXISTING=$(az role assignment list \
-              --assignee-object-id "$LIVE_PRINCIPAL" \
-              --scope "$SCOPE" \
-              --query "[?roleDefinitionName=='$ROLE'] | length(@)" \
-              -o tsv)
-            if [ "$EXISTING" = "0" ]; then
-              az role assignment create \
-                --assignee-object-id "$LIVE_PRINCIPAL" \
-                --assignee-principal-type ServicePrincipal \
-                --role "$ROLE" \
-                --scope "$SCOPE" >/dev/null
-            fi
-          }
-
-          ensure_role "AcrPull" "$ACR_SCOPE"
-          ensure_role "Storage Blob Data Owner" "$CONTAINER_SCOPE"
-          ensure_role "Storage Blob Delegator" "$STORAGE_SCOPE"
-          ensure_role "Key Vault Secrets User" "$VAULT_SCOPE"
-
-          az webapp config appsettings list -g "$RG" -n "$INFRA_APP" -o json \
-            | jq 'map({key: .name, value: .value}) | from_entries' \
-            > /tmp/pcip-live-settings.json
-
-          az webapp config appsettings set \
-            -g "$RG" \
-            -n "$LIVE_APP" \
-            --settings @/tmp/pcip-live-settings.json >/dev/null
-
-          az webapp config appsettings set \
-            -g "$RG" \
-            -n "$LIVE_APP" \
-            --settings \
-              BASE_URL="https://citizencentric.co.uk" \
-              TRUSTED_HOSTS="citizencentric.co.uk,www.citizencentric.co.uk,citizencentric-pcip-prod.azurewebsites.net" \
-              ALLOWED_ORIGINS="https://citizencentric.co.uk,https://www.citizencentric.co.uk,https://citizencentric-pcip-prod.azurewebsites.net" \
-              RUN_MIGRATIONS="true" >/dev/null
-      - name: Resolve live application resources
+      - name: Resolve and validate the explicit staging target
         id: resources
         shell: bash
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP: ${{ vars.PCIP_STAGING_APP }}
+          ACR: ${{ vars.PCIP_STAGING_ACR }}
         run: |
           set -euo pipefail
-          RG="${{ vars.AZURE_RESOURCE_GROUP }}"
-          DEPLOYMENT="pcip-${{ inputs.environment }}-${{ github.run_number }}"
 
-          if [ "${{ inputs.environment }}" = "Production" ] || [ "${{ inputs.environment }}" = "production" ]; then
-            APP="citizencentric-pcip-prod"
-            ACR=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.registryName.value -o tsv)
-            ACR_LOGIN_SERVER=$(az deployment group show -g "$RG" -n "$DEPLOYMENT" --query properties.outputs.registryLoginServer.value -o tsv)
-            IMAGE_REPOSITORY="pcip"
-          else
-            APP=$(az webapp list -g "$RG" --query "[0].name" -o tsv)
-            LINUX_FX_VERSION=$(az webapp config show -g "$RG" -n "$APP" --query linuxFxVersion -o tsv)
-            CURRENT_IMAGE=${LINUX_FX_VERSION#DOCKER|}
-            ACR_LOGIN_SERVER=${CURRENT_IMAGE%%/*}
-            IMAGE_REFERENCE=${CURRENT_IMAGE#*/}
-            IMAGE_REPOSITORY=${IMAGE_REFERENCE%%@*}
-            IMAGE_REPOSITORY=${IMAGE_REPOSITORY%%:*}
-            ACR=${ACR_LOGIN_SERVER%%.*}
-          fi
+          for value in RG APP ACR; do
+            test -n "${!value}" || { echo "Required staging repository variable $value is not configured." >&2; exit 1; }
+          done
+          az webapp show -g "$RG" -n "$APP" --query state -o tsv | grep -qx Running
+          ACR_LOGIN_SERVER=$(az acr show -g "$RG" -n "$ACR" --query loginServer -o tsv)
+          test -n "$ACR_LOGIN_SERVER" || { echo "Could not resolve the configured staging registry." >&2; exit 1; }
+          LINUX_FX_VERSION=$(az webapp config show -g "$RG" -n "$APP" --query linuxFxVersion -o tsv)
+          CURRENT_IMAGE=${LINUX_FX_VERSION#DOCKER|}
+          CURRENT_IMAGE_SERVER=${CURRENT_IMAGE%%/*}
+          IMAGE_REFERENCE=${CURRENT_IMAGE#*/}
+          IMAGE_REPOSITORY=${IMAGE_REFERENCE%%@*}
+          IMAGE_REPOSITORY=${IMAGE_REPOSITORY%%:*}
 
-          if [ -z "$APP" ] || [ -z "$ACR" ] || [ -z "$ACR_LOGIN_SERVER" ] || [ -z "$IMAGE_REPOSITORY" ]; then
-            echo "Could not resolve deployment resources." >&2
+          if [ "$CURRENT_IMAGE_SERVER" != "$ACR_LOGIN_SERVER" ] || [ -z "$IMAGE_REPOSITORY" ]; then
+            echo "The configured staging app does not use the configured staging registry." >&2
             exit 1
           fi
 
@@ -192,15 +78,18 @@ jobs:
           echo "acr=$ACR" >> "$GITHUB_OUTPUT"
           echo "acr_login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
           echo "image_repository=$IMAGE_REPOSITORY" >> "$GITHUB_OUTPUT"
-      - name: Build image in live Azure Container Registry
+      - name: Build image in the explicit staging registry
         shell: bash
         run: |
+          created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           DEPLOY_TAG="${{ inputs.image_tag }}-${{ github.run_number }}"
           az acr build \
             --registry "${{ steps.resources.outputs.acr }}" \
+            --build-arg "VCS_REF=${{ github.sha }}" \
+            --build-arg "BUILD_CREATED=$created" \
             --image "${{ steps.resources.outputs.image_repository }}:${DEPLOY_TAG}" \
             .
-      - name: Point live application at new image
+      - name: Point the explicit staging application at the new image
         shell: bash
         run: |
           DEPLOY_TAG="${{ inputs.image_tag }}-${{ github.run_number }}"
