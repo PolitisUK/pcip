@@ -1,0 +1,2803 @@
+{
+  "dataset_version": "1.1.0",
+  "fictional_demo": true,
+  "organisation": {
+    "name": "Rivermere Town Council",
+    "slug": "rivermere-town-council"
+  },
+  "project": {
+    "title": "Chapel Lane: Living With an Unresolved Planning Breach",
+    "code": "RIV-CHAPEL-LANE",
+    "description": "A fictional longitudinal ethnographic study of how residents observe, interpret, report and adapt to an apparently unresolved planning-enforcement problem.",
+    "methodology": "longitudinal ethnographic diary and photo elicitation",
+    "timeline": {
+      "start": "2025-09-01",
+      "end": "2026-09-30"
+    },
+    "interpretive_boundary": "The dataset documents residents' lived experience and perceived non-resolution. It does not establish whether a legal breach occurred or what action took place internally.",
+    "research_safeguards": {
+      "individual_consent": "Each participant is separately consented to the fictional research study.",
+      "individual_authorship": "Every diary response and research upload is authored and submitted only by the named participant.",
+      "no_proxy_submission": "Researchers, neighbours and resident-association volunteers do not type, upload, edit or submit material for another participant.",
+      "no_pooled_personal_data": "The research study does not collect residents' council reference numbers, private messages, complaint files or third-party photographs into a shared case record.",
+      "no_reporting_direction": "Prompts ask participants to reflect on events and actions that already occurred; they do not instruct participants to monitor the site, make a council complaint, visit at unusual times or collect new evidence.",
+      "separate_civic_process": "Any fictional planning report described was made independently through a separate fictional council channel and is recounted retrospectively in the research diary.",
+      "media_minimisation": "Fictional media specifications exclude identifiable people, children, registration plates, precise private addresses and purported official council documents."
+    }
+  },
+  "participants": [
+    {
+      "reference": "CL-P01",
+      "name": "Mara Venn",
+      "age": 42,
+      "relationship_to_place": "Lives directly opposite the yard with her partner and two school-age children.",
+      "routine": "Leaves at 08:05 for Willowbank Primary, works from home three days a week, and uses the front bedroom as an office.",
+      "voice": "Precise and practical; notices times, vehicle positions and effects on family routines.",
+      "starting_position": "Concerned but assumes a clear report will lead to a quick check.",
+      "trajectory": "Concern → meticulous reporting → anger at repetition → stops routine reporting while the activity continues."
+    },
+    {
+      "reference": "CL-P02",
+      "name": "Derek Hales",
+      "age": 68,
+      "relationship_to_place": "Retired joiner who has lived around the corner since 1987.",
+      "routine": "Walks to Northgate Library after breakfast and spends much of the day at home or tending an allotment.",
+      "voice": "Reflective, place-conscious and careful about distinguishing memory from fact.",
+      "starting_position": "Unsure whether the new use is materially different from the old builders' yard.",
+      "trajectory": "Historical comparison → cautious concern → active witness → continued patience mixed with distrust about communication."
+    },
+    {
+      "reference": "CL-P03",
+      "name": "Nadia Quill",
+      "age": 35,
+      "relationship_to_place": "Nurse and shift worker living behind the site's eastern boundary.",
+      "routine": "Alternates night shifts and day shifts; sleeps at irregular hours with blackout curtains and a fan.",
+      "voice": "Terse when tired, sensory and specific about sound, vibration and sleep.",
+      "starting_position": "Initially treats the disruption as temporary bad luck.",
+      "trajectory": "Sleep disturbance → systematic sound log → exhaustion → adapts sleeping arrangements and withdraws from reporting."
+    },
+    {
+      "reference": "CL-P04",
+      "name": "Colin Myles",
+      "age": 51,
+      "relationship_to_place": "Owns Paper Finch, a small stationery and parcel shop at the Mill Street junction.",
+      "routine": "Opens at 07:30, receives deliveries, and watches Chapel Lane traffic from the counter.",
+      "voice": "Commercially minded, sceptical of exaggeration, attentive to customer behaviour and road access.",
+      "starting_position": "Believes some neighbours dislike any commercial activity.",
+      "trajectory": "Scepticism → observes unsafe reversing and obstruction → accepts a narrower problem while resisting blanket condemnation."
+    },
+    {
+      "reference": "CL-P05",
+      "name": "Leena Shah",
+      "age": 29,
+      "relationship_to_place": "Private tenant on Chapel Lane who moved to Rivermere eleven months before the study.",
+      "routine": "Cycles to Rivermere Central Station, works hybrid hours, and worries about being labelled a difficult tenant.",
+      "voice": "Tentative, self-questioning and alert to risk; often describes what she decided not to do.",
+      "starting_position": "Does not know the history or planning status and avoids joining the dispute.",
+      "trajectory": "Outsider uncertainty → personal safety incident → selective reporter → quiet adaptation because housing insecurity limits participation."
+    },
+    {
+      "reference": "CL-P06",
+      "name": "Tom Arlen",
+      "age": 46,
+      "relationship_to_place": "Resident association secretary living two streets away.",
+      "routine": "Works in payroll, checks neighbourhood messages before work, and organises monthly meetings at The Foundry.",
+      "voice": "Methodical, procedural and inclusive; becomes the informal keeper of dates and reference numbers.",
+      "starting_position": "Confident that coordinated evidence will make the process legible and effective.",
+      "trajectory": "Organiser → shares public information → becomes the person neighbours expect to have answers → withdraws from handling anyone else's material."
+    },
+    {
+      "reference": "CL-P07",
+      "name": "Elsie Rowan",
+      "age": 77,
+      "relationship_to_place": "Long-term resident whose living-room window faces the Chapel Lane junction.",
+      "routine": "At home most days, receives a carer at lunchtime, and watches the street while knitting by the window.",
+      "voice": "Observational and understated; uses familiar people, sounds and seasonal cues rather than clock time.",
+      "starting_position": "Sees the yard as part of local working life and dislikes conflict.",
+      "trajectory": "Normalises activity → notices intensification → contributes observations through others → stops mentioning incidents as they become ordinary."
+    },
+    {
+      "reference": "CL-P08",
+      "name": "Imran Bote",
+      "age": 39,
+      "relationship_to_place": "Parent who walks two children along Chapel Lane to Willowbank Primary.",
+      "routine": "School walk at 08:10 and 15:05, then drives between mobile repair jobs.",
+      "voice": "Direct and situational; evaluates issues through near misses and what children can safely do.",
+      "starting_position": "Concerned mainly about vehicles rather than planning rules.",
+      "trajectory": "Route concern → photographic reporting → reroutes school walk → reports only immediate dangers."
+    },
+    {
+      "reference": "CL-P09",
+      "name": "Sophie Lark",
+      "age": 33,
+      "relationship_to_place": "Asthmatic resident in a ground-floor flat near the yard entrance.",
+      "routine": "Freelance illustrator working at home; opens windows late morning and walks to Meadow Park when symptoms allow.",
+      "voice": "Visual, sensory and cautious about attributing symptoms to a single cause.",
+      "starting_position": "Notices dust but is unsure whether it comes from the yard, traffic or dry weather.",
+      "trajectory": "Uncertainty → patterned observations → intensive evidence collection → stops documenting but continues protective routines."
+    },
+    {
+      "reference": "CL-P10",
+      "name": "Gareth Pell",
+      "age": 58,
+      "relationship_to_place": "Delivery driver living on nearby Beacon Road; brother-in-law once worked at the yard.",
+      "routine": "Starts work before dawn and is often away during daytime activity.",
+      "voice": "Blunt, fairness-oriented and sympathetic to working businesses.",
+      "starting_position": "Thinks the complaints risk becoming anti-business.",
+      "trajectory": "Defends the operator → recognises changed hours and scale → supports clearer limits but remains critical of some neighbour claims."
+    },
+    {
+      "reference": "CL-P11",
+      "name": "Priya Norr",
+      "age": 44,
+      "relationship_to_place": "Housing solicitor and resident opposite the southern boundary.",
+      "routine": "Hybrid office work, evening dog walks, and occasional residents' association advice kept separate from her professional role.",
+      "voice": "Analytical and guarded; repeatedly distinguishes observation, inference and legal conclusion.",
+      "starting_position": "Supports reporting but cautions that residents cannot know the enforcement position.",
+      "trajectory": "Process interpreter → active reporter → critic of opacity → remains engaged while resisting claims that delay proves deliberate neglect."
+    },
+    {
+      "reference": "CL-P12",
+      "name": "Jonah Reed",
+      "age": 24,
+      "relationship_to_place": "New graduate renter sharing a house at the Station Road end of Chapel Lane.",
+      "routine": "Works evenings at Eastfield Leisure Centre and returns by bicycle around 22:30.",
+      "voice": "Casual, initially detached, often records short mobile notes after encounters.",
+      "starting_position": "Regards the dispute as an established neighbour argument unrelated to him.",
+      "trajectory": "Disinterest → repeated night-time lighting encounters → modest engagement → assumes others will report and adapts his route."
+    },
+    {
+      "reference": "CL-P13",
+      "name": "Amina Cor",
+      "age": 61,
+      "relationship_to_place": "Community volunteer who coordinates coffee mornings at Willowbank Community Centre.",
+      "routine": "Walks between home, the centre and local shops; hears multiple versions of the dispute.",
+      "voice": "Relational and attentive to disagreement, rumour and the social cost of prolonged conflict.",
+      "starting_position": "Sees her role as helping neighbours compare information without inflaming tensions.",
+      "trajectory": "Listener → helps neighbours discuss different experiences → notices conflict fatigue → protects the coffee morning from being taken over by the dispute."
+    },
+    {
+      "reference": "CL-P14",
+      "name": "Owen Tress",
+      "age": 55,
+      "relationship_to_place": "Mobility-scooter user in sheltered housing off Chapel Lane.",
+      "routine": "Travels to Market Square most mornings and depends on the dropped kerb beside the yard entrance.",
+      "voice": "Dry, concrete and focused on whether a route is physically usable.",
+      "starting_position": "Uninterested in the planning argument unless activity blocks access.",
+      "trajectory": "Pragmatic observer → repeated obstruction reports → route adaptation → stops routine reports but challenges acute blockages."
+    }
+  ],
+  "prompts": [
+    {
+      "id": "CL-Q01",
+      "phase": 1,
+      "title": "Something has changed",
+      "prompt": "Describe the first moment you noticed something different on or around Chapel Lane. What made it stand out from an ordinary day?"
+    },
+    {
+      "id": "CL-Q02",
+      "phase": 2,
+      "title": "Comparing notes",
+      "prompt": "Tell us about a conversation in which another person confirmed, complicated or challenged what you thought you had seen."
+    },
+    {
+      "id": "CL-Q03",
+      "phase": 3,
+      "title": "Advice to report",
+      "prompt": "How did you first hear that incidents should be recorded or reported? What did you expect would happen next?"
+    },
+    {
+      "id": "CL-Q04",
+      "phase": 4,
+      "title": "Keeping a record",
+      "prompt": "Thinking only about something that has already happened, tell us what you did after noticing it and how that fitted into your day. Do not gather or share any new evidence for this study."
+    },
+    {
+      "id": "CL-Q05",
+      "phase": 4,
+      "title": "Different times of day",
+      "prompt": "Thinking about your normal routine, does Chapel Lane feel different at different times? Do not visit at a new time or change your journey for this prompt."
+    },
+    {
+      "id": "CL-Q06",
+      "phase": 5,
+      "title": "Acknowledgement and action",
+      "prompt": "Describe the difference, if any, between receiving a response and seeing something change on the street."
+    },
+    {
+      "id": "CL-Q07",
+      "phase": 5,
+      "title": "What counts as new evidence?",
+      "prompt": "When a familiar incident happens again, how do you decide whether it is worth recording as something new?"
+    },
+    {
+      "id": "CL-Q08",
+      "phase": 6,
+      "title": "Uncertainty about the process",
+      "prompt": "What do you think may be happening out of public view, and what remains impossible for you to know?"
+    },
+    {
+      "id": "CL-Q09",
+      "phase": 6,
+      "title": "Different tolerances",
+      "prompt": "Describe a disagreement about the site that helped you understand why neighbours experience it differently."
+    },
+    {
+      "id": "CL-Q10",
+      "phase": 7,
+      "title": "The burden of noticing and reporting",
+      "prompt": "Has noticing or reporting familiar incidents affected your time, attention or emotions? You do not need to observe, photograph or report anything for this study."
+    },
+    {
+      "id": "CL-Q11",
+      "phase": 7,
+      "title": "Who reports now?",
+      "prompt": "How has responsibility for reporting moved between neighbours over time?"
+    },
+    {
+      "id": "CL-Q12",
+      "phase": 8,
+      "title": "Stopped reporting",
+      "prompt": "Do you still report familiar incidents? Explain what changed in your reasoning, even if the street itself did not change."
+    },
+    {
+      "id": "CL-Q13",
+      "phase": 9,
+      "title": "Living around it",
+      "prompt": "Show us one adjustment that has become part of your routine because of Chapel Lane."
+    },
+    {
+      "id": "CL-Q14",
+      "phase": 10,
+      "title": "Looking back",
+      "prompt": "When did the issue stop feeling temporary, and how has your response changed since then?"
+    },
+    {
+      "id": "CL-Q15",
+      "phase": 10,
+      "title": "What would restore participation?",
+      "prompt": "What information, action or relationship would make reporting feel worthwhile again?"
+    }
+  ],
+  "entries": [
+    {
+      "id": "CL-E001",
+      "participant": "CL-P01",
+      "date": "2025-09-03T07:06:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "A reversing alarm woke me before my phone alarm. From the front window I could see a long flatbed angled across both sides of Chapel Lane while someone in a high-vis jacket guided it through the gate. The yard has always had vans, so one delivery would not have registered. What felt different was the hour and the size: the cab was level with our bedroom and the engine kept idling after the gates closed.",
+      "codes": [
+        "Observing Change > Vehicle movement",
+        "Observing Change > Changed hours",
+        "Experiencing the Issue > Sleep disruption"
+      ],
+      "media": [
+        "CL-A001"
+      ]
+    },
+    {
+      "id": "CL-E002",
+      "participant": "CL-P03",
+      "date": "2025-09-05T13:42:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "I had finished a night shift and was asleep by nine. At 13:42 there was a metal-on-metal crash, then another, close enough that I felt it through the headboard. I assumed building work was happening at one of the houses. When I looked through the gap in the curtains, an orange grab arm was moving material inside the yard. I wrote the time on an old envelope only because I wanted to know whether it happened again tomorrow.",
+      "codes": [
+        "Observing Change > Noise",
+        "Experiencing the Issue > Sleep disruption",
+        "Reporting > Keeping records"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E003",
+      "participant": "CL-P07",
+      "date": "2025-09-08T08:18:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "The vans used to arrive one at a time and Mr Vale would wave even if he did not know your name. This morning there were three white vehicles waiting nose-to-tail before the gate opened. I cannot say what they were carrying. The difference was that nobody could get around them without stepping into the road. By the time my carer arrived the lane looked ordinary again, which made me wonder whether I had made too much of it.",
+      "codes": [
+        "Local Knowledge > Memory of previous use",
+        "Observing Change > Increased activity",
+        "Experiencing the Issue > Street obstruction",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": [
+        "CL-A031"
+      ]
+    },
+    {
+      "id": "CL-E004",
+      "participant": "CL-P04",
+      "date": "2025-09-10T07:48:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "Two builders came into the shop for coffee while their lorry waited on Chapel Lane. That is business for me, so I am not going to pretend every delivery is a nuisance. I did notice the driver reversed from Mill Street without anyone stopping traffic. A woman with a pushchair waited behind my sandwich board until he had finished. My first thought was poor traffic management, not planning breach.",
+      "codes": [
+        "Observing Change > Vehicle movement",
+        "Experiencing the Issue > Safety concerns",
+        "Community Dynamics > Disagreement"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E005",
+      "participant": "CL-P09",
+      "date": "2025-09-12T11:27:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "There was a pale film on the black bonnet of the car outside my window. I drew a line through it with one finger and took a photograph, but the weather has been dry and Chapel Lane always gathers road dust. At about eleven I had heard something being tipped behind the green fence. I am noting both things without saying one caused the other. My inhaler use was normal that day.",
+      "codes": [
+        "Observing Change > Dust",
+        "Interpreting Enforcement > Uncertainty",
+        "Reporting > Photographic evidence"
+      ],
+      "media": [
+        "CL-A002"
+      ]
+    },
+    {
+      "id": "CL-E006",
+      "participant": "CL-P10",
+      "date": "2025-09-15T05:54:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "I leave early enough to see deliveries other people sleep through. There was a rigid truck at the gate at six, which is earlier than I remember, but the driver killed the engine and waited. From what I saw, he was trying not to make a performance of it. I am recording this because the time has changed, not because I think a working yard should be silent.",
+      "codes": [
+        "Observing Change > Changed hours",
+        "Observing Change > Vehicle movement",
+        "Community Dynamics > Disagreement"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E007",
+      "participant": "CL-P14",
+      "date": "2025-09-17T09:31:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "A van was parked over the dropped kerb by the entrance. Usually I can edge round a delivery, but this one left the rear doors open and a trolley across the pavement. I waited four or five minutes, then went back to Beacon Road and crossed where the kerb is steeper. I did not ask whether it had permission. My test is simpler: can I get through without putting the scooter into traffic? That morning I could not.",
+      "codes": [
+        "Experiencing the Issue > Street obstruction",
+        "Experiencing the Issue > Safety concerns",
+        "Experiencing the Issue > Adaptation"
+      ],
+      "media": [
+        "CL-A003"
+      ]
+    },
+    {
+      "id": "CL-E008",
+      "participant": "CL-P05",
+      "date": "2025-09-20T07:19:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "A lorry mirror came past my handlebars close enough that I tucked my elbow in. It was moving slowly, and perhaps I should not have tried to pass while it was lining up, but there had never been a queue of vehicles there on my morning ride before. At work I searched the address and found old references I did not understand. I did not post in the residents' group because I have only just moved here and the argument seems to pre-date me.",
+      "codes": [
+        "Observing Change > Vehicle movement",
+        "Experiencing the Issue > Safety concerns",
+        "Local Knowledge > Understanding planning status",
+        "Community Dynamics > Disagreement"
+      ],
+      "media": [
+        "CL-A032"
+      ]
+    },
+    {
+      "id": "CL-E009",
+      "participant": "CL-P12",
+      "date": "2025-09-22T22:41:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "Coming back from the leisure centre, I noticed the yard was lit like a small football pitch. The lane itself was dark, so the light spilled through every gap in the fence and made the parked bikes flash as I rode past. There was no obvious work happening and no noise. I thought someone had left the lamps on by mistake. It was still bright from my attic window after midnight.",
+      "codes": [
+        "Observing Change > Lighting",
+        "Observing Change > Changed hours",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": [
+        "CL-A004"
+      ]
+    },
+    {
+      "id": "CL-E010",
+      "participant": "CL-P02",
+      "date": "2025-09-24T10:12:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "I stood by the gate long enough to be sure I was not confusing the old use with the new. The builders' yard used to store timber inside the sheds and a couple of vans outside. Now wrapped pallets are stacked along the northern fence where we used to see empty ground. I cannot judge the height from the lane, but the top row is visible above the screening. It is the accumulation, rather than one dramatic incident, that makes the place feel different.",
+      "codes": [
+        "Observing Change > Storage",
+        "Observing Change > Increased activity",
+        "Local Knowledge > Memory of previous use"
+      ],
+      "media": [
+        "CL-A005"
+      ]
+    },
+    {
+      "id": "CL-E011",
+      "participant": "CL-P08",
+      "date": "2025-09-26T08:13:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "The children and I reached the yard just as a truck began reversing. The beeper made Sam put his hands over his ears. The driver stopped when he saw us and waved us across, so nothing actually happened. What bothered me was that the safe route depended on him seeing two small children beside a high fence. We had walked this way for three years without needing a driver's permission to use the pavement.",
+      "codes": [
+        "Observing Change > Vehicle movement",
+        "Experiencing the Issue > Safety concerns",
+        "Experiencing the Issue > Everyday inconvenience"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E012",
+      "participant": "CL-P11",
+      "date": "2025-09-29T18:56:00Z",
+      "phase": 1,
+      "prompt": "CL-Q01",
+      "text": "On the dog walk I noticed solid green panels behind the old wire fence. I could not remember seeing them before, though that does not mean they are new. A neighbour said the yard must be hiding something. I do not know about that. All I can say is that I used to see through the fence in places and now I cannot.",
+      "codes": [
+        "Observing Change > Physical changes",
+        "Local Knowledge > Rumour",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": [
+        "CL-A006"
+      ]
+    },
+    {
+      "id": "CL-E013",
+      "participant": "CL-P13",
+      "date": "2025-10-02T10:35:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "At the community-centre coffee morning, three accounts became one story within about ten minutes. Elsie had seen vans waiting; Mara had been woken by a flatbed; someone else said the yard was now processing waste. Nobody present had seen waste being processed. I wrote the observations on separate lines and marked the last claim as something heard, not witnessed. People were relieved to compare notes, but the conversation also showed how quickly uncertainty hardens into a local fact.",
+      "codes": [
+        "Local Knowledge > Neighbour discussion",
+        "Local Knowledge > Comparing observations",
+        "Local Knowledge > Rumour",
+        "Community Dynamics > Disagreement"
+      ],
+      "media": [
+        "CL-A033"
+      ]
+    },
+    {
+      "id": "CL-E014",
+      "participant": "CL-P01",
+      "date": "2025-10-04T07:11:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "Derek knocked after another early delivery and asked whether I had the exact time. His notebook said 07:08; my phone photograph was stamped 07:11. Instead of arguing, we realised he had written down the first engine noise and I had photographed the vehicle once it was across the road. That three-minute difference mattered because it showed we were observing different parts of the same event. It also made the incident feel less like something I had imagined from bed.",
+      "codes": [
+        "Local Knowledge > Comparing observations",
+        "Community Dynamics > Mutual support",
+        "Reporting > Keeping records",
+        "Observing Change > Changed hours"
+      ],
+      "media": [
+        "CL-A007"
+      ]
+    },
+    {
+      "id": "CL-E015",
+      "participant": "CL-P10",
+      "date": "2025-10-06T19:20:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "The WhatsApp group called the six o'clock truck an HGV thundering down the lane. It was a two-axle rigid, not an articulated lorry, and it was crawling. I said that because accuracy matters if people want to be taken seriously. Mara replied that its classification did not change the fact it woke the house. Both things can be true. The group went quiet for an hour, then someone posted another grainy picture.",
+      "codes": [
+        "Community Dynamics > Disagreement",
+        "Local Knowledge > Comparing observations",
+        "Reporting > Photographic evidence",
+        "Interpreting Enforcement > Fairness"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E016",
+      "participant": "CL-P03",
+      "date": "2025-10-09T14:16:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "I asked the woman next door whether the crashes happened every afternoon. She said she mostly heard them on Tuesdays and Thursdays. Those are exactly the days I sleep after nights, so what felt constant to me may be patterned around my schedule. We agreed to note the next two weeks rather than message each other after every bang. It was useful and slightly uncomfortable to realise my experience of 'all the time' was tied to when I was vulnerable to it.",
+      "codes": [
+        "Local Knowledge > Comparing observations",
+        "Experiencing the Issue > Sleep disruption",
+        "Reporting > Keeping records",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E017",
+      "participant": "CL-P04",
+      "date": "2025-10-11T09:02:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "Two customers were discussing Chapel Lane as if no business had ever operated there. I told them the old yard made noise too. Derek, who was buying stamps, said the distinction was not business versus residents but the number and timing of movements. That was a fairer description than the one in the shop queue. I still think the loudest voices dislike the site itself, but I have started watching the delivery pattern rather than dismissing the whole complaint.",
+      "codes": [
+        "Local Knowledge > Memory of previous use",
+        "Community Dynamics > Disagreement",
+        "Local Knowledge > Comparing observations",
+        "Observing Change > Increased activity"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E018",
+      "participant": "CL-P05",
+      "date": "2025-10-14T17:45:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "Another tenant said cyclists should use Station Road. Imran said that route adds two difficult junctions for children. Until then I had wondered whether the close pass was just me being nervous on a new route. Hearing that other people also hesitated made me feel less foolish. I still stayed out of the residents' messages because I did not want my landlord hearing that I was involved.",
+      "codes": [
+        "Community Dynamics > Neighbour discussion",
+        "Experiencing the Issue > Safety concerns",
+        "Local Knowledge > Comparing observations",
+        "Experiencing the Issue > Adaptation"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E019",
+      "participant": "CL-P07",
+      "date": "2025-10-17T12:10:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "Amina showed me two photographs on her phone and asked whether the stacks were where the timber racks used to be. I could place the old shed but not the boundary exactly. We laid my memory beside the newer image without pretending it was a plan. I remembered noise from saws in the nineties, but not floodlights or lorries waiting before breakfast. It felt important to say both what had always been there and what I did not remember.",
+      "codes": [
+        "Local Knowledge > Memory of previous use",
+        "Local Knowledge > Comparing observations",
+        "Observing Change > Storage",
+        "Observing Change > Lighting"
+      ],
+      "media": [
+        "CL-A034"
+      ]
+    },
+    {
+      "id": "CL-E020",
+      "participant": "CL-P09",
+      "date": "2025-10-19T11:50:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "Mara and I happened to compare photographs while talking outside. The dust on her car looked darker and rougher than the pale layer on my sill. Neither of us knew why. I decided I would keep my own photographs after wet weather because they were easier for me to compare. I did not take hers or send it anywhere.",
+      "codes": [
+        "Local Knowledge > Comparing observations",
+        "Observing Change > Dust",
+        "Reporting > Parallel individual reporting",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": [
+        "CL-A008"
+      ]
+    },
+    {
+      "id": "CL-E021",
+      "participant": "CL-P12",
+      "date": "2025-10-22T22:28:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "My housemate said the lights had always been there and I had only noticed because neighbours were talking about them. I checked older street-view images and could see poles, though not whether they used to stay on. That did not settle anything. It did make me less certain that every visible change was recent. I posted in the group that the late-night timing, rather than the existence of lamps, was the part I could actually describe.",
+      "codes": [
+        "Local Knowledge > Comparing observations",
+        "Local Knowledge > Memory of previous use",
+        "Observing Change > Lighting",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E022",
+      "participant": "CL-P14",
+      "date": "2025-10-24T09:40:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "At the residents' meeting, somebody said the pavement was 'permanently obstructed.' I said that was not true. I could remember three occasions when I could not get through, but I had not been sitting there counting vans between them. The problem is that I never know in advance whether the dropped kerb will be clear. That is inconvenient enough without making it sound worse than it is.",
+      "codes": [
+        "Experiencing the Issue > Street obstruction",
+        "Community Dynamics > Disagreement",
+        "Reporting > Keeping records",
+        "Interpreting Enforcement > Fairness"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E023",
+      "participant": "CL-P06",
+      "date": "2025-10-27T20:05:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "At the residents' meeting, people kept mixing up what they had seen with what they had heard. I wrote three headings on the whiteboard: saw myself, saw a photograph, heard from somebody else. It slowed the conversation down. We did not combine anyone's reports or photographs. I offered to circulate the council webpage so each person could decide for themselves whether to contact it.",
+      "codes": [
+        "Local Knowledge > Comparing observations",
+        "Reporting > Parallel individual reporting",
+        "Community Dynamics > Mutual support",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": [
+        "CL-A035"
+      ]
+    },
+    {
+      "id": "CL-E024",
+      "participant": "CL-P11",
+      "date": "2025-10-30T19:12:00Z",
+      "phase": 2,
+      "prompt": "CL-Q02",
+      "text": "A neighbour asked me, because I am a solicitor, to confirm the yard was operating illegally. I declined. We had observations and an old committee summary someone found online, but not the full factual or enforcement position. I did say that precise, contemporaneous accounts would be more useful than conclusions copied between neighbours. The conversation shifted from proving illegality to documenting lived effects, although I could tell that answer disappointed some people.",
+      "codes": [
+        "Local Knowledge > Understanding planning status",
+        "Community Dynamics > Disagreement",
+        "Interpreting Enforcement > Understanding procedural complexity",
+        "Reporting > Keeping records"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E025",
+      "participant": "CL-P06",
+      "date": "2025-11-03T18:30:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "At the ward drop-in, someone said residents could use the council's planning-concerns form if they personally saw something they were worried about. They suggested including the date and a photograph where it was safe and lawful. I came home feeling there was at least something I could do. I saved the webpage and sent the public link to the residents' group. What anyone did with it was up to them.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Keeping records",
+        "Reporting > Parallel individual reporting",
+        "Trust > Initial faith"
+      ],
+      "media": [
+        "CL-A009"
+      ]
+    },
+    {
+      "id": "CL-E026",
+      "participant": "CL-P01",
+      "date": "2025-11-05T07:04:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "The flatbed came back at 07:04. I took one photograph from my bedroom, wrote the time down and filled in the council form after the school run. It took twelve minutes because I kept changing the wording. The email with reference RIV-PL-251105-184 arrived straight away. I remember thinking, good, now somebody knows about this morning as well as we do.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Photographic evidence",
+        "Reporting > Online forms",
+        "Reporting > Reference numbers",
+        "Trust > Initial faith"
+      ],
+      "media": [
+        "CL-A010"
+      ]
+    },
+    {
+      "id": "CL-E027",
+      "participant": "CL-P03",
+      "date": "2025-11-07T13:51:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "I copied the times from the envelope beside my bed into a table: when the noise started, when it stopped and whether it woke me after a night shift. I sent the council the three dates I had written down and received RIV-PL-251107-203. It was a relief to do something with the notes, although I would rather have spent that half-hour asleep.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Keeping records",
+        "Evidence Burden > Resident monitoring",
+        "Trust > Initial faith"
+      ],
+      "media": [
+        "CL-A011"
+      ]
+    },
+    {
+      "id": "CL-E028",
+      "participant": "CL-P08",
+      "date": "2025-11-10T08:09:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "The school office said parents should contact the council themselves about road-safety incidents rather than assume the school had reported them. When a truck blocked our view of Mill Street, I photographed the space where we had been waiting. I made sure the children, workers and registration plate were not in it. I sent my own account after drop-off and kept the reference on my phone.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Photographic evidence",
+        "Reporting > Online forms",
+        "Reporting > Reporting as responsibility",
+        "Experiencing the Issue > Safety concerns"
+      ],
+      "media": [
+        "CL-A012"
+      ]
+    },
+    {
+      "id": "CL-E029",
+      "participant": "CL-P09",
+      "date": "2025-11-12T12:20:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "I cleaned half the outdoor sill after rain and left the other half untouched as a comparison. It felt slightly ridiculous, like a school experiment, but the advice was to send dated photographs. By noon, after several movements in the yard, a pale deposit was visible on both halves, heavier on the side nearest the gate. I wrote explicitly that the photograph did not identify the source. The acknowledgement made me think someone would value that caution.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Photographic evidence",
+        "Evidence Burden > Resident monitoring",
+        "Observing Change > Dust",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": [
+        "CL-A013"
+      ]
+    },
+    {
+      "id": "CL-E030",
+      "participant": "CL-P14",
+      "date": "2025-11-14T09:18:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "I rang because the map on the online form kept putting the pin behind the yard. The adviser showed me how to correct it and said I could report an obstruction I had seen myself. The next time the dropped kerb was blocked, I took one photograph from where I had stopped. Reference RIV-HW-251114-077 came back. I thought that would be enough for somebody to understand why I had turned round.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Online forms",
+        "Reporting > Reference numbers",
+        "Reporting > Reporting as responsibility",
+        "Experiencing the Issue > Street obstruction"
+      ],
+      "media": [
+        "CL-A014"
+      ]
+    },
+    {
+      "id": "CL-E031",
+      "participant": "CL-P04",
+      "date": "2025-11-17T08:02:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "Tom sent the residents' association a link to the council form. I used it after watching a lorry reverse outside Paper Finch. I wrote that the driver was going slowly but had nobody guiding him and that Mill Street was blocked for a few minutes. I wanted the description to be fair. The yard brings some customers into my shop, but that particular movement did not look safe.",
+      "codes": [
+        "Reporting > Parallel individual reporting",
+        "Reporting > Reporting as responsibility",
+        "Experiencing the Issue > Safety concerns",
+        "Community Dynamics > Disagreement",
+        "Trust > Initial faith"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E032",
+      "participant": "CL-P05",
+      "date": "2025-11-19T17:33:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "I filled in the form after another close pass. It said my contact details would not be published, but I still worried about my name getting around locally. I saved the reference in a private note on my phone and did not put it in the residents' chat. Reporting it felt sensible. Making myself publicly part of the dispute did not.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Online forms",
+        "Reporting > Reference numbers",
+        "Trust > Conditional trust",
+        "Evidence Burden > Emotional burden"
+      ],
+      "media": [
+        "CL-A036"
+      ]
+    },
+    {
+      "id": "CL-E033",
+      "participant": "CL-P02",
+      "date": "2025-11-21T06:58:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "I stopped writing only 'large lorry' and began noting the time, how many axles I could see and whether the engine was left running. I sent the council one morning's account because it was clearly different from the vans I remembered years ago. Keeping the notes made breakfast feel less relaxed, so I decided I would record only what I happened to see from home.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Keeping records",
+        "Evidence Burden > Resident monitoring",
+        "Local Knowledge > Memory of previous use",
+        "Trust > Initial faith"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E034",
+      "participant": "CL-P12",
+      "date": "2025-11-23T23:06:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "The lights were still on when I came home at 23:06, so I took a photograph from my room and sent my own report, RIV-PL-251123-311. My phone made the sky look brighter than it did to my eyes, and I said that in the description. It was the first council form I had filled in since moving here. I expected somebody might ask me about it later.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Photographic evidence",
+        "Reporting > Reference numbers",
+        "Observing Change > Lighting",
+        "Trust > Initial faith"
+      ],
+      "media": [
+        "CL-A015"
+      ]
+    },
+    {
+      "id": "CL-E035",
+      "participant": "CL-P13",
+      "date": "2025-11-26T10:45:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "At coffee morning, Elsie said she had seen more vans but did not want to make a report. Nobody pressed her. We ended up talking about how differently the street looks depending on which window you have and what time you are at home. When I wrote this entry later, I kept it as a memory of the conversation rather than treating Elsie's words as something I had witnessed myself.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Parallel individual reporting",
+        "Reporting > Reporting as responsibility",
+        "Community Dynamics > Mutual support",
+        "Trust > Initial faith"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E036",
+      "participant": "CL-P11",
+      "date": "2025-11-28T18:15:00Z",
+      "phase": 3,
+      "prompt": "CL-Q03",
+      "text": "I reported the new fence panels and wrote only what I had seen. I did not say they were unlawful because I did not know. The automatic email arrived and I put the reference in my own notes. I assumed these things would take a while, so at that point I was content to wait and see whether the council came back to me.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Reporting > Online forms",
+        "Interpreting Enforcement > Understanding procedural complexity",
+        "Trust > Initial faith",
+        "Observing Change > Physical changes"
+      ],
+      "media": [
+        "CL-A037"
+      ]
+    },
+    {
+      "id": "CL-E037",
+      "participant": "CL-P01",
+      "date": "2025-12-02T06:47:00Z",
+      "phase": 4,
+      "prompt": "CL-Q04",
+      "text": "The routine is becoming familiar: the reversing alarm, a quick look at the clock, one photograph through the curtain, then breakfast and the school run. I filled in the form afterward and received RIV-PL-251202-018. The lorry was there for nine minutes. Writing everything down and uploading the photograph took sixteen, which surprised me.",
+      "codes": [
+        "Reporting > Keeping records",
+        "Reporting > Photographic evidence",
+        "Reporting > Reference numbers",
+        "Evidence Burden > Administrative labour",
+        "Evidence Burden > Time burden"
+      ],
+      "media": [
+        "CL-A016"
+      ]
+    },
+    {
+      "id": "CL-E038",
+      "participant": "CL-P06",
+      "date": "2025-12-05T20:10:00Z",
+      "phase": 4,
+      "prompt": "CL-Q04",
+      "text": "Four neighbours posted photographs of the same delivery in the residents' chat. Somebody asked whether I could send them all together. I said no; I had not taken the other pictures and did not know what their owners wanted done with them. I sent the council only my own account and photograph. The others could decide for themselves whether to send theirs.",
+      "codes": [
+        "Reporting > Parallel individual reporting",
+        "Evidence Burden > Administrative labour",
+        "Evidence Burden > Time burden",
+        "Community Dynamics > Reliance on active neighbours"
+      ],
+      "media": [
+        "CL-A017"
+      ]
+    },
+    {
+      "id": "CL-E039",
+      "participant": "CL-P03",
+      "date": "2025-12-09T12:58:00Z",
+      "phase": 4,
+      "prompt": "CL-Q04",
+      "text": "I set the sound recorder on the bedside table for ten minutes after the first crash. Listening back was worse than hearing it live because I had to relive each impact and decide what counted. The file was too large for the form, so I exported a shorter clip and explained the edit. The acknowledgement requested dates, which were already in the attachment name. I assumed that was automated and did not take it personally.",
+      "codes": [
+        "Observing Change > Noise",
+        "Experiencing the Issue > Sleep disruption",
+        "Reporting > Keeping records",
+        "Evidence Burden > Administrative labour",
+        "Council Response > Request for evidence"
+      ],
+      "media": [
+        "CL-A018"
+      ]
+    },
+    {
+      "id": "CL-E040",
+      "participant": "CL-P08",
+      "date": "2025-12-12T15:07:00Z",
+      "phase": 4,
+      "prompt": "CL-Q05",
+      "text": "At afternoon pickup, a van came out across the pavement. The photograph I took shows only its front wheel because the children were behind me. Nobody had to jump out of the way, but we did stop and wait. I sent the council my account that evening. Since then I have caught myself watching the gate before we reach it.",
+      "codes": [
+        "Observing Change > Vehicle movement",
+        "Experiencing the Issue > Safety concerns",
+        "Reporting > Photographic evidence",
+        "Reporting > Reporting as responsibility",
+        "Evidence Burden > Resident monitoring"
+      ],
+      "media": [
+        "CL-A019"
+      ]
+    },
+    {
+      "id": "CL-E041",
+      "participant": "CL-P09",
+      "date": "2025-12-16T11:14:00Z",
+      "phase": 4,
+      "prompt": "CL-Q04",
+      "text": "After rain, I cleaned half the sill and left half alone. Later that morning I noticed pale dust again while activity was going on behind the fence. I photographed my own sill and sent it with the dates from my symptom diary. I wrote that I did not know where the dust came from. The form wanted a simple answer, but I could not honestly give one.",
+      "codes": [
+        "Observing Change > Dust",
+        "Reporting > Photographic evidence",
+        "Evidence Burden > Resident monitoring",
+        "Interpreting Enforcement > Uncertainty",
+        "Reporting > Online forms"
+      ],
+      "media": [
+        "CL-A020"
+      ]
+    },
+    {
+      "id": "CL-E042",
+      "participant": "CL-P04",
+      "date": "2025-12-19T07:36:00Z",
+      "phase": 4,
+      "prompt": "CL-Q05",
+      "text": "Between 07:36 and 08:20, I counted four vans going in, two coming out and a skip truck waiting. Three customers mentioned the traffic. The drivers also bought drinks, so the yard was helping trade at the same time as the queue was putting people off the junction. I included both points in my own report because that was what I had actually seen.",
+      "codes": [
+        "Observing Change > Increased activity",
+        "Observing Change > Vehicle movement",
+        "Town economy > Local business effect",
+        "Community Dynamics > Disagreement",
+        "Reporting > Keeping records"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E043",
+      "participant": "CL-P14",
+      "date": "2025-12-22T10:03:00Z",
+      "phase": 4,
+      "prompt": "CL-Q04",
+      "text": "A skip lorry left one of its supports over the edge of the pavement. I photographed it, crossed Beacon Road and came back on the other side. By then it had gone. In the form I explained the longer route I had taken rather than only writing 'blocked pavement.' It was my fourth report about that corner, and I thought four separate occasions ought to be plenty.",
+      "codes": [
+        "Experiencing the Issue > Street obstruction",
+        "Experiencing the Issue > Adaptation",
+        "Reporting > Photographic evidence",
+        "Reporting > Reference numbers",
+        "Evidence Burden > Resident monitoring"
+      ],
+      "media": [
+        "CL-A021"
+      ]
+    },
+    {
+      "id": "CL-E044",
+      "participant": "CL-P05",
+      "date": "2025-12-29T16:54:00Z",
+      "phase": 4,
+      "prompt": "CL-Q05",
+      "text": "During the holiday week, I passed the yard while two workers were moving wrapped pallets under a lamp. I stopped across the road but decided not to take a photograph because the workers would have been in it. I sent a short account of what I had seen instead. I still did not know whether holiday working was allowed, so I did not make that claim.",
+      "codes": [
+        "Observing Change > Changed hours",
+        "Observing Change > Storage",
+        "Reporting > Keeping records",
+        "Evidence Burden > Emotional burden",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": [
+        "CL-A038"
+      ]
+    },
+    {
+      "id": "CL-E045",
+      "participant": "CL-P02",
+      "date": "2026-01-03T08:25:00Z",
+      "phase": 4,
+      "prompt": "CL-Q05",
+      "text": "Saturday used to be the quietest day on this walk. Today one van arrived at 08:25 and another at 08:41. Neither made much noise. I sent the times because weekend activity was one of the changes I had noticed. I felt slightly petty reporting two quiet vans, but I also knew the point was that Saturdays no longer felt closed.",
+      "codes": [
+        "Observing Change > Changed hours",
+        "Reporting > Keeping records",
+        "Reporting > Reporting as responsibility",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E046",
+      "participant": "CL-P12",
+      "date": "2026-01-07T23:19:00Z",
+      "phase": 4,
+      "prompt": "CL-Q04",
+      "text": "I took another photograph of the lights from the same corner of my window. They were still on at 23:19. I lowered the brightness until the picture looked closer to what I could see and kept the original as well. Filling in the form took about nine minutes. That is not very long, but it meant I was dealing with Chapel Lane when I should have been going to bed.",
+      "codes": [
+        "Observing Change > Lighting",
+        "Reporting > Photographic evidence",
+        "Evidence Burden > Administrative labour",
+        "Evidence Burden > Emotional burden"
+      ],
+      "media": [
+        "CL-A022"
+      ]
+    },
+    {
+      "id": "CL-E047",
+      "participant": "CL-P10",
+      "date": "2026-01-12T06:12:00Z",
+      "phase": 4,
+      "prompt": "CL-Q05",
+      "text": "I watched an early delivery from Beacon Road. This time the driver had someone guiding him and switched the engine off while waiting. I reported the early time, but I also said the reversing had been handled better. Some neighbours thought that weakened the complaint. I did not agree. If I was putting my name to it, I wanted to describe the whole thing.",
+      "codes": [
+        "Observing Change > Changed hours",
+        "Experiencing the Issue > Safety concerns",
+        "Community Dynamics > Disagreement",
+        "Interpreting Enforcement > Fairness",
+        "Reporting > Keeping records"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E048",
+      "participant": "CL-P11",
+      "date": "2026-01-18T18:40:00Z",
+      "phase": 4,
+      "prompt": "CL-Q04",
+      "text": "I looked through my three acknowledgement emails before sending a follow-up. I asked whether the reports were connected and whether the council still wanted me to send another form when the same thing happened again. I did not include anyone else's information. It took around forty minutes to find the references and write an email that did not sound angrier than I felt.",
+      "codes": [
+        "Reporting > Follow-up",
+        "Reporting > Reference numbers",
+        "Council Response > Acknowledgement",
+        "Evidence Burden > Administrative labour",
+        "Interpreting Enforcement > Desire for explanation"
+      ],
+      "media": [
+        "CL-A039"
+      ]
+    },
+    {
+      "id": "CL-E049",
+      "participant": "CL-P01",
+      "date": "2026-02-02T06:52:00Z",
+      "phase": 5,
+      "prompt": "CL-Q07",
+      "text": "The flatbed came back at 06:52. I already had photographs from November, December and January that looked almost the same. The council webpage still said to report new incidents, so I sent another form and received RIV-PL-260202-021. The usual thank-you email arrived. Outside, the lorry carried on through the gate. I was no longer sure whether another photograph was useful or simply another copy of the same morning.",
+      "codes": [
+        "Reporting > Repeated documentation",
+        "Reporting > Reference numbers",
+        "Council Response > Acknowledgement",
+        "Council Response > Lack of visible action",
+        "Reporting Fatigue > Repetition"
+      ],
+      "media": [
+        "CL-A023"
+      ]
+    },
+    {
+      "id": "CL-E050",
+      "participant": "CL-P03",
+      "date": "2026-02-05T13:37:00Z",
+      "phase": 5,
+      "prompt": "CL-Q07",
+      "text": "Metal was tipped at 13:37 and again at 14:02. I looked at my own notes and saw six earlier days with the same kind of noise. I nearly left it, then filled in the form because we had been told to keep reporting incidents. It asked when the problem began, so I typed September again. I remember feeling irritated that I had to tell the whole story from the beginning.",
+      "codes": [
+        "Observing Change > Noise",
+        "Evidence Burden > Repeated documentation",
+        "Council Response > Request for evidence",
+        "Reporting Fatigue > Repetition",
+        "Reporting > Reporting as responsibility"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E051",
+      "participant": "CL-P06",
+      "date": "2026-02-09T19:55:00Z",
+      "phase": 5,
+      "prompt": "CL-Q06",
+      "text": "The association received a general email saying the matter was still being looked at. People were pleased for about five minutes, then somebody asked what it meant for the next morning. We did not know. The vans, stacked materials and lights were still there. After that meeting I began separating two things in my own mind: an email from the council and a change I could actually see outside.",
+      "codes": [
+        "Council Response > Acknowledgement",
+        "Council Response > Perceived investigation",
+        "Council Response > Lack of visible action",
+        "Interpreting Enforcement > Perceived delay",
+        "Reporting > Parallel individual reporting"
+      ],
+      "media": [
+        "CL-A040"
+      ]
+    },
+    {
+      "id": "CL-E052",
+      "participant": "CL-P08",
+      "date": "2026-02-13T08:16:00Z",
+      "phase": 5,
+      "prompt": "CL-Q07",
+      "text": "A truck waited over the pavement during the school walk. I took a photograph and then stared at it because it looked almost exactly like the one from December. Sam asked whether I was sending it to the council again. I did, because we still had to step around the rear corner. I no longer felt hopeful while pressing submit. I was doing it because I had been told repeated incidents should be reported.",
+      "codes": [
+        "Experiencing the Issue > Safety concerns",
+        "Reporting > Photographic evidence",
+        "Evidence Burden > Repeated documentation",
+        "Reporting Fatigue > Repetition",
+        "Trust > Conditional trust"
+      ],
+      "media": [
+        "CL-A024"
+      ]
+    },
+    {
+      "id": "CL-E053",
+      "participant": "CL-P14",
+      "date": "2026-02-17T09:26:00Z",
+      "phase": 5,
+      "prompt": "CL-Q06",
+      "text": "The highways acknowledgement arrived before I had reached Market Square. That is efficient in one sense. The dropped kerb remained blocked for another eleven minutes, and I took the longer route. I have six prompt emails and no explanation of whether anyone has spoken to the site. A fast receipt is not the same thing as a usable pavement. I am beginning to judge the system by the journey rather than the message.",
+      "codes": [
+        "Council Response > Acknowledgement",
+        "Council Response > Lack of visible action",
+        "Experiencing the Issue > Street obstruction",
+        "Experiencing the Issue > Adaptation",
+        "Trust > Conditional trust"
+      ],
+      "media": [
+        "CL-A041"
+      ]
+    },
+    {
+      "id": "CL-E054",
+      "participant": "CL-P09",
+      "date": "2026-02-21T11:08:00Z",
+      "phase": 5,
+      "prompt": "CL-Q07",
+      "text": "There was another pale layer on the sill after a dry morning. I took the photograph, although it looked much like the previous four sets. To upload it, I had to find the old reference and explain the history again. I kept thinking: how many photographs of the same windowsill can anybody need? I still sent it, because I worried that stopping would make it look as though the dust had stopped.",
+      "codes": [
+        "Observing Change > Dust",
+        "Evidence Burden > Repeated documentation",
+        "Evidence Burden > Administrative labour",
+        "Interpreting Enforcement > Uncertainty",
+        "Reporting Fatigue > Repetition"
+      ],
+      "media": [
+        "CL-A025"
+      ]
+    },
+    {
+      "id": "CL-E055",
+      "participant": "CL-P04",
+      "date": "2026-02-24T07:45:00Z",
+      "phase": 5,
+      "prompt": "CL-Q06",
+      "text": "A person described as an officer was seen near the gate. I did not see identification and cannot confirm who it was. By lunchtime the group had turned the sighting into 'the inspection,' and by closing time somebody said an enforcement notice was coming. The traffic pattern carried on. I recorded the rumour because it affected expectations: people believed action was imminent despite having no official update. When nothing visible followed, the disappointment was sharper.",
+      "codes": [
+        "Council Response > Officer contact",
+        "Local Knowledge > Rumour",
+        "Council Response > Process opacity",
+        "Community Dynamics > Neighbour discussion",
+        "Council Response > Lack of visible action"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E056",
+      "participant": "CL-P05",
+      "date": "2026-02-28T17:18:00Z",
+      "phase": 5,
+      "prompt": "CL-Q07",
+      "text": "A van pulled across the cycle line and I braked, though it was not as close as the first time. I opened the form on the train and closed it when I saw all the boxes. That evening I went back and finished it using my own notes. The moment on the road lasted seconds. The form came back into my mind several times before I finally sent it.",
+      "codes": [
+        "Observing Change > Vehicle movement",
+        "Evidence Burden > Administrative labour",
+        "Evidence Burden > Time burden",
+        "Reporting Fatigue > Repetition",
+        "Reporting > Parallel individual reporting"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E057",
+      "participant": "CL-P02",
+      "date": "2026-03-04T06:55:00Z",
+      "phase": 5,
+      "prompt": "CL-Q06",
+      "text": "The council asked me for dates of early movements. My first attachment already contained eleven, but I sent the same table again with the dates highlighted. I could understand somebody wanting them in a clearer form. I also wondered whether the attachment had been opened the first time. The yard opened at 06:55 the next morning. I wrote it in my notebook and left the decision about another form until later.",
+      "codes": [
+        "Council Response > Request for evidence",
+        "Evidence Burden > Repeated documentation",
+        "Council Response > Process opacity",
+        "Observing Change > Changed hours",
+        "Trust > Conditional trust"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E058",
+      "participant": "CL-P12",
+      "date": "2026-03-09T23:12:00Z",
+      "phase": 5,
+      "prompt": "CL-Q07",
+      "text": "The lights were on again. Instead of taking the same photograph, I replied with the earlier reference and said the lighting had continued. The automatic system gave me a new number anyway. I now had two numbers and no idea whether they led to the same place. I spent more time sorting the emails than describing what I could see from the window.",
+      "codes": [
+        "Observing Change > Lighting",
+        "Reporting > Follow-up",
+        "Reporting > Reference numbers",
+        "Evidence Burden > Administrative labour",
+        "Council Response > Process opacity"
+      ],
+      "media": [
+        "CL-A042"
+      ]
+    },
+    {
+      "id": "CL-E059",
+      "participant": "CL-P13",
+      "date": "2026-03-14T10:30:00Z",
+      "phase": 5,
+      "prompt": "CL-Q06",
+      "text": "At coffee morning, three people showed different acknowledgement emails on their own phones. The wording was slightly different, so everyone had a theory about what it meant. Elsie asked, 'But have they done anything?' Nobody knew. We put the phones away and talked about something else. The messages had given us plenty to puzzle over but nothing definite to tell her.",
+      "codes": [
+        "Council Response > Acknowledgement",
+        "Council Response > Process opacity",
+        "Local Knowledge > Comparing observations",
+        "Interpreting Enforcement > Desire for explanation",
+        "Community Dynamics > Neighbour discussion"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E060",
+      "participant": "CL-P11",
+      "date": "2026-03-19T18:25:00Z",
+      "phase": 5,
+      "prompt": "CL-Q06",
+      "text": "I still do not know what is happening between the council and the yard. There may have been visits or conversations we would not normally be told about. My frustration is that I cannot tell whether another report from me helps. I sent a follow-up asking that simple question. I was not asking the council to share private details; I wanted to know what residents should do when the same thing keeps happening.",
+      "codes": [
+        "Interpreting Enforcement > Understanding procedural complexity",
+        "Council Response > Process opacity",
+        "Interpreting Enforcement > Desire for explanation",
+        "Trust > Conditional trust",
+        "Evidence Burden > Administrative labour"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E061",
+      "participant": "CL-P01",
+      "date": "2026-04-02T06:49:00Z",
+      "phase": 6,
+      "prompt": "CL-Q08",
+      "text": "The engine started at 06:49. I took another photograph and filled in another form after breakfast. It was my ninth. The children now recognise the page on my phone. I kept wondering whether all nine were joined together or sitting in different inboxes. What made me angry was not only the lorry. It was giving another part of the school morning to something the council had already heard about many times.",
+      "codes": [
+        "Observing Change > Changed hours",
+        "Evidence Burden > Resident monitoring",
+        "Reporting Fatigue > Frustration",
+        "Council Response > Process opacity",
+        "Trust > Distrust"
+      ],
+      "media": [
+        "CL-A026"
+      ]
+    },
+    {
+      "id": "CL-E062",
+      "participant": "CL-P03",
+      "date": "2026-04-05T14:08:00Z",
+      "phase": 6,
+      "prompt": "CL-Q08",
+      "text": "The crash woke me after two hours' sleep. I lay there wondering whether a seventh recording would tell anyone something the first six had not. Perhaps the council still needed more dates. Perhaps the activity was allowed. Perhaps nobody had listened yet. I had no way of knowing. I wrote the time on the envelope but did not upload anything before work. I was too tired to decide.",
+      "codes": [
+        "Experiencing the Issue > Sleep disruption",
+        "Interpreting Enforcement > Uncertainty",
+        "Reporting Fatigue > Frustration",
+        "Evidence Burden > Emotional burden",
+        "Reporting Fatigue > Reduced reporting"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E063",
+      "participant": "CL-P10",
+      "date": "2026-04-08T19:34:00Z",
+      "phase": 6,
+      "prompt": "CL-Q09",
+      "text": "At the association meeting someone called every driver selfish. I objected. I have delivered to awkward sites and know a driver may be following instructions with nowhere else to wait. Imran replied that children still face the reversing vehicle regardless of who is morally at fault. That changed the conversation. We agreed the physical risk can be documented without turning workers into villains. I support clear hours and traffic arrangements; I still do not support describing the yard as having no place in town.",
+      "codes": [
+        "Community Dynamics > Disagreement",
+        "Interpreting Enforcement > Fairness",
+        "Experiencing the Issue > Safety concerns",
+        "Interpreting Enforcement > Understanding procedural complexity"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E064",
+      "participant": "CL-P06",
+      "date": "2026-04-11T21:15:00Z",
+      "phase": 6,
+      "prompt": "CL-Q08",
+      "text": "People kept messaging me because I am the association secretary and they thought I had inside information. I did not. I replied that members should keep their own reports and contact the council directly if they wished. Two people said I was making excuses for the delay; another said she was glad I had answered. By bedtime I felt responsible for everybody's frustration even though I could not tell them anything useful.",
+      "codes": [
+        "Community Dynamics > Reliance on active neighbours",
+        "Evidence Burden > Emotional burden",
+        "Council Response > Process opacity",
+        "Community Dynamics > Conflict fatigue",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E065",
+      "participant": "CL-P08",
+      "date": "2026-04-14T08:11:00Z",
+      "phase": 6,
+      "prompt": "CL-Q09",
+      "text": "We used Station Road for the school walk after seeing a truck at the Mill Street corner. The alternative is noisier and adds about seven minutes, but I did not want another conversation about whether a reversing vehicle had technically blocked the pavement. Gareth says we should teach the children to wait; I say a daily walking route should not rely on judging industrial movements. We disagree about tolerance, not about what was physically there.",
+      "codes": [
+        "Experiencing the Issue > Adaptation",
+        "Experiencing the Issue > Safety concerns",
+        "Community Dynamics > Disagreement",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E066",
+      "participant": "CL-P14",
+      "date": "2026-04-17T09:44:00Z",
+      "phase": 6,
+      "prompt": "CL-Q09",
+      "text": "A neighbour complained about engine noise while I was trying to get around pallets on the pavement. The engine did not bother me; the missing width did. When every concern is bundled into 'the Chapel Lane problem,' the access issue gets lost among arguments about amenity and planning law. I sent a follow-up with a photograph showing measurements against my scooter, then wondered why residents are supplying measurements at all.",
+      "codes": [
+        "Experiencing the Issue > Street obstruction",
+        "Community Dynamics > Disagreement",
+        "Reporting > Follow-up",
+        "Evidence Burden > Resident monitoring",
+        "Reporting Fatigue > Frustration"
+      ],
+      "media": [
+        "CL-A027"
+      ]
+    },
+    {
+      "id": "CL-E067",
+      "participant": "CL-P04",
+      "date": "2026-04-20T08:06:00Z",
+      "phase": 6,
+      "prompt": "CL-Q09",
+      "text": "The yard's morning trade still puts money through my till, and the waiting vehicles still make customers avoid the junction. Those facts have remained stubbornly together. A campaign leaflet called local businesses united against the site; nobody asked me. I told Tom not to include Paper Finch. I have reported specific unsafe movements and would do so again, but I will not endorse a story in which all commercial activity is harm.",
+      "codes": [
+        "Community Dynamics > Disagreement",
+        "Interpreting Enforcement > Fairness",
+        "Observing Change > Vehicle movement",
+        "Trust > Conditional trust"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E068",
+      "participant": "CL-P09",
+      "date": "2026-04-22T11:36:00Z",
+      "phase": 6,
+      "prompt": "CL-Q08",
+      "text": "A gust lifted dust while machinery was moving behind the fence. I shut the window before taking a photograph because my chest already felt tight. Later I was annoyed with myself for missing it, then realised how unreasonable that was. I live here; I am not going to keep a window open just to get a clearer picture. I wrote what happened in this diary and did not send another council form.",
+      "codes": [
+        "Observing Change > Dust",
+        "Experiencing the Issue > Adaptation",
+        "Evidence Burden > Emotional burden",
+        "Reporting Fatigue > Frustration",
+        "Interpreting Enforcement > Uncertainty"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E069",
+      "participant": "CL-P05",
+      "date": "2026-04-24T17:46:00Z",
+      "phase": 6,
+      "prompt": "CL-Q08",
+      "text": "My landlord said complaints can make an area look troublesome when a tenancy comes up for renewal. He did not accuse me of anything, but the remark stayed with me. After that I stopped mentioning incidents in the residents' chat. If I saw something dangerous, I made my own report privately. Most days I simply used the longer route and kept out of the argument.",
+      "codes": [
+        "Evidence Burden > Emotional burden",
+        "Reporting Fatigue > Reduced reporting",
+        "Trust > Distrust",
+        "Community Dynamics > Reliance on active neighbours",
+        "Experiencing the Issue > Safety concerns"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E070",
+      "participant": "CL-P07",
+      "date": "2026-04-26T12:02:00Z",
+      "phase": 6,
+      "prompt": "CL-Q09",
+      "text": "There was banging after lunch. When Amina phoned about the coffee morning, I mentioned it in passing. She did not ask for times or offer to add it anywhere, which was a relief. Years ago I might have knocked at the yard and asked what was happening. I do not know the workers now, and the argument has made even an ordinary question feel awkward.",
+      "codes": [
+        "Observing Change > Noise",
+        "Reporting Fatigue > Reduced reporting",
+        "Community Dynamics > Conflict fatigue",
+        "Local Knowledge > Memory of previous use",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E071",
+      "participant": "CL-P12",
+      "date": "2026-04-28T23:31:00Z",
+      "phase": 6,
+      "prompt": "CL-Q08",
+      "text": "The lights were visible from the bedroom again. I thought the council must already have enough photographs like mine. The residents' chat had no update, only people guessing whether the lights were for work or security. I did not join in and did not take another picture. I closed the blind and went to bed, still not knowing whether the late lighting was allowed.",
+      "codes": [
+        "Observing Change > Lighting",
+        "Council Response > Process opacity",
+        "Interpreting Enforcement > Uncertainty",
+        "Reporting Fatigue > Reduced reporting",
+        "Reporting Fatigue > Frustration"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E072",
+      "participant": "CL-P11",
+      "date": "2026-04-30T18:52:00Z",
+      "phase": 6,
+      "prompt": "CL-Q08",
+      "text": "I told Mara that planning cases can take time and that residents may not be told about every conversation. She asked how long people were expected to keep sending the same thing without knowing whether it helped. I did not have an answer. I still think delay does not automatically mean nobody is working on it. I also think the council could explain more without giving away private details.",
+      "codes": [
+        "Interpreting Enforcement > Understanding procedural complexity",
+        "Interpreting Enforcement > Desire for explanation",
+        "Community Dynamics > Disagreement",
+        "Trust > Conditional trust",
+        "Council Response > Process opacity"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E073",
+      "participant": "CL-P03",
+      "date": "2026-05-04T13:46:00Z",
+      "phase": 7,
+      "prompt": "CL-Q10",
+      "text": "The reversing alarm and two crashes woke me. I reached for the envelope, then left the pen where it was. I had already written down that same sequence on six afternoons. After my shift I could either sleep again or spend part of the evening clipping an audio file and filling in a form. I chose sleep. The noise still changed my day; the council simply did not get another report about it.",
+      "codes": [
+        "Experiencing the Issue > Sleep disruption",
+        "Reporting Fatigue > Reduced reporting",
+        "Reporting Fatigue > Emotional exhaustion",
+        "Disengagement > Learned non-reporting",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E074",
+      "participant": "CL-P01",
+      "date": "2026-05-07T06:56:00Z",
+      "phase": 7,
+      "prompt": "CL-Q10",
+      "text": "I took the usual photograph at 06:56 but never uploaded it. The children needed breakfast, the form wanted the site history again, and I could not face producing report ten. The image sat among family photographs all day, which annoyed me whenever I opened the camera roll. By evening I deleted it. The flatbed had still been there; what disappeared was my willingness to convert it into council evidence.",
+      "codes": [
+        "Observing Change > Changed hours",
+        "Reporting Fatigue > Emotional exhaustion",
+        "Reporting Fatigue > Reduced reporting",
+        "Disengagement > Learned non-reporting",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": [
+        "CL-A043"
+      ]
+    },
+    {
+      "id": "CL-E075",
+      "participant": "CL-P06",
+      "date": "2026-05-10T20:30:00Z",
+      "phase": 7,
+      "prompt": "CL-Q11",
+      "text": "The residents' chat used to fill with times and photographs. This week there was one picture and several angry-face reactions. I reminded people not to send me their personal reports or ask me to submit for them. I had not seen that incident and could not speak for anyone who had. After that, the conversation stopped. It felt as though everybody was waiting for somebody else to take it on.",
+      "codes": [
+        "Reporting Fatigue > Reduced reporting",
+        "Community Dynamics > Reliance on active neighbours",
+        "Evidence Burden > Emotional burden",
+        "Community Dynamics > Conflict fatigue",
+        "Disengagement > Learned non-reporting"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E076",
+      "participant": "CL-P08",
+      "date": "2026-05-13T08:08:00Z",
+      "phase": 7,
+      "prompt": "CL-Q10",
+      "text": "A van blocked the sightline but not the whole pavement. I moved the children behind a parked car and waited. I thought about photographing it, then remembered the last three acknowledgements and put the phone away. I will still report a near miss or a complete blockage. I am no longer reporting the ordinary risky arrangement because it has become both familiar and apparently ineffective to describe.",
+      "codes": [
+        "Experiencing the Issue > Safety concerns",
+        "Reporting Fatigue > Reduced reporting",
+        "Reporting Fatigue > Doubt about usefulness",
+        "Persistence of the Issue > Normalisation",
+        "Disengagement > Learned non-reporting"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E077",
+      "participant": "CL-P09",
+      "date": "2026-05-16T11:22:00Z",
+      "phase": 7,
+      "prompt": "CL-Q10",
+      "text": "There was dust on the sill after activity in the yard. I shut the window, wiped it away and changed the pillowcase. Six months ago I would have photographed it first and checked the weather. Today I wanted the room clean more than I wanted another picture of the same thing. No photograph was taken, but the dust was still there and it still changed what I did that morning.",
+      "codes": [
+        "Observing Change > Dust",
+        "Experiencing the Issue > Adaptation",
+        "Reporting Fatigue > Reduced reporting",
+        "Persistence of the Issue > Continued impact without reports",
+        "Persistence of the Issue > Normalisation"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E078",
+      "participant": "CL-P14",
+      "date": "2026-05-19T09:37:00Z",
+      "phase": 7,
+      "prompt": "CL-Q10",
+      "text": "The dropped kerb was partly blocked. I knew I could squeeze through if I folded the mirror and drove one wheel over the rough edge, so I did that instead of stopping for a photograph. Reporting used to be the workaround; now the physical workaround is quicker. That is not an improvement in access. It means I have learned the exact angle needed to pass an obstruction I once expected somebody to prevent.",
+      "codes": [
+        "Experiencing the Issue > Street obstruction",
+        "Experiencing the Issue > Adaptation",
+        "Reporting Fatigue > Reduced reporting",
+        "Persistence of the Issue > Normalisation",
+        "Disengagement > Learned non-reporting"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E079",
+      "participant": "CL-P05",
+      "date": "2026-05-22T17:39:00Z",
+      "phase": 7,
+      "prompt": "CL-Q11",
+      "text": "A lorry edged into the cycle line. I sent Tom the time but asked him not to use my name. He replied that he could not keep submitting incidents he had not witnessed. I understood, but it left the event nowhere. Participation now depends on who can safely be public, who saw enough to report, and who still has energy. I changed my route the next day rather than solve those questions again.",
+      "codes": [
+        "Observing Change > Vehicle movement",
+        "Community Dynamics > Reliance on active neighbours",
+        "Reporting Fatigue > Reduced reporting",
+        "Evidence Burden > Emotional burden",
+        "Experiencing the Issue > Adaptation"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E080",
+      "participant": "CL-P12",
+      "date": "2026-05-25T23:04:00Z",
+      "phase": 7,
+      "prompt": "CL-Q11",
+      "text": "The lights were on when I got home. I saw that somebody had already posted about them in the residents' chat, so I added an angry face instead of filling in my own form. That reaction told the neighbours I had seen it too, but it told the council nothing. I assumed someone else would report it, then realised they might all be making the same assumption.",
+      "codes": [
+        "Observing Change > Lighting",
+        "Community Dynamics > Reliance on active neighbours",
+        "Reporting Fatigue > Reduced reporting",
+        "Disengagement > Learned non-reporting",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E081",
+      "participant": "CL-P02",
+      "date": "2026-05-29T07:03:00Z",
+      "phase": 7,
+      "prompt": "CL-Q10",
+      "text": "I wrote 07:03 and 'two vans waiting' in the notebook, then noticed there were three blank weeks before it. The movements had not stopped; I had stopped carrying the book to breakfast. Recording once felt like citizenship. Repeating the same line without knowing whether it added value began to feel obsessive. I have not thrown the notebook away. I simply no longer allow it to organise the start of every day.",
+      "codes": [
+        "Observing Change > Increased activity",
+        "Reporting Fatigue > Repetition",
+        "Reporting Fatigue > Loss of motivation",
+        "Disengagement > Learned non-reporting",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E082",
+      "participant": "CL-P13",
+      "date": "2026-06-02T10:40:00Z",
+      "phase": 7,
+      "prompt": "CL-Q11",
+      "text": "Coffee morning used to include exact times and long conversations about who had contacted the council. Now someone says, 'They were at it early again,' and the table moves on. People still notice. They are tired of turning every conversation into another decision about a form. I no longer encourage anyone either way. Each person has to decide what they want to do with their own experience.",
+      "codes": [
+        "Local Knowledge > Neighbour discussion",
+        "Reporting Fatigue > Reduced reporting",
+        "Community Dynamics > Conflict fatigue",
+        "Disengagement > Learned non-reporting",
+        "Persistence of the Issue > Normalisation"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E083",
+      "participant": "CL-P04",
+      "date": "2026-06-06T08:14:00Z",
+      "phase": 7,
+      "prompt": "CL-Q09",
+      "text": "A customer said the lack of recent reports proved the yard had settled down. From my counter I had seen four vehicles that morning, roughly the same as February. What has settled down is the conversation in the shop. Regulars are bored of it, and I am tired of refereeing claims. I still note an unsafe reversal if I witness one. I no longer report every period of congestion just to keep a disputed count alive.",
+      "codes": [
+        "Observing Change > Vehicle movement",
+        "Reporting Fatigue > Reduced reporting",
+        "Community Dynamics > Conflict fatigue",
+        "Persistence of the Issue > Continued impact without reports",
+        "Community Dynamics > Disagreement"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E084",
+      "participant": "CL-P11",
+      "date": "2026-06-11T19:05:00Z",
+      "phase": 7,
+      "prompt": "CL-Q08",
+      "text": "The latest council message said residents could report important new changes. That left people unsure about the familiar things that kept happening. Was another early lorry a new incident or just more of the same? Some neighbours carried on sending forms; others stopped. I read the message twice and still could not tell what the council wanted from me personally.",
+      "codes": [
+        "Council Response > Acknowledgement",
+        "Council Response > Process opacity",
+        "Reporting Fatigue > Doubt about usefulness",
+        "Interpreting Enforcement > Desire for explanation",
+        "Community Dynamics > Disagreement"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E085",
+      "participant": "CL-P01",
+      "date": "2026-07-01T06:51:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "The flatbed was outside at 06:51. I watched it reverse, shut the curtain and made breakfast. I did not take a photograph or open the council form. I had already sent the same scene nine times and could not see what a tenth would add. The lorries are still coming. I just do not report them anymore. The only thing that has changed is that I no longer spend the school run thinking about what to write.",
+      "codes": [
+        "Observing Change > Changed hours",
+        "Disengagement > Stopped reporting",
+        "Disengagement > Futility",
+        "Persistence of the Issue > Problem remains",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E086",
+      "participant": "CL-P03",
+      "date": "2026-07-04T13:29:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "Metal crashes woke me twice. I turned on the fan, moved to the sofa and slept there until my alarm. I did not write down the times. I used to feel guilty if I missed one. Now I feel I have told the council enough times what these afternoons are like. The sound has not stopped. I have stopped filling in forms about it.",
+      "codes": [
+        "Experiencing the Issue > Sleep disruption",
+        "Experiencing the Issue > Adaptation",
+        "Disengagement > Stopped reporting",
+        "Reporting Fatigue > Emotional exhaustion",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E087",
+      "participant": "CL-P12",
+      "date": "2026-07-07T23:17:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "The floodlights were on when I got home. I rode behind the houses so they would not be in my eyes at the bend. I have not sent a lighting report since March. At first I assumed another neighbour would do it. Now I think most of us have stopped. From my window, the same bright fence is there. What is missing is the email with another reference number.",
+      "codes": [
+        "Observing Change > Lighting",
+        "Experiencing the Issue > Adaptation",
+        "Disengagement > Stopped reporting",
+        "Disengagement > Silent persistence",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E088",
+      "participant": "CL-P09",
+      "date": "2026-07-10T11:40:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "I wiped another pale layer from the sill and did not photograph it. My folder already has dozens of similar pictures and a matching set of thank-you emails. I do not know what the council may be doing behind the scenes. I do know the dust still appears and I still keep the window shut. I stopped sending photographs because it was taking over too much of my attention.",
+      "codes": [
+        "Observing Change > Dust",
+        "Council Response > Lack of visible action",
+        "Disengagement > Stopped reporting",
+        "Interpreting Enforcement > Uncertainty",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E089",
+      "participant": "CL-P14",
+      "date": "2026-07-13T09:22:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "A van covered the dropped kerb, so I used Beacon Road. I did not report it. If I am stuck for a long time or pushed toward moving traffic, I will ring. For the usual shorter blockages, taking the other route is quicker than filling in the form again. Fewer reports from me do not mean the kerb is clearer. They mean I have got used to more inconvenience.",
+      "codes": [
+        "Experiencing the Issue > Street obstruction",
+        "Experiencing the Issue > Adaptation",
+        "Disengagement > Stopped reporting",
+        "Disengagement > Learned non-reporting",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": [
+        "CL-A044"
+      ]
+    },
+    {
+      "id": "CL-E090",
+      "participant": "CL-P08",
+      "date": "2026-07-15T08:03:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "We now use Station Road for the school walk unless the rain is heavy. Today I saw a truck at the old junction and carried on. I did not photograph it because avoiding Chapel Lane is the whole reason for the new route. I still think the vehicle movements are risky. I have simply arranged our morning so that the children and I meet them less often.",
+      "codes": [
+        "Experiencing the Issue > Adaptation",
+        "Disengagement > Stopped reporting",
+        "Persistence of the Issue > Problem remains",
+        "Persistence of the Issue > Normalisation",
+        "Experiencing the Issue > Safety concerns"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E091",
+      "participant": "CL-P05",
+      "date": "2026-07-18T17:32:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "I no longer cycle along Chapel Lane. The detour adds six minutes and one steep section, but I do not have to squeeze past vehicles or decide whether to put my name on another complaint. I told myself it was temporary. Four months later, it is just my route to work. I see less of the yard now because I have removed myself from the street.",
+      "codes": [
+        "Experiencing the Issue > Adaptation",
+        "Disengagement > Stopped reporting",
+        "Evidence Burden > Emotional burden",
+        "Persistence of the Issue > Continued impact without reports",
+        "Persistence of the Issue > Normalisation"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E092",
+      "participant": "CL-P02",
+      "date": "2026-07-20T07:09:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "Two vans were waiting at 07:09. I saw them while making tea and did not open the notebook. I used to write down every date because I thought each one might help. After months without a clear update, the notebook began to feel like a record for nobody but me. Its later pages are blank even though the morning vans have not gone away.",
+      "codes": [
+        "Observing Change > Increased activity",
+        "Disengagement > Stopped reporting",
+        "Council Response > Lack of visible action",
+        "Interpreting Enforcement > Uncertainty",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E093",
+      "participant": "CL-P07",
+      "date": "2026-07-22T12:16:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "There was banging after lunch. I closed the sitting-room window and turned the television up one mark. Amina did not phone for a time, and I was relieved. I have not reported anything myself for months. At the beginning I thought the new activity might settle; then I thought the council would sort it; now I simply know which window to close. The lane is not quieter. We speak about it less.",
+      "codes": [
+        "Observing Change > Noise",
+        "Experiencing the Issue > Adaptation",
+        "Disengagement > Stopped reporting",
+        "Persistence of the Issue > Normalisation",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E094",
+      "participant": "CL-P13",
+      "date": "2026-07-24T10:28:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "Only two people at coffee morning said they had submitted anything this month. Nine said they had noticed activity. The group is not satisfied; it is tired. One woman said she no longer mentions incidents because the conversation ends with somebody asking whether she filled in the form, which makes the burden feel like her failure. Community silence is becoming a way to protect relationships from a dispute nobody present can resolve.",
+      "codes": [
+        "Disengagement > Stopped reporting",
+        "Community Dynamics > Conflict fatigue",
+        "Evidence Burden > Emotional burden",
+        "Disengagement > Silent persistence",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E095",
+      "participant": "CL-P04",
+      "date": "2026-07-27T07:52:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "There were five vehicle movements before nine and I did not report any of them. None involved the kind of reversing that would make me send another form. I still believe some neighbours call every van a danger, and I still think the morning congestion is a problem. I have become more selective because I am tired of counting ordinary movements that look much the same week after week.",
+      "codes": [
+        "Observing Change > Increased activity",
+        "Reporting Fatigue > Reduced reporting",
+        "Disengagement > Stopped reporting",
+        "Community Dynamics > Disagreement",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E096",
+      "participant": "CL-P06",
+      "date": "2026-07-30T20:12:00Z",
+      "phase": 8,
+      "prompt": "CL-Q12",
+      "text": "I told residents I was no longer keeping a list of other people's incidents or reference numbers. Anyone who wished to contact the council would need to keep and submit their own information. I could not carry the role people had started giving me, and it was not appropriate for me to hold their material. The chat became quieter afterward, but the vehicles outside did not.",
+      "codes": [
+        "Evidence Burden > Administrative labour",
+        "Disengagement > Withdrawal from participation",
+        "Reporting Fatigue > Emotional exhaustion",
+        "Community Dynamics > Reliance on active neighbours",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": [
+        "CL-A028"
+      ]
+    },
+    {
+      "id": "CL-E097",
+      "participant": "CL-P01",
+      "date": "2026-08-02T06:48:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "We moved Mia into the back bedroom during the school holiday and use the front room for storage. The flatbed still woke me, but she slept through. Moving a child has done more for our mornings than any of my reports. I did not report the 06:48 delivery. We have reduced one part of the problem inside the house because nothing outside feels different.",
+      "codes": [
+        "Experiencing the Issue > Adaptation",
+        "Disengagement > Stopped reporting",
+        "Persistence of the Issue > Problem remains",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E098",
+      "participant": "CL-P03",
+      "date": "2026-08-04T13:20:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "My sleep kit now lives in the living room: folding mattress, fan, eye mask, earplugs. On yard days I do not try the bedroom first. I cannot always predict them, but Tuesdays and Thursdays remain worse. The routine makes me functional enough for work and has almost eliminated my reports. It has not eliminated the sound. I have absorbed the uncertainty and inconvenience into how I sleep.",
+      "codes": [
+        "Experiencing the Issue > Sleep disruption",
+        "Experiencing the Issue > Adaptation",
+        "Persistence of the Issue > Normalisation",
+        "Disengagement > Silent persistence"
+      ],
+      "media": [
+        "CL-A029"
+      ]
+    },
+    {
+      "id": "CL-E099",
+      "participant": "CL-P14",
+      "date": "2026-08-06T09:33:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "I approach the dropped kerb slowly and look for the blue van that is often left near it. If it is there, I turn before reaching the narrow section. I used to arrive, photograph and report. Now local knowledge tells me when not to try. Visitors on scooters do not have that knowledge. The route works for me only because I have learned its failures.",
+      "codes": [
+        "Experiencing the Issue > Adaptation",
+        "Local Knowledge > Comparing observations",
+        "Persistence of the Issue > Normalisation",
+        "Experiencing the Issue > Street obstruction"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E100",
+      "participant": "CL-P08",
+      "date": "2026-08-08T08:05:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "The children call Station Road 'the long way to school.' They no longer ask why we avoid Chapel Lane. The detour has become ordinary enough that I sometimes forget it began with reversing vehicles. That is what unresolved looks like after months: not constant outrage, but a new route embedded in family timing. If asked whether the problem still affects us, I have to remember that seven extra minutes are part of it.",
+      "codes": [
+        "Experiencing the Issue > Adaptation",
+        "Persistence of the Issue > Normalisation",
+        "Persistence of the Issue > Continued impact without reports",
+        "Experiencing the Issue > Everyday inconvenience"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E101",
+      "participant": "CL-P09",
+      "date": "2026-08-10T10:54:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "I look toward the yard before opening the front windows. If machinery is moving loose material, I keep them shut and use the back vent. I still do not know whether every dusty day is connected to the site. The check has become as ordinary as looking for rain. It protects the room, but it also means I take far fewer photographs than I did at the beginning.",
+      "codes": [
+        "Observing Change > Dust",
+        "Experiencing the Issue > Adaptation",
+        "Interpreting Enforcement > Uncertainty",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E102",
+      "participant": "CL-P05",
+      "date": "2026-08-12T17:50:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "The steep detour has improved my fitness and made the ride predictable, which complicates the story. I resent being displaced from the direct route, but I also enjoy passing Riverside Walk. A solution can contain a small gain without making the original constraint acceptable. I have not seen Chapel Lane at commuting time for weeks, so my absence now limits what I can say about current vehicle movements.",
+      "codes": [
+        "Experiencing the Issue > Adaptation",
+        "Community Dynamics > Disagreement",
+        "Persistence of the Issue > Normalisation",
+        "Disengagement > Silent persistence"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E103",
+      "participant": "CL-P12",
+      "date": "2026-08-14T22:36:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "I use the alley behind Beacon Road when I can see the yard lights from Station Road. It is narrower, but it avoids the glare at the bend. At first that was an occasional choice. Now I turn before really thinking about it. I do not know whether the lighting breaks any rule. I know it has changed the way I cycle home.",
+      "codes": [
+        "Observing Change > Lighting",
+        "Experiencing the Issue > Adaptation",
+        "Interpreting Enforcement > Uncertainty",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E104",
+      "participant": "CL-P07",
+      "date": "2026-08-16T12:08:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "I keep the front window shut until the yard's lunchtime quiet period. The room gets warmer, so my carer opens the kitchen door instead. We do this without discussing the reason. When the banging stops for a day, I notice the quiet as unusual. That is how I know I have normalised the noise rather than ceased to hear it.",
+      "codes": [
+        "Observing Change > Noise",
+        "Experiencing the Issue > Adaptation",
+        "Persistence of the Issue > Normalisation",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E105",
+      "participant": "CL-P04",
+      "date": "2026-08-18T07:41:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "I move the pavement display inside until the morning vehicle queue clears. That loses a little passing trade but prevents customers being squeezed between the board and wing mirrors. I once treated each queue as an incident; now I treat it as part of opening the shop. Commercial accommodation can make the junction look better managed while transferring the inconvenience to another business.",
+      "codes": [
+        "Observing Change > Vehicle movement",
+        "Experiencing the Issue > Adaptation",
+        "Persistence of the Issue > Normalisation",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E106",
+      "participant": "CL-P10",
+      "date": "2026-08-20T06:05:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "I leave Beacon Road from the other end when a truck is waiting, which saves both of us trying to pass. I still think some complaints overstated ordinary working noise. I also accept that early movements have become frequent enough for residents to reorganise around them. My adaptation is easy because I drive. That does not mean the same arrangement is equally manageable for a child, cyclist or scooter user.",
+      "codes": [
+        "Observing Change > Changed hours",
+        "Experiencing the Issue > Adaptation",
+        "Community Dynamics > Disagreement",
+        "Interpreting Enforcement > Fairness"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E107",
+      "participant": "CL-P13",
+      "date": "2026-08-23T10:31:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "We agreed not to let Chapel Lane take over every coffee morning. It now comes up only if somebody has received an update or wants to talk about something that affected them. People still mention early vehicles and noise in passing, but the conversation moves on more quickly. That has made the mornings friendlier. It has not made the lane quieter.",
+      "codes": [
+        "Community Dynamics > Conflict fatigue",
+        "Experiencing the Issue > Adaptation",
+        "Persistence of the Issue > Normalisation",
+        "Disengagement > Silent persistence"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E108",
+      "participant": "CL-P11",
+      "date": "2026-08-27T18:44:00Z",
+      "phase": 9,
+      "prompt": "CL-Q13",
+      "text": "I keep one short note at the end of each month for myself: whether the yard seemed busy, whether access was blocked and whether I heard from the council. I no longer write down every incident. Looking back, the winter pages are full and the summer pages are sparse. That is because I changed how much I wrote, not because the yard suddenly went quiet.",
+      "codes": [
+        "Reporting Fatigue > Reduced reporting",
+        "Experiencing the Issue > Adaptation",
+        "Disengagement > Learned non-reporting",
+        "Persistence of the Issue > Continued impact without reports",
+        "Interpreting Enforcement > Understanding procedural complexity"
+      ],
+      "media": [
+        "CL-A045"
+      ]
+    },
+    {
+      "id": "CL-E109",
+      "participant": "CL-P01",
+      "date": "2026-09-02T19:20:00Z",
+      "phase": 10,
+      "prompt": "CL-Q14",
+      "text": "I realised it was not temporary when the school year ended with the same flatbed arriving before seven. At first I thought careful reports would lead to something changing. By spring I was sending them because I felt I ought to; by summer I had stopped. I would report again if the council explained what it still needed from me and what had happened to the information I had already sent.",
+      "codes": [
+        "Trust > Initial faith",
+        "Trust > Loss of confidence",
+        "Disengagement > Stopped reporting",
+        "Interpreting Enforcement > Desire for explanation",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E110",
+      "participant": "CL-P03",
+      "date": "2026-09-04T15:10:00Z",
+      "phase": 10,
+      "prompt": "CL-Q14",
+      "text": "The problem started to feel permanent when the folding mattress stopped being temporary bedding and became part of the living room. I no longer report the familiar crashes. I would start again if somebody told me what new information would genuinely help. I do not expect a promise about the outcome. I just cannot keep giving up recovery time to say that the same noise woke me again.",
+      "codes": [
+        "Experiencing the Issue > Adaptation",
+        "Disengagement > Stopped reporting",
+        "Evidence Burden > Emotional burden",
+        "Interpreting Enforcement > Desire for explanation",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E111",
+      "participant": "CL-P06",
+      "date": "2026-09-07T20:00:00Z",
+      "phase": 10,
+      "prompt": "CL-Q15",
+      "text": "As association secretary, I thought I could help by passing on the public reporting link and keeping residents informed about general replies. Over time people began treating me as if I were in charge of the case, which I was not. I would help again if there were a clear council contact and residents kept their own reports. I will not collect photographs, references or personal accounts on other people's behalf.",
+      "codes": [
+        "Evidence Burden > Administrative labour",
+        "Trust > Loss of confidence",
+        "Interpreting Enforcement > Desire for explanation",
+        "Community Dynamics > Reliance on active neighbours",
+        "Disengagement > Withdrawal from participation"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E112",
+      "participant": "CL-P10",
+      "date": "2026-09-10T18:05:00Z",
+      "phase": 10,
+      "prompt": "CL-Q14",
+      "text": "My view has changed, but I still do not agree with every complaint. I have seen early movements and reversing that worried me. I have also seen drivers take care and neighbours describe ordinary vans as huge lorries. A fair outcome would deal with hours, access and storage without pretending a working business has no place here. I can accept that enforcement takes time. I struggle with not knowing what the delay means.",
+      "codes": [
+        "Community Dynamics > Disagreement",
+        "Interpreting Enforcement > Fairness",
+        "Trust > Conditional trust",
+        "Interpreting Enforcement > Understanding procedural complexity"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E113",
+      "participant": "CL-P09",
+      "date": "2026-09-12T11:18:00Z",
+      "phase": 10,
+      "prompt": "CL-Q14",
+      "text": "The dust has not disappeared, although I cannot measure where every layer comes from. At first I photographed it often. Later I concentrated on keeping the windows shut and cleaning the room. I would take part in a short, clearly explained study if I knew what was being asked and for how long. I will not go back to photographing my sill indefinitely.",
+      "codes": [
+        "Observing Change > Dust",
+        "Evidence Burden > Emotional burden",
+        "Disengagement > Stopped reporting",
+        "Interpreting Enforcement > Desire for explanation",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E114",
+      "participant": "CL-P14",
+      "date": "2026-09-14T09:50:00Z",
+      "phase": 10,
+      "prompt": "CL-Q15",
+      "text": "I would report again if the form remembered the location and let me say this was the same access problem as before. I do not need private details about the yard. I would like to know whether sending a seventh photograph of the dropped kerb is useful. Until then, I will ring about a dangerous blockage and steer around the shorter ones.",
+      "codes": [
+        "Experiencing the Issue > Street obstruction",
+        "Disengagement > Learned non-reporting",
+        "Interpreting Enforcement > Desire for explanation",
+        "Persistence of the Issue > Continued impact without reports"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E115",
+      "participant": "CL-P08",
+      "date": "2026-09-16T15:24:00Z",
+      "phase": 10,
+      "prompt": "CL-Q14",
+      "text": "The children barely remember the direct school route. I reported the early incidents because we were told individual reports would help the council understand what was happening. I stopped because I never knew whether sending the same picture again was useful. I would report an immediate danger tomorrow. I am not going to send another form every time a vehicle makes us wait.",
+      "codes": [
+        "Experiencing the Issue > Adaptation",
+        "Reporting > Told to report it",
+        "Disengagement > Stopped reporting",
+        "Trust > Loss of confidence",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E116",
+      "participant": "CL-P05",
+      "date": "2026-09-18T17:42:00Z",
+      "phase": 10,
+      "prompt": "CL-Q15",
+      "text": "I would need to feel confident about privacy before reporting regularly again. I still use the longer cycle route. That means I now see fewer incidents and have fewer reasons to contact the council. If there are fewer complaints from cyclists, it may be because some of us avoid the lane. For me, staying out of a local dispute is also tied to keeping an affordable tenancy.",
+      "codes": [
+        "Evidence Burden > Emotional burden",
+        "Disengagement > Stopped reporting",
+        "Trust > Loss of confidence",
+        "Persistence of the Issue > Continued impact without reports",
+        "Interpreting Enforcement > Desire for explanation"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E117",
+      "participant": "CL-P02",
+      "date": "2026-09-20T08:30:00Z",
+      "phase": 10,
+      "prompt": "CL-Q14",
+      "text": "The change was not one dramatic event. It was earlier hours, more waiting vans and storage showing above the fence. My notebook is busy at the beginning and almost empty at the end. The empty pages do not mean the lane was empty. They mean I decided breakfast was more important than writing down the same thing again.",
+      "codes": [
+        "Observing Change > Increased activity",
+        "Local Knowledge > Memory of previous use",
+        "Disengagement > Stopped reporting",
+        "Persistence of the Issue > Continued impact without reports",
+        "Trust > Loss of confidence"
+      ],
+      "media": [
+        "CL-A030"
+      ]
+    },
+    {
+      "id": "CL-E118",
+      "participant": "CL-P07",
+      "date": "2026-09-22T12:20:00Z",
+      "phase": 10,
+      "prompt": "CL-Q14",
+      "text": "I first thought the yard would quieten after a busy season. Then I thought the reports would bring somebody to explain. Now I simply close the window when the banging starts. I stopped telling Amina every time because she cannot fix it and neither can I. We talk about other things more often. The afternoons themselves are not quieter.",
+      "codes": [
+        "Local Knowledge > Memory of previous use",
+        "Experiencing the Issue > Adaptation",
+        "Disengagement > Silent persistence",
+        "Community Dynamics > Conflict fatigue",
+        "Persistence of the Issue > Problem remains"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E119",
+      "participant": "CL-P04",
+      "date": "2026-09-24T08:05:00Z",
+      "phase": 10,
+      "prompt": "CL-Q15",
+      "text": "I would report again if the council asked a clear question for a set period—for example, whether I personally saw unsafe reversing during four weeks. I will not count every van forever. Some neighbours treat any business activity as a problem; others dismiss everything as normal. My concern has become narrower: the times, the blocked access and the occasions when reversing puts people at risk.",
+      "codes": [
+        "Community Dynamics > Disagreement",
+        "Interpreting Enforcement > Fairness",
+        "Interpreting Enforcement > Desire for explanation",
+        "Reporting Fatigue > Doubt about usefulness"
+      ],
+      "media": []
+    },
+    {
+      "id": "CL-E120",
+      "participant": "CL-P11",
+      "date": "2026-09-28T19:12:00Z",
+      "phase": 10,
+      "prompt": "CL-Q15",
+      "text": "At the beginning I saw reporting as the obvious thing to do. If something kept happening, you told the council and expected that eventually you would understand what came next. After months of forms and acknowledgements, I stopped sending familiar incidents. The yard is still active and I still do not know what is happening officially. What changed most clearly was my willingness to keep reporting it.",
+      "codes": [
+        "Reporting > Told to report it",
+        "Evidence Burden > Administrative labour",
+        "Disengagement > Stopped reporting",
+        "Persistence of the Issue > Problem remains",
+        "Interpreting Enforcement > Understanding procedural complexity"
+      ],
+      "media": []
+    }
+  ],
+  "media_manifest": [
+    {
+      "id": "CL-A001",
+      "entry": "CL-E001",
+      "type": "photo",
+      "filename": "flatbed-before-seven.jpg",
+      "caption": "Flatbed angled across Chapel Lane shortly after 07:00.",
+      "alt_text": "A fictional flatbed lorry reversing through green yard gates on a narrow residential street at dawn; no readable registration or people identifiable.",
+      "generation_prompt": "Documentary-style fictional civic research photograph at dawn on a narrow UK town street, flatbed lorry reversing into screened builders yard, terraced homes opposite, no logos, no readable plates, clearly generic."
+    },
+    {
+      "id": "CL-A002",
+      "entry": "CL-E005",
+      "type": "photo",
+      "filename": "dust-line-on-bonnet.jpg",
+      "caption": "Finger line through pale dust on a parked car bonnet.",
+      "alt_text": "Close view of a fingertip line through pale dust on a black car bonnet.",
+      "generation_prompt": "Close documentary photograph of pale street dust on a black car bonnet with one clean finger line, neutral fictional setting, no brands."
+    },
+    {
+      "id": "CL-A003",
+      "entry": "CL-E007",
+      "type": "photo",
+      "filename": "dropped-kerb-obstructed.jpg",
+      "caption": "Open van doors and trolley narrowing the dropped-kerb route.",
+      "alt_text": "A mobility-scooter viewpoint toward a dropped kerb partly obstructed by an open van and trolley.",
+      "generation_prompt": "Fictional accessibility evidence photo from mobility scooter height, dropped kerb partly blocked by generic van and trolley, no logos or plates."
+    },
+    {
+      "id": "CL-A004",
+      "entry": "CL-E009",
+      "type": "photo",
+      "filename": "yard-light-spill.jpg",
+      "caption": "Light from the yard visible against the dark street.",
+      "alt_text": "Bright white work lights shining through a screened fence onto a dark residential lane.",
+      "generation_prompt": "Night documentary photo of fictional screened commercial yard with work lights spilling onto dark residential street, no people."
+    },
+    {
+      "id": "CL-A005",
+      "entry": "CL-E010",
+      "type": "photo",
+      "filename": "storage-above-screen.jpg",
+      "caption": "Wrapped pallets visible above the northern screening.",
+      "alt_text": "Upper rows of wrapped generic pallets visible over a solid green fence.",
+      "generation_prompt": "Fictional documentary planning observation, generic wrapped pallets stacked just above green screening fence, overcast day, no logos."
+    },
+    {
+      "id": "CL-A006",
+      "entry": "CL-E012",
+      "type": "photo",
+      "filename": "boundary-panel-change.jpg",
+      "caption": "Solid panels fixed inside the older mesh boundary.",
+      "alt_text": "New solid green panels attached behind an older wire-mesh fence.",
+      "generation_prompt": "Close documentary photo of fictional commercial boundary alteration, new solid green panels behind aged mesh fence, no signage."
+    },
+    {
+      "id": "CL-A007",
+      "entry": "CL-E014",
+      "type": "photo",
+      "filename": "same-event-time-comparison.jpg",
+      "caption": "Image timestamp compared with a handwritten first-noise time.",
+      "alt_text": "Phone image metadata beside a notebook showing two times three minutes apart; all names and interfaces fictional.",
+      "generation_prompt": "Clearly fictional demo research artefact, generic phone photo metadata beside handwritten observation time, no real app or authority branding."
+    },
+    {
+      "id": "CL-A008",
+      "entry": "CL-E020",
+      "type": "photo",
+      "filename": "two-sills-after-rain.jpg",
+      "caption": "Different dust textures compared across two homes after rain.",
+      "alt_text": "Two labelled close-up photographs of fictional windowsills with different dust textures.",
+      "generation_prompt": "Fictional qualitative research comparison board with two windowsill dust photographs, handwritten neutral labels only, clearly demo."
+    },
+    {
+      "id": "CL-A009",
+      "entry": "CL-E025",
+      "type": "artefact",
+      "filename": "residents-reporting-checklist.txt",
+      "caption": "Residents' checklist separating observation from interpretation.",
+      "alt_text": "Plain fictional checklist: time, location, what was directly observed, practical effect, photograph available, uncertainty.",
+      "generation_prompt": "Clearly fictional demo checklist for resident observations, simple text layout, no council logo or official styling."
+    },
+    {
+      "id": "CL-A010",
+      "entry": "CL-E026",
+      "type": "photo",
+      "filename": "flatbed-report-one.jpg",
+      "caption": "First formally submitted early flatbed observation.",
+      "alt_text": "A generic flatbed at the yard gate at dawn, photographed from behind a window.",
+      "generation_prompt": "Fictional resident evidence photograph from domestic window, generic flatbed at screened yard before sunrise, no identities."
+    },
+    {
+      "id": "CL-A011",
+      "entry": "CL-E027",
+      "type": "artefact",
+      "filename": "sleep-disturbance-log.jpg",
+      "caption": "Handwritten-to-tabular sleep and sound log.",
+      "alt_text": "A clearly fictional table recording dates, sound times, sleep interruption and shift pattern.",
+      "generation_prompt": "Clearly fictional demo incident log on paper, dates and noise categories, labelled research artefact, no official branding."
+    },
+    {
+      "id": "CL-A012",
+      "entry": "CL-E028",
+      "type": "photo",
+      "filename": "school-route-sightline.jpg",
+      "caption": "Truck obscuring the view from the children's waiting point.",
+      "alt_text": "View from adult waist height showing a generic truck blocking a sightline at a pavement junction; no children visible.",
+      "generation_prompt": "Fictional road safety observation on residential lane, generic truck obscuring junction view, no people, no readable plate."
+    },
+    {
+      "id": "CL-A013",
+      "entry": "CL-E029",
+      "type": "photo",
+      "filename": "half-clean-sill.jpg",
+      "caption": "Half-cleaned windowsill used as an informal comparison surface.",
+      "alt_text": "A windowsill divided into cleaned and uncleaned halves with a removable paper marker.",
+      "generation_prompt": "Documentary close-up of fictional resident dust observation, half-clean windowsill with small neutral date card, clearly informal not scientific."
+    },
+    {
+      "id": "CL-A014",
+      "entry": "CL-E030",
+      "type": "photo",
+      "filename": "scooter-route-blocked.jpg",
+      "caption": "Access route photographed from Owen's scooter.",
+      "alt_text": "Pavement and dropped kerb seen from mobility-scooter height with a generic skip vehicle obstructing the path.",
+      "generation_prompt": "Fictional accessibility documentation, mobility scooter viewpoint toward blocked dropped kerb, generic vehicle, no logos."
+    },
+    {
+      "id": "CL-A015",
+      "entry": "CL-E034",
+      "type": "photo",
+      "filename": "late-lighting-window-view.jpg",
+      "caption": "Late-night lighting viewed from an attic window.",
+      "alt_text": "Bright yard fencing seen beyond dark fictional rooftops at 23:06.",
+      "generation_prompt": "Fictional night photo from attic window, bright screened yard beyond dark roofs, subtle timestamp card, no identifiable homes."
+    },
+    {
+      "id": "CL-A016",
+      "entry": "CL-E037",
+      "type": "photo",
+      "filename": "flatbed-repeat-december.jpg",
+      "caption": "Repeated flatbed position photographed during the breakfast routine.",
+      "alt_text": "Generic flatbed at the same screened gate on a winter dawn.",
+      "generation_prompt": "Fictional longitudinal comparison photo, same generic flatbed and yard gate in winter dawn, no plates or people."
+    },
+    {
+      "id": "CL-A017",
+      "entry": "CL-E038",
+      "type": "artefact",
+      "filename": "individual-report-boundary-note.txt",
+      "caption": "Tom's note recording that he submitted only his own observation.",
+      "alt_text": "Clearly fictional personal note stating that neighbours retain and submit their own material.",
+      "generation_prompt": "Clearly fictional qualitative research note about individual authorship and privacy boundaries, no names, references or council branding."
+    },
+    {
+      "id": "CL-A018",
+      "entry": "CL-E039",
+      "type": "audio",
+      "filename": "metal-impact-short-clip.m4a",
+      "caption": "Short extract of two metal impacts recorded from indoors.",
+      "alt_text": "Audio-only fictional artefact: low room hum followed by two distant metal impacts; no speech.",
+      "generation_prompt": "Generate a clearly fictional ambient audio description only: indoor room tone with distant commercial metal impacts, no voices."
+    },
+    {
+      "id": "CL-A019",
+      "entry": "CL-E040",
+      "type": "photo",
+      "filename": "van-over-pedestrian-line.jpg",
+      "caption": "Front wheel crossing the pedestrian route at afternoon pickup.",
+      "alt_text": "Generic van wheel and pavement line; no faces, children or registration visible.",
+      "generation_prompt": "Fictional safety evidence close-up of generic van wheel crossing pavement route, no people, logos or plate."
+    },
+    {
+      "id": "CL-A020",
+      "entry": "CL-E041",
+      "type": "photo",
+      "filename": "dust-weather-comparison.jpg",
+      "caption": "Dust images paired with a handwritten weather note.",
+      "alt_text": "Two fictional sill images alongside a neutral note recording wind and recent rain.",
+      "generation_prompt": "Clearly fictional research comparison sheet, windowsill dust images and handwritten weather observation, no app screenshots."
+    },
+    {
+      "id": "CL-A021",
+      "entry": "CL-E043",
+      "type": "photo",
+      "filename": "skip-lorry-access-route.jpg",
+      "caption": "Skip-lorry stabiliser extending toward the pavement.",
+      "alt_text": "Generic skip lorry stabiliser narrowing a pavement; image contains no identifiable people or number plate.",
+      "generation_prompt": "Fictional civic observation of generic skip truck stabiliser narrowing pavement on residential lane, no logos or plate."
+    },
+    {
+      "id": "CL-A022",
+      "entry": "CL-E046",
+      "type": "photo",
+      "filename": "fixed-angle-lighting.jpg",
+      "caption": "Repeat photograph made from a fixed attic-window position.",
+      "alt_text": "Work-light glow behind the same dark roofline used in earlier comparison.",
+      "generation_prompt": "Fictional longitudinal night photograph, fixed viewpoint of commercial work lights behind dark roofline, no identifiers."
+    },
+    {
+      "id": "CL-A023",
+      "entry": "CL-E049",
+      "type": "photo",
+      "filename": "flatbed-repeat-february.jpg",
+      "caption": "Near-identical early flatbed occurrence several months later.",
+      "alt_text": "Generic flatbed across a fictional residential lane at 06:52 in winter light.",
+      "generation_prompt": "Fictional repeated incident photo, generic flatbed at screened yard before seven, winter dawn, no identifiable details."
+    },
+    {
+      "id": "CL-A024",
+      "entry": "CL-E052",
+      "type": "photo",
+      "filename": "school-route-repeat.jpg",
+      "caption": "Repeated truck obstruction during the school walk.",
+      "alt_text": "Generic truck rear corner intruding on a narrow pedestrian route; no children visible.",
+      "generation_prompt": "Fictional recurring safety observation on residential street, truck corner narrowing pavement, no people or logos."
+    },
+    {
+      "id": "CL-A025",
+      "entry": "CL-E054",
+      "type": "photo",
+      "filename": "dust-series-fifth-set.jpg",
+      "caption": "Fifth comparable dust photograph in the resident series.",
+      "alt_text": "Numbered fictional comparison photographs of pale sill deposits over several months.",
+      "generation_prompt": "Clearly fictional longitudinal dust-photo contact sheet, five neutral date labels, no official branding."
+    },
+    {
+      "id": "CL-A026",
+      "entry": "CL-E061",
+      "type": "photo",
+      "filename": "ninth-early-delivery.jpg",
+      "caption": "Ninth formally documented early vehicle event.",
+      "alt_text": "View through a narrow curtain gap toward a generic vehicle at the yard gate before seven.",
+      "generation_prompt": "Fictional resident diary photograph through curtain gap, generic commercial vehicle at dawn, no plate or people."
+    },
+    {
+      "id": "CL-A027",
+      "entry": "CL-E066",
+      "type": "photo",
+      "filename": "scooter-width-measure.jpg",
+      "caption": "Available pavement width shown against the scooter route.",
+      "alt_text": "Fictional measuring tape and mobility-scooter wheel beside a narrowed pavement; no person visible.",
+      "generation_prompt": "Fictional accessibility research photo, tape showing narrowed pavement width beside mobility scooter wheel, no identifiable address."
+    },
+    {
+      "id": "CL-A028",
+      "entry": "CL-E096",
+      "type": "artefact",
+      "filename": "association-boundary-note.txt",
+      "caption": "Association note directing residents to retain and submit only their own material.",
+      "alt_text": "Clearly fictional note confirming that the association does not collect personal reports, references or photographs.",
+      "generation_prompt": "Clearly fictional demo privacy-boundary note, no official styling, personal information or council branding."
+    },
+    {
+      "id": "CL-A029",
+      "entry": "CL-E098",
+      "type": "photo",
+      "filename": "living-room-sleep-kit.jpg",
+      "caption": "Folding sleep kit kept ready in the living room.",
+      "alt_text": "Folded mattress, fan, eye mask and earplugs arranged beside a sofa in a fictional home.",
+      "generation_prompt": "Fictional ethnographic domestic photo, compact sleep kit by living room sofa, warm natural light, no people."
+    },
+    {
+      "id": "CL-A030",
+      "entry": "CL-E117",
+      "type": "artefact",
+      "filename": "notebook-empty-pages.jpg",
+      "caption": "Observation notebook shifting from dense dated entries to empty pages.",
+      "alt_text": "Clearly fictional handwritten log with frequent early entries followed by long blank sections.",
+      "generation_prompt": "Fictional qualitative research artefact, open incident notebook with dense early dates and later blank pages, no official branding."
+    },
+    {
+      "id": "CL-A031",
+      "entry": "CL-E003",
+      "type": "photo",
+      "filename": "three-vans-at-gate.jpg",
+      "caption": "Three vans waiting before the fictional yard opens.",
+      "alt_text": "Three generic white vans queued on a narrow fictional residential lane in morning light.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Three generic white vans queued on a narrow fictional residential lane in morning light. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A032",
+      "entry": "CL-E008",
+      "type": "photo",
+      "filename": "cyclist-mirror-clearance.jpg",
+      "caption": "Cyclist's view of limited clearance beside a turning vehicle.",
+      "alt_text": "Handlebar-height view beside a generic lorry mirror with no rider or plate identifiable.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Handlebar-height view beside a generic lorry mirror with no rider or plate identifiable. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A033",
+      "entry": "CL-E013",
+      "type": "artefact",
+      "filename": "observation-interpretation-board.txt",
+      "caption": "Coffee-morning notes separating witnessed events from rumour.",
+      "alt_text": "Plain demo text board with columns labelled witnessed, compared and heard from others.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Plain demo text board with columns labelled witnessed, compared and heard from others. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A034",
+      "entry": "CL-E019",
+      "type": "photo",
+      "filename": "historic-yard-sketch.jpg",
+      "caption": "Elsie's memory sketch of the former yard arrangement.",
+      "alt_text": "Hand-drawn fictional sketch labelled from memory and not to scale.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Hand-drawn fictional sketch labelled from memory and not to scale. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A035",
+      "entry": "CL-E023",
+      "type": "photo",
+      "filename": "meeting-whiteboard.jpg",
+      "caption": "Residents' three-column evidence exercise.",
+      "alt_text": "Clearly fictional whiteboard headed witnessed, photographed and heard from someone else.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Clearly fictional whiteboard headed witnessed, photographed and heard from someone else. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A036",
+      "entry": "CL-E032",
+      "type": "artefact",
+      "filename": "private-reference-note.txt",
+      "caption": "Leena's privately stored fictional report reference.",
+      "alt_text": "Minimal demo note with an invented reference and no contact details.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Minimal demo note with an invented reference and no contact details. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A037",
+      "entry": "CL-E036",
+      "type": "photo",
+      "filename": "fence-report-photo.jpg",
+      "caption": "Boundary panels submitted without alleging a breach.",
+      "alt_text": "Generic solid panels fixed behind an older mesh commercial boundary.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Generic solid panels fixed behind an older mesh commercial boundary. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A038",
+      "entry": "CL-E044",
+      "type": "photo",
+      "filename": "holiday-week-yard-view.jpg",
+      "caption": "Quiet holiday-week storage activity.",
+      "alt_text": "Two generic workers represented only as distant unidentifiable figures near wrapped pallets.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Two generic workers represented only as distant unidentifiable figures near wrapped pallets. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A039",
+      "entry": "CL-E048",
+      "type": "artefact",
+      "filename": "follow-up-chronology.pdf",
+      "caption": "Resident chronology prepared for a process-status query.",
+      "alt_text": "Clearly fictional demo chronology with invented references and a FICTIONAL DEMO heading.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Clearly fictional demo chronology with invented references and a FICTIONAL DEMO heading. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A040",
+      "entry": "CL-E051",
+      "type": "photo",
+      "filename": "acknowledgement-action-columns.jpg",
+      "caption": "Meeting sheet distinguishing contact received from street-level change.",
+      "alt_text": "Clearly fictional handwritten comparison table with no official marks.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Clearly fictional handwritten comparison table with no official marks. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A041",
+      "entry": "CL-E053",
+      "type": "photo",
+      "filename": "blocked-kerb-and-message.jpg",
+      "caption": "Fast acknowledgement contrasted with the still-blocked route.",
+      "alt_text": "Split fictional image showing a generic receipt screen and blocked dropped kerb, no real interface.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Split fictional image showing a generic receipt screen and blocked dropped kerb, no real interface. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A042",
+      "entry": "CL-E058",
+      "type": "artefact",
+      "filename": "duplicate-reference-diagram.txt",
+      "caption": "Two fictional references linked to one continuing lighting pattern.",
+      "alt_text": "Plain demo flow diagram showing one recurring issue generating multiple acknowledgement numbers.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Plain demo flow diagram showing one recurring issue generating multiple acknowledgement numbers. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A043",
+      "entry": "CL-E074",
+      "type": "artefact",
+      "filename": "deleted-photo-placeholder.txt",
+      "caption": "Diary note recording a photograph taken and later deleted.",
+      "alt_text": "Clearly fictional text artefact documenting that source evidence was not retained.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Clearly fictional text artefact documenting that source evidence was not retained. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A044",
+      "entry": "CL-E089",
+      "type": "photo",
+      "filename": "beacon-road-detour-map.jpg",
+      "caption": "Owen's routine alternative to the blocked dropped kerb.",
+      "alt_text": "Hand-drawn fictional route map with invented street names and no precise addresses.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Hand-drawn fictional route map with invented street names and no precise addresses. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "CL-A045",
+      "entry": "CL-E108",
+      "type": "artefact",
+      "filename": "monthly-continuity-note.txt",
+      "caption": "Priya's reduced monthly monitoring note.",
+      "alt_text": "Clearly fictional monthly summary showing continuity without incident-level frequency.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Clearly fictional monthly summary showing continuity without incident-level frequency. No real council branding, personal data, readable registration plates or real addresses."
+    }
+  ],
+  "codebook": {
+    "Observing Change": [
+      "Increased activity",
+      "Changed hours",
+      "Noise",
+      "Dust",
+      "Lighting",
+      "Vehicle movement",
+      "Storage",
+      "Physical changes"
+    ],
+    "Local Knowledge": [
+      "Memory of previous use",
+      "Neighbour discussion",
+      "Rumour",
+      "Comparing observations",
+      "Understanding planning status"
+    ],
+    "Experiencing the Issue": [
+      "Sleep disruption",
+      "Safety concerns",
+      "Street obstruction",
+      "Loss of amenity",
+      "Stress",
+      "Everyday inconvenience",
+      "Adaptation"
+    ],
+    "Reporting": [
+      "Told to report it",
+      "Keeping records",
+      "Photographic evidence",
+      "Online forms",
+      "Reference numbers",
+      "Follow-up",
+      "Parallel individual reporting",
+      "Reporting as responsibility",
+      "Repeated documentation"
+    ],
+    "Council Response": [
+      "Acknowledgement",
+      "Request for evidence",
+      "Officer contact",
+      "Perceived investigation",
+      "Lack of update",
+      "Lack of visible action",
+      "Process opacity"
+    ],
+    "Evidence Burden": [
+      "Resident monitoring",
+      "Repeated documentation",
+      "Administrative labour",
+      "Time burden",
+      "Emotional burden"
+    ],
+    "Reporting Fatigue": [
+      "Repetition",
+      "Reduced reporting",
+      "Frustration",
+      "Futility",
+      "Withdrawal",
+      "Doubt about usefulness",
+      "Emotional exhaustion",
+      "Loss of motivation"
+    ],
+    "Trust": [
+      "Initial faith",
+      "Conditional trust",
+      "Distrust",
+      "Loss of confidence",
+      "Fairness",
+      "Institutional competence"
+    ],
+    "Disengagement": [
+      "Stopped reporting",
+      "Silent persistence",
+      "Learned non-reporting",
+      "Withdrawal from participation",
+      "Futility"
+    ],
+    "Persistence of the Issue": [
+      "Problem remains",
+      "Normalisation",
+      "Adaptation",
+      "Continued impact without reports"
+    ],
+    "Community Dynamics": [
+      "Mutual support",
+      "Disagreement",
+      "Pressure to report",
+      "Reliance on active neighbours",
+      "Conflict fatigue",
+      "Neighbour discussion"
+    ],
+    "Interpreting Enforcement": [
+      "Expectations",
+      "Uncertainty",
+      "Perceived delay",
+      "Understanding procedural complexity",
+      "Desire for explanation",
+      "Desire for visible action",
+      "Fairness"
+    ],
+    "Town economy": [
+      "Local business effect"
+    ]
+  },
+  "memos": [
+    {
+      "id": "CL-M01",
+      "title": "Reporting as unpaid civic labour",
+      "text": "Residents turn ordinary noticing into administratively usable evidence: checking times, preserving images, reconstructing sequences, completing forms and coordinating duplicates. The work is unevenly distributed and becomes part of domestic time."
+    },
+    {
+      "id": "CL-M02",
+      "title": "Acknowledgement is not experienced as action",
+      "text": "Automated or procedural acknowledgements initially signal that a report has entered a legitimate process. Their meaning changes when residents cannot connect them to an update or a visible alteration in the street."
+    },
+    {
+      "id": "CL-M03",
+      "title": "Reporting begins with faith in process",
+      "text": "Early record keeping is not simply adversarial. Participants commonly understand evidence gathering as cooperation with the council and expect that better information will enable a proportionate response."
+    },
+    {
+      "id": "CL-M04",
+      "title": "Repeated evidence requests relocate responsibility",
+      "text": "As similar incidents accumulate, residents question why they must continue proving a pattern they believe is already known. Monitoring starts to feel like a condition placed on residents rather than an investigative aid."
+    },
+    {
+      "id": "CL-M05",
+      "title": "Declining reports can conceal continuing harm",
+      "text": "Late-stage entries document recurring vehicles, noise, dust and obstruction without corresponding submissions. Administrative quiet therefore cannot be read as evidence that the lived problem has diminished."
+    },
+    {
+      "id": "CL-M06",
+      "title": "Reporting fatigue is behavioural",
+      "text": "Fatigue appears not only in expressed frustration but in unphotographed incidents, abandoned drafts, reliance on neighbours, shortened message reactions and decisions to record only exceptional events."
+    },
+    {
+      "id": "CL-M07",
+      "title": "Adaptation makes institutional delay visible",
+      "text": "Closing windows, changing bedrooms, rerouting children, altering parking and avoiding a dropped kerb are material responses to apparent non-resolution. These routines may reduce complaints while transferring costs into household life."
+    },
+    {
+      "id": "CL-M08",
+      "title": "Process opacity produces multiple narratives",
+      "text": "Some residents infer neglect, others legal complexity, negotiation or staff shortage. The dataset supports perceived non-resolution but does not establish what enforcement activity occurred internally."
+    },
+    {
+      "id": "CL-M09",
+      "title": "Residents expect association volunteers to know more than they do",
+      "text": "A resident-association secretary becomes a focal point for general questions despite having no privileged access to the case. The study must not turn that social expectation into a role holding other residents' reports, references or photographs."
+    },
+    {
+      "id": "CL-M10",
+      "title": "Disengagement spreads socially",
+      "text": "When a highly active neighbour stops asking for photographs, others read that withdrawal as evidence that further reports are unlikely to matter. Reduced participation is relational, not merely individual."
+    },
+    {
+      "id": "CL-M11",
+      "title": "Disagreement improves rather than weakens the analysis",
+      "text": "Sceptical participants distinguish unavoidable commercial activity from specific harms such as early hours, unsafe reversing or blocked access. Negative cases prevent the theme from collapsing into a single anti-business account."
+    },
+    {
+      "id": "CL-M12",
+      "title": "Trust damage travels beyond planning",
+      "text": "Several participants connect Chapel Lane to later choices about reporting highways defects, attending consultations or believing acknowledgement messages. The effect exceeds the original issue even where participants accept enforcement complexity."
+    },
+    {
+      "id": "CL-M13",
+      "title": "The unresolved issue becomes normal",
+      "text": "Normalisation is not acceptance. Familiarity reduces the likelihood that an incident is narrated or submitted, while protective routines and anticipatory behaviour show that the impact persists."
+    },
+    {
+      "id": "CL-M14",
+      "title": "Silence is not satisfaction",
+      "text": "The central longitudinal finding is a decoupling between conditions and recorded reports: the site remains visible in everyday life, but residents withdraw the administrative labour that once made it visible to the institution."
+    }
+  ]
+}
