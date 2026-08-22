@@ -292,11 +292,11 @@ def test_production_access_fails_closed_when_platform_admin_is_ambiguous(riverme
         assert db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG)) is None
 
 
-def _production_admin(db, home, *, active=True, platform_admin=True, number=1):
+def _production_admin(db, home, *, active=True, platform_admin=True, number=1, email=None):
     user = User(
         organisation_id=home.id,
         name=f"Production administrator {number}",
-        email=f"production-administrator-{number}@example.invalid",
+        email=email or f"production-administrator-{number}@example.invalid",
         password_hash=None,
         role="owner",
         is_platform_admin=platform_admin,
@@ -313,13 +313,13 @@ def _production_admin(db, home, *, active=True, platform_admin=True, number=1):
     return user
 
 
-def test_production_access_uses_the_explicit_active_platform_admin_and_keeps_peers_unchanged(rivermere_database):
+def test_production_access_uses_one_normalised_email_platform_admin_and_keeps_peers_unchanged(rivermere_database):
     factory, storage = rivermere_database
     with factory() as db:
         home = Organisation(name="Politis Operations", slug="politis-operations")
         db.add(home)
         db.flush()
-        intended_owner = _production_admin(db, home, number=1)
+        intended_owner = _production_admin(db, home, number=1, email="owner@example.invalid")
         other_administrator = _production_admin(db, home, number=2)
         db.commit()
 
@@ -328,7 +328,7 @@ def test_production_access_uses_the_explicit_active_platform_admin_and_keeps_pee
             storage,
             create_organisation=True,
             grant_configured_production_owner_access=True,
-            production_owner_user_id=str(intended_owner.id),
+            demo_owner_email="  OWNER@example.invalid  ",
         )
         rivermere = db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG))
         intended_membership = db.scalar(select(OrganisationMembership).where(
@@ -350,7 +350,7 @@ def test_production_access_uses_the_explicit_active_platform_admin_and_keeps_pee
             storage,
             create_organisation=True,
             grant_configured_production_owner_access=True,
-            production_owner_user_id=str(intended_owner.id),
+            demo_owner_email="owner@example.invalid",
         )
         assert repeat.as_dict() == {
             "projects": 0, "studies": 0, "participants": 0, "enrolments": 0,
@@ -364,8 +364,8 @@ def test_production_access_uses_the_explicit_active_platform_admin_and_keeps_pee
         assert verify_rivermere(db)["valid"] is True
 
 
-@pytest.mark.parametrize("configured_owner", [None, "", "not-an-id", "1,1", "1,2", "999999"])
-def test_explicit_production_owner_requires_one_existing_target(rivermere_database, configured_owner):
+@pytest.mark.parametrize("configured_owner", [None, "", "missing@example.invalid"])
+def test_email_production_owner_requires_one_existing_target(rivermere_database, configured_owner):
     factory, storage = rivermere_database
     with factory() as db:
         home = Organisation(name="Politis Operations", slug="politis-operations")
@@ -380,7 +380,7 @@ def test_explicit_production_owner_requires_one_existing_target(rivermere_databa
                 storage,
                 create_organisation=True,
                 grant_configured_production_owner_access=True,
-                production_owner_user_id=configured_owner,
+                demo_owner_email=configured_owner,
             )
         assert db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG)) is None
 
@@ -392,7 +392,7 @@ def test_explicit_production_owner_requires_one_existing_target(rivermere_databa
         (True, False, "must already be a platform administrator"),
     ],
 )
-def test_explicit_production_owner_fails_closed_for_an_ineligible_user(
+def test_email_production_owner_fails_closed_for_an_ineligible_user(
     rivermere_database,
     active,
     platform_admin,
@@ -412,6 +412,93 @@ def test_explicit_production_owner_fails_closed_for_an_ineligible_user(
                 storage,
                 create_organisation=True,
                 grant_configured_production_owner_access=True,
-                production_owner_user_id=str(target.id),
+                demo_owner_email=target.email,
             )
         assert db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG)) is None
+
+
+def test_email_selection_is_ambiguous_after_normalisation_and_reveals_no_selector(rivermere_database):
+    factory, storage = rivermere_database
+    configured_email = "owner@example.invalid"
+    with factory() as db:
+        home = Organisation(name="Politis Operations", slug="politis-operations")
+        db.add(home)
+        db.flush()
+        _production_admin(db, home, number=1, email=configured_email)
+        # The database's case-insensitive index permits this whitespace variant;
+        # the protected resolver must still regard it as ambiguous.
+        other_home = Organisation(name="Second Operations", slug="second-operations")
+        db.add(other_home)
+        db.flush()
+        _production_admin(db, other_home, number=2, email=" owner@example.invalid ")
+        db.commit()
+
+        with pytest.raises(UnsafeDemoTarget) as error:
+            seed_rivermere(
+                db, storage, create_organisation=True,
+                grant_configured_production_owner_access=True,
+                demo_owner_email=configured_email,
+            )
+        assert configured_email not in str(error.value)
+        assert db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG)) is None
+
+
+def test_user_id_and_email_selectors_are_mutually_exclusive_and_do_not_mutate(rivermere_database):
+    factory, storage = rivermere_database
+    with factory() as db:
+        home = Organisation(name="Politis Operations", slug="politis-operations")
+        db.add(home)
+        db.flush()
+        owner = _production_admin(db, home, email="owner@example.invalid")
+        db.commit()
+
+        with pytest.raises(UnsafeDemoTarget, match="exactly one configured"):
+            seed_rivermere(
+                db, storage, create_organisation=True,
+                grant_configured_production_owner_access=True,
+                demo_owner_user_id=str(owner.id),
+                demo_owner_email=owner.email,
+            )
+        assert db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG)) is None
+
+
+def test_explicit_user_id_selection_remains_available_for_backward_compatibility(rivermere_database):
+    factory, storage = rivermere_database
+    with factory() as db:
+        home = Organisation(name="Politis Operations", slug="politis-operations")
+        db.add(home)
+        db.flush()
+        owner = _production_admin(db, home, email="owner@example.invalid")
+        db.commit()
+        seed_rivermere(
+            db, storage, create_organisation=True,
+            grant_configured_production_owner_access=True,
+            demo_owner_user_id=str(owner.id),
+        )
+        assert verify_rivermere(db, expected_owner=owner)["intended_owner_access"] is True
+
+
+def test_existing_non_owner_membership_fails_closed_without_changing_it(rivermere_database):
+    factory, storage = rivermere_database
+    with factory() as db:
+        home = Organisation(name="Politis Operations", slug="politis-operations")
+        db.add(home)
+        db.flush()
+        owner = _production_admin(db, home, email="owner@example.invalid")
+        rivermere = Organisation(name="Rivermere Town Council", slug=RIVERMERE_SLUG)
+        db.add(rivermere)
+        db.flush()
+        db.add(OrganisationMembership(user_id=owner.id, organisation_id=rivermere.id, role="admin", is_active=True))
+        db.commit()
+
+        with pytest.raises(UnsafeDemoTarget, match="incompatible"):
+            seed_rivermere(
+                db, storage, create_organisation=True,
+                grant_configured_production_owner_access=True,
+                demo_owner_email=owner.email,
+            )
+        membership = db.scalar(select(OrganisationMembership).where(
+            OrganisationMembership.user_id == owner.id,
+            OrganisationMembership.organisation_id == rivermere.id,
+        ))
+        assert membership.role == "admin"

@@ -33,6 +33,7 @@ def test_production_rivermere_runner_preserves_release_and_cleanup_gates():
     assert "--confirm-production-demo" in entrypoint
     assert "--create-production-demo-organisation" in entrypoint
     assert "--grant-configured-production-owner-access" in entrypoint
+    assert "--verify-configured-production-owner-access" in entrypoint
     assert "--grant-sole-platform-admin-access" not in entrypoint
     assert "--verify" in entrypoint
     assert 'requested_environment != "production"' in importer
@@ -41,11 +42,15 @@ def test_production_rivermere_runner_preserves_release_and_cleanup_gates():
     assert "The production Rivermere import requires promote_to_production=true." in promotion
     assert "RUN_RIVERMERE_PRODUCTION_DEMO_SEED=true" in promotion
     assert promotion.count("RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false") == 2
-    assert promotion.count("steps.rivermere_seed_control.outcome == 'success'") == 2
-    assert "secrets.RIVERMERE_PRODUCTION_OWNER_USER_ID" in promotion
-    assert "RIVERMERE_PRODUCTION_OWNER_USER_ID=\"$RIVERMERE_PRODUCTION_OWNER_USER_ID\"" in promotion
-    assert "--setting-names RIVERMERE_PRODUCTION_OWNER_USER_ID" in promotion
-    assert "echo \"$RIVERMERE_PRODUCTION_OWNER_USER_ID\"" not in promotion
+    assert promotion.count("always() && inputs.seed_rivermere_demo") == 2
+    assert "secrets.RIVERMERE_DEMO_OWNER_EMAIL" in promotion
+    assert "secrets.RIVERMERE_DEMO_OWNER_USER_ID" in promotion
+    assert "RIVERMERE_DEMO_OWNER_EMAIL=\"$RIVERMERE_DEMO_OWNER_EMAIL\"" in promotion
+    assert "--setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL" in promotion
+    assert "echo \"$RIVERMERE_DEMO_OWNER_EMAIL\"" not in promotion
+    assert "echo \"$RIVERMERE_DEMO_OWNER_USER_ID\"" not in promotion
+    assert "RIVERMERE_DEMO_OWNER_EMAIL" not in entrypoint
+    assert "RIVERMERE_DEMO_OWNER_EMAIL" not in importer.split("print(json.dumps", 1)[1]
     assert "Restart production for the Rivermere import" not in promotion
     assert "Restart production after clearing the Rivermere runner" not in promotion
     assert "backup_recovery_point" in promotion

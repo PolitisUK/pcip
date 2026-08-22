@@ -12,6 +12,7 @@ from app.demo_data.rivermere import (
     RIVERMERE_SLUG,
     assert_safe_demo_target,
     remove_rivermere_project,
+    resolve_configured_production_owner,
     replace_superseded_rivermere_demo,
     seed_rivermere,
     verify_rivermere,
@@ -46,6 +47,11 @@ def main() -> int:
         action="store_true",
         help="Grant the protected configured production platform administrator owner access to the fictional workspace.",
     )
+    parser.add_argument(
+        "--verify-configured-production-owner-access",
+        action="store_true",
+        help="Verify the protected configured production administrator has owner access without revealing the selector.",
+    )
     parser.add_argument("--remove", choices=["everyday-life", "chapel-lane"], help="Remove only the selected Rivermere demonstration project.")
     parser.add_argument("--verify", action="store_true", help="Read-only verification against the bundled v1.1 content pack.")
     args = parser.parse_args()
@@ -72,6 +78,10 @@ def main() -> int:
         parser.error("--grant-configured-production-owner-access requires the production demo-organisation flag; no records were changed")
     if args.grant_sole_platform_admin_access and args.grant_configured_production_owner_access:
         parser.error("Only one production owner selection mechanism is allowed; no records were changed")
+    if args.verify_configured_production_owner_access and not args.verify:
+        parser.error("--verify-configured-production-owner-access requires --verify; no records were changed")
+    if args.verify_configured_production_owner_access and requested_environment != "production":
+        parser.error("--verify-configured-production-owner-access is restricted to production; no records were changed")
     if not args.verify and is_local and not args.confirm_local_development:
         parser.error("--confirm-local-development is required; no records were changed")
     if not args.verify and not is_local and not args.confirm_nonlocal_demo:
@@ -88,7 +98,16 @@ def main() -> int:
     )
     if args.verify:
         with SessionLocal() as db:
-            result = verify_rivermere(db, organisation_slug=args.organisation_slug)
+            expected_owner = (
+                _configured_production_owner(db)
+                if args.verify_configured_production_owner_access
+                else None
+            )
+            result = verify_rivermere(
+                db,
+                organisation_slug=args.organisation_slug,
+                expected_owner=expected_owner,
+            )
         print(json.dumps({"action": "verified", "environment": settings.environment, "database": str(database_path) if database_path else "configured nonlocal database", "result": result}, indent=2))
         return 0 if result["valid"] else 1
     Base.metadata.create_all(engine)
@@ -111,11 +130,8 @@ def main() -> int:
                 ),
                 grant_sole_platform_admin_access=args.grant_sole_platform_admin_access,
                 grant_configured_production_owner_access=args.grant_configured_production_owner_access,
-                production_owner_user_id=(
-                    settings.rivermere_production_owner_user_id
-                    if args.grant_configured_production_owner_access
-                    else None
-                ),
+                demo_owner_user_id=(settings.rivermere_demo_owner_user_id if args.grant_configured_production_owner_access else None),
+                demo_owner_email=(settings.rivermere_demo_owner_email if args.grant_configured_production_owner_access else None),
             ).as_dict()
             if replacement:
                 result["superseded_v1_removed"] = replacement
@@ -125,6 +141,15 @@ def main() -> int:
         "database": str(database_path), "storage": str(evidence_path), "result": result,
     }, indent=2))
     return 0
+
+
+def _configured_production_owner(db):
+    """Use the seed gate for verification too, without exposing its selector."""
+    return resolve_configured_production_owner(
+        db,
+        owner_user_id=settings.rivermere_demo_owner_user_id,
+        owner_email=settings.rivermere_demo_owner_email,
+    )
 
 
 if __name__ == "__main__":
