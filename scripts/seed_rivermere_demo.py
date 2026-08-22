@@ -12,6 +12,7 @@ from app.demo_data.rivermere import (
     RIVERMERE_SLUG,
     assert_safe_demo_target,
     remove_rivermere_project,
+    record_rivermere_verification,
     resolve_configured_production_owner,
     replace_superseded_rivermere_demo,
     seed_rivermere,
@@ -133,6 +134,17 @@ def main() -> int:
                 demo_owner_user_id=(settings.rivermere_demo_owner_user_id if args.grant_configured_production_owner_access else None),
                 demo_owner_email=(settings.rivermere_demo_owner_email if args.grant_configured_production_owner_access else None),
             ).as_dict()
+            if args.grant_configured_production_owner_access:
+                owner = _configured_production_owner(db)
+                verification = verify_rivermere(
+                    db,
+                    organisation_slug=args.organisation_slug,
+                    expected_owner=owner,
+                )
+                if not verification["valid"]:
+                    raise RuntimeError("Rivermere verification failed; no production completion record was written.")
+                record_rivermere_verification(db, organisation_slug=args.organisation_slug)
+                result["verification_completed"] = True
             if replacement:
                 result["superseded_v1_removed"] = replacement
             action = "seeded"

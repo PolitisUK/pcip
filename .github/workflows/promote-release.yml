@@ -255,7 +255,7 @@ jobs:
           az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" \
             --settings RUN_MIGRATIONS=false RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false >/dev/null
           az webapp config appsettings delete -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" \
-            --setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL >/dev/null
+            --setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL RIVERMERE_DEMO_VERIFICATION_NOT_BEFORE >/dev/null
       - name: Verify production evidence and rollback target
         shell: bash
         env:
@@ -331,37 +331,34 @@ jobs:
             echo "The protected Rivermere production owner configuration is required." >&2
             exit 1
           fi
+          verification_not_before=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "verification_not_before=$verification_not_before" >> "$GITHUB_OUTPUT"
           # Updating App Service settings restarts the app. Do not also issue a
           # manual restart: that could invoke the one-time importer twice.
           az webapp config appsettings set \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$PRODUCTION_APP" \
-            --settings RUN_RIVERMERE_PRODUCTION_DEMO_SEED=true RIVERMERE_DEMO_OWNER_USER_ID="$RIVERMERE_DEMO_OWNER_USER_ID" RIVERMERE_DEMO_OWNER_EMAIL="$RIVERMERE_DEMO_OWNER_EMAIL" \
+            --settings RUN_RIVERMERE_PRODUCTION_DEMO_SEED=true RIVERMERE_DEMO_OWNER_USER_ID="$RIVERMERE_DEMO_OWNER_USER_ID" RIVERMERE_DEMO_OWNER_EMAIL="$RIVERMERE_DEMO_OWNER_EMAIL" RIVERMERE_DEMO_VERIFICATION_NOT_BEFORE="$verification_not_before" \
             >/dev/null
-      - name: Verify the production Rivermere import reached sustained readiness
-        if: ${{ inputs.seed_rivermere_demo }}
+      - name: Wait for durable production Rivermere verification
+        if: ${{ steps.rivermere_seed_control.outcome == 'success' }}
         shell: bash
+        env:
+          VERIFICATION_NOT_BEFORE: ${{ steps.rivermere_seed_control.outputs.verification_not_before }}
         run: |
           set -euo pipefail
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
-          ready=false
-          for attempt in {1..30}; do
-            response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready" || true)
-            if grep -q '"status":"ready"' <<<"$response"; then
-              ready=true
-              break
+          for attempt in {1..90}; do
+            response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/api/v1/rivermere/verification" || true)
+            if jq -e --arg not_before "$VERIFICATION_NOT_BEFORE" \
+              '.dataset == "rivermere" and .content_version == "1.1.0" and .verified == true and (.verified_at >= $not_before)' \
+              >/dev/null <<<"$response"; then
+              exit 0
             fi
             sleep 10
           done
-          test "$ready" = true || { echo "Production did not become ready after the Rivermere import." >&2; exit 1; }
-          for stable_check in {1..6}; do
-            sleep 10
-            response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready" || true)
-            grep -q '"status":"ready"' <<<"$response" || {
-              echo "Production became unhealthy after the Rivermere import." >&2
-              exit 1
-            }
-          done
+          echo "Production did not publish a new durable Rivermere verification record." >&2
+          exit 1
       - name: Clear the production Rivermere startup runner
         if: ${{ always() && inputs.seed_rivermere_demo }}
         shell: bash
@@ -377,7 +374,7 @@ jobs:
           az webapp config appsettings delete \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$PRODUCTION_APP" \
-            --setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL \
+            --setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL RIVERMERE_DEMO_VERIFICATION_NOT_BEFORE \
             >/dev/null
       - name: Verify final production readiness
         if: ${{ always() && inputs.seed_rivermere_demo }}
@@ -388,12 +385,15 @@ jobs:
           for attempt in {1..30}; do
             response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready" || true)
             if grep -q '"status":"ready"' <<<"$response"; then
-              exit 0
+              break
             fi
             sleep 10
           done
-          echo "Production did not recover after the Rivermere runner was cleared." >&2
-          exit 1
+          grep -q '"status":"ready"' <<<"$response" || { echo "Production did not recover after the Rivermere runner was cleared." >&2; exit 1; }
+          for final_check in {1..3}; do
+            response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready" || true)
+            grep -q '"status":"ready"' <<<"$response" || { echo "Production did not remain ready after the Rivermere runner was cleared." >&2; exit 1; }
+          done
       - name: Fail safe to the no-migration production steady state
         if: always()
         shell: bash

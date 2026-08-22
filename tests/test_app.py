@@ -441,6 +441,29 @@ def test_platform_admin_is_explicit_and_customer_owner_cannot_open_global_view()
         assert 'Customer organisations' in allowed.text
 
 
+def test_rivermere_completion_endpoint_is_non_sensitive_and_platform_detail_is_restricted():
+    with client:
+        client.cookies.clear()
+        signal = client.get('/api/v1/rivermere/verification')
+        assert signal.status_code == 200
+        assert set(signal.json()) == {'dataset', 'content_version', 'verified', 'verified_at'}
+        assert signal.json()['dataset'] == 'rivermere'
+        assert 'owner' not in json.dumps(signal.json()).lower()
+
+        auth()
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            was_platform_admin = user.is_platform_admin
+            user.is_platform_admin = False
+            db.commit()
+        denied = client.get('/api/v1/platform/rivermere/verification', follow_redirects=False)
+        assert denied.status_code == 404
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            user.is_platform_admin = was_platform_admin
+            db.commit()
+
+
 def test_customer_cannot_cross_tenant_study_or_participant_object_ids():
     from app.models import Organisation, OrganisationMembership, Participant, Project, Study
     from app.security import hash_password

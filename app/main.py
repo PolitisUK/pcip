@@ -100,6 +100,13 @@ from .methodology import (
     source_metadata,
     validate_configuration,
 )
+from .demo_data.rivermere import (
+    CHAPEL_PROJECT_CODE,
+    CONTENT_VERSION as RIVERMERE_CONTENT_VERSION,
+    EVERYDAY_PROJECT_CODE,
+    RIVERMERE_SLUG,
+    rivermere_verification_completed_at,
+)
 from .participant_services import (
     activity_window,
     apply_response_action,
@@ -1539,6 +1546,46 @@ def readiness():
             content={"status": "unavailable"},
         )
     return {"status": "ready", "version": VERSION}
+
+
+def _rivermere_completion_payload(db: Session) -> dict[str, object]:
+    completed_at = rivermere_verification_completed_at(db)
+    return {
+        "dataset": "rivermere",
+        "content_version": RIVERMERE_CONTENT_VERSION,
+        "verified": completed_at is not None,
+        "verified_at": completed_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if completed_at else None,
+    }
+
+
+@app.get("/api/v1/rivermere/verification")
+def rivermere_verification_signal(db: Session = Depends(get_db)):
+    """Non-sensitive durable signal for the protected release workflow."""
+    return _rivermere_completion_payload(db)
+
+
+@app.get("/api/v1/platform/rivermere/verification")
+def platform_rivermere_verification_signal(
+    u=Depends(platform_admin),
+    db: Session = Depends(get_db),
+):
+    """Platform-admin read-only status without disclosing any account identifier."""
+    payload = _rivermere_completion_payload(db)
+    organisation = db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG))
+    membership = db.scalar(select(OrganisationMembership).where(
+        OrganisationMembership.user_id == u.id,
+        OrganisationMembership.organisation_id == organisation.id,
+    )) if organisation else None
+    payload["current_platform_admin_owner_access"] = bool(
+        membership and membership.is_active and membership.role == "owner"
+    )
+    payload["project_counts"] = {
+        code: int(db.scalar(select(func.count(Project.id)).where(
+            Project.organisation_id == organisation.id, Project.code == code,
+        )) or 0) if organisation else 0
+        for code in (EVERYDAY_PROJECT_CODE, CHAPEL_PROJECT_CODE)
+    }
+    return payload
 
 
 @app.get("/privacy", response_class=HTMLResponse)

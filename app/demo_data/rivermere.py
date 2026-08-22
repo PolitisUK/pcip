@@ -49,6 +49,7 @@ EVERYDAY_STUDY_CODE = "RIV2035-ETH"
 CHAPEL_PROJECT_CODE = "RIV-CHAPEL-LANE"
 CHAPEL_STUDY_CODE = "RIV-CHAPEL-LANE-ETH"
 CONTENT_VERSION = "1.1.0"
+VERIFICATION_ACTION = "demo.rivermere.v1_1.verified"
 CONTENT_ROOT = Path(__file__).with_name("content")
 SAFE_ENVIRONMENTS = {"development", "dev", "test", "testing"}
 LEGACY_RIVERMERE_SLUG = "rivermere-town-council-demo"
@@ -519,6 +520,7 @@ def seed_rivermere(
         if grant_configured_production_owner_access
         else None
     )
+    _assert_rivermere_seed_state_is_safe(db, organisation_slug)
     datasets = rivermere_datasets()
     counts = SeedCounts()
     organisation = _find_or_create_organisation(db, organisation_slug, create=create_organisation)
@@ -549,6 +551,23 @@ def seed_rivermere(
     return counts
 
 
+def _assert_rivermere_seed_state_is_safe(db: Session, organisation_slug: str) -> None:
+    """Refuse to repair a partly present or inconsistent production dataset."""
+    organisations = db.scalars(select(Organisation).where(Organisation.slug == organisation_slug)).all()
+    if not organisations:
+        return
+    if len(organisations) != 1 or organisations[0].name != RIVERMERE_NAME:
+        raise UnsafeDemoTarget("The designated Rivermere organisation is inconsistent.")
+    organisation = organisations[0]
+    counts = [len(db.scalars(select(Project).where(
+        Project.organisation_id == organisation.id, Project.code == code,
+    )).all()) for code in (EVERYDAY_PROJECT_CODE, CHAPEL_PROJECT_CODE)]
+    if counts == [0, 0]:
+        return
+    if counts != [1, 1] or not verify_rivermere(db, organisation_slug=organisation_slug)["valid"]:
+        raise UnsafeDemoTarget("Existing Rivermere data is incomplete or inconsistent; refusing to alter it.")
+
+
 def project_analysis_manifest(project_code: str) -> dict[str, Any]:
     datasets = rivermere_datasets()
     if project_code not in datasets:
@@ -569,9 +588,10 @@ def verify_rivermere(
     """Read-only verification against the bundled v1.1 source pack."""
     datasets = rivermere_datasets()
     result: dict[str, Any] = {"valid": True, "projects": {}, "errors": []}
-    organisation = db.scalar(select(Organisation).where(Organisation.slug == organisation_slug))
-    if not organisation or organisation.name != RIVERMERE_NAME:
+    organisations = db.scalars(select(Organisation).where(Organisation.slug == organisation_slug)).all()
+    if len(organisations) != 1 or organisations[0].name != RIVERMERE_NAME:
         return {"valid": False, "projects": {}, "errors": ["designated fictional organisation is missing or has an unexpected name"]}
+    organisation = organisations[0]
     if expected_owner is not None:
         membership = db.scalar(select(OrganisationMembership).where(
             OrganisationMembership.user_id == expected_owner.id,
@@ -587,16 +607,18 @@ def verify_rivermere(
         result["intended_owner_access"] = True
     for code, data in datasets.items():
         errors: list[str] = []
-        project = db.scalar(select(Project).where(Project.organisation_id == organisation.id, Project.code == code))
-        if not project:
-            result["projects"][code] = {"valid": False, "errors": ["project missing"]}
+        projects = db.scalars(select(Project).where(Project.organisation_id == organisation.id, Project.code == code)).all()
+        if len(projects) != 1:
+            result["projects"][code] = {"valid": False, "errors": ["project must exist exactly once"]}
             result["valid"] = False
             continue
-        study = db.scalar(select(Study).where(Study.project_id == project.id, Study.code == _study_code(code)))
-        if not study:
-            result["projects"][code] = {"valid": False, "errors": ["study missing"]}
+        project = projects[0]
+        studies = db.scalars(select(Study).where(Study.project_id == project.id, Study.code == _study_code(code))).all()
+        if len(studies) != 1:
+            result["projects"][code] = {"valid": False, "errors": ["study must exist exactly once"]}
             result["valid"] = False
             continue
+        study = studies[0]
         responses = db.scalars(select(ActivityResponse).where(ActivityResponse.study_id == study.id)).all()
         payloads = [_response_payload_row(row) for row in responses]
         source_entries = {entry["id"]: entry for entry in data["entries"]}
@@ -623,6 +645,34 @@ def verify_rivermere(
             result["valid"] = False
             result["errors"].extend(f"{code}: {error}" for error in errors)
     return result
+
+
+def record_rivermere_verification(db: Session, *, organisation_slug: str = RIVERMERE_SLUG) -> datetime:
+    """Persist a non-sensitive completion record only after full verification."""
+    result = verify_rivermere(db, organisation_slug=organisation_slug)
+    if not result["valid"]:
+        raise UnsafeDemoTarget("Rivermere verification did not complete; no completion record was written.")
+    organisation = db.scalar(select(Organisation).where(Organisation.slug == organisation_slug))
+    event = AuditEvent(
+        organisation_id=organisation.id,
+        actor_user_id=None,
+        action=VERIFICATION_ACTION,
+        entity_type="fictional_dataset",
+        entity_id="rivermere",
+        detail=f"fictional_dataset=rivermere content_version={CONTENT_VERSION} verification=successful",
+    )
+    db.add(event)
+    db.commit()
+    return event.created_at
+
+
+def rivermere_verification_completed_at(db: Session) -> datetime | None:
+    event = db.scalars(select(AuditEvent).where(
+        AuditEvent.action == VERIFICATION_ACTION,
+        AuditEvent.entity_type == "fictional_dataset",
+        AuditEvent.entity_id == "rivermere",
+    ).order_by(AuditEvent.created_at.desc())).first()
+    return event.created_at if event else None
 
 
 def _response_payload_row(row: ActivityResponse) -> dict[str, Any]:
