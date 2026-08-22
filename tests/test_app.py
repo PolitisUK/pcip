@@ -446,7 +446,10 @@ def test_rivermere_completion_endpoint_is_non_sensitive_and_platform_detail_is_r
         client.cookies.clear()
         signal = client.get('/api/v1/rivermere/verification')
         assert signal.status_code == 200
-        assert set(signal.json()) == {'dataset', 'content_version', 'verified', 'verified_at'}
+        assert set(signal.json()) == {
+            'dataset', 'content_version', 'verified', 'verified_at', 'import_status',
+            'current_phase', 'error_category', 'started_at', 'committed_at',
+        }
         assert signal.json()['dataset'] == 'rivermere'
         assert 'owner' not in json.dumps(signal.json()).lower()
 

@@ -540,6 +540,20 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class DemoImportStatus(Base):
+    """Non-sensitive operational state for one controlled fictional import."""
+    __tablename__ = "demo_import_statuses"
+    dataset: Mapped[str] = mapped_column(String(80), primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), default="not_started")
+    phase: Mapped[str] = mapped_column(String(80), default="not_started")
+    content_version: Mapped[str] = mapped_column(String(30), default="")
+    error_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class OutboxEmail(Base):
     __tablename__ = "outbox_emails"
     __table_args__ = (
