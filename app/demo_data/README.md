@@ -91,9 +91,8 @@ PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
   --verify
 ```
 
-Production is disabled by default. The organisation and a Rivermere demo
-researcher must already exist; this command is deliberately not run by the
-importer or CI:
+Production is disabled by default. Direct use requires the organisation and a
+Rivermere demo researcher to exist already:
 
 ```bash
 PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
@@ -101,3 +100,13 @@ PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
   --organisation-slug rivermere-town-council \
   --confirm-nonlocal-demo --confirm-production-demo
 ```
+
+The production release workflow provides a separately approved one-time route.
+It remains behind the existing immutable-image, backup, rollback and production
+environment gates. When explicitly selected, it creates only the exact
+fictional organisation and non-login demo researcher, requires exactly one
+active platform administrator, grants that administrator owner access to the
+fictional workspace, imports idempotently, verifies the complete v1.1 pack,
+clears the startup flag and restarts production. It fails closed if platform
+administrator ownership is ambiguous or the designated slug is already used by
+anything other than the exact fictional organisation.

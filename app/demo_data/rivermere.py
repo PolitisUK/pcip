@@ -190,6 +190,40 @@ def _ensure_operator(db: Session, organisation: Organisation, counts: SeedCounts
     return operator
 
 
+def _grant_sole_platform_admin_access(db: Session, organisation: Organisation, counts: SeedCounts) -> None:
+    """Grant the one active platform administrator access to the fictional workspace.
+
+    Production import fails closed if administrator ownership is ambiguous.  It
+    never changes an existing membership, reactivates a user, or grants access
+    to a non-platform account.
+    """
+    administrators = db.scalars(
+        select(User).where(User.is_platform_admin == True, User.is_active == True)
+    ).all()
+    if len(administrators) != 1:
+        raise UnsafeDemoTarget(
+            "Production Rivermere access requires exactly one active platform administrator."
+        )
+    administrator = administrators[0]
+    membership = db.scalar(select(OrganisationMembership).where(
+        OrganisationMembership.user_id == administrator.id,
+        OrganisationMembership.organisation_id == organisation.id,
+    ))
+    if membership:
+        if not membership.is_active or membership.role not in {"owner", "admin"}:
+            raise UnsafeDemoTarget(
+                "The platform administrator already has an incompatible Rivermere membership."
+            )
+        return
+    db.add(OrganisationMembership(
+        user_id=administrator.id,
+        organisation_id=organisation.id,
+        role="owner",
+        is_active=True,
+    ))
+    counts.memberships += 1
+
+
 def _get_or_create_project(db: Session, organisation_id: int, user_id: int, data: dict[str, Any], counts: SeedCounts) -> Project:
     project_data = data["project"]
     code = project_data["code"]
@@ -402,13 +436,20 @@ def _memos(db: Session, organisation_id: int, user_id: int, study: Study, data: 
 
 
 def seed_rivermere(
-    db: Session, storage, *, organisation_slug: str = RIVERMERE_SLUG, create_organisation: bool = True,
+    db: Session,
+    storage,
+    *,
+    organisation_slug: str = RIVERMERE_SLUG,
+    create_organisation: bool = True,
+    grant_sole_platform_admin_access: bool = False,
 ) -> SeedCounts:
     """Create the exact v1.1 data once; a repeat call only verifies existing rows."""
     datasets = rivermere_datasets()
     counts = SeedCounts()
     organisation = _find_or_create_organisation(db, organisation_slug, create=create_organisation)
     operator = _ensure_operator(db, organisation, counts, create=create_organisation)
+    if grant_sole_platform_admin_access:
+        _grant_sole_platform_admin_access(db, organisation, counts)
     for code in (EVERYDAY_PROJECT_CODE, CHAPEL_PROJECT_CODE):
         data = datasets[code]
         project = _get_or_create_project(db, organisation.id, operator.id, data, counts)
