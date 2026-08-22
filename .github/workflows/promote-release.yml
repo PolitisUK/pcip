@@ -70,6 +70,11 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Enforce IP release compliance
+        run: python scripts/ip_compliance.py --release-gate
       - id: evidence
         name: Validate the approved source and release record
         shell: bash
