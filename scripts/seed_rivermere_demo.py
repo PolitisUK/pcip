@@ -31,6 +31,16 @@ def main() -> int:
         action="store_true",
         help="Create the exact fictional Rivermere organisation and non-login demo researcher when they are absent in staging.",
     )
+    parser.add_argument(
+        "--create-production-demo-organisation",
+        action="store_true",
+        help="Create the exact fictional Rivermere organisation and non-login demo researcher when they are absent in production.",
+    )
+    parser.add_argument(
+        "--grant-sole-platform-admin-access",
+        action="store_true",
+        help="Grant the sole active platform administrator owner access to the fictional production workspace.",
+    )
     parser.add_argument("--remove", choices=["everyday-life", "chapel-lane"], help="Remove only the selected Rivermere demonstration project.")
     parser.add_argument("--verify", action="store_true", help="Read-only verification against the bundled v1.1 content pack.")
     args = parser.parse_args()
@@ -47,6 +57,12 @@ def main() -> int:
         parser.error("--create-staging-demo-organisation is restricted to staging; no records were changed")
     if args.create_staging_demo_organisation and (args.verify or args.remove):
         parser.error("--create-staging-demo-organisation is only valid when seeding; no records were changed")
+    if args.create_production_demo_organisation and requested_environment != "production":
+        parser.error("--create-production-demo-organisation is restricted to production; no records were changed")
+    if args.create_production_demo_organisation and (args.verify or args.remove):
+        parser.error("--create-production-demo-organisation is only valid when seeding; no records were changed")
+    if args.grant_sole_platform_admin_access and not args.create_production_demo_organisation:
+        parser.error("--grant-sole-platform-admin-access requires the production demo-organisation flag; no records were changed")
     if not args.verify and is_local and not args.confirm_local_development:
         parser.error("--confirm-local-development is required; no records were changed")
     if not args.verify and not is_local and not args.confirm_nonlocal_demo:
@@ -79,7 +95,12 @@ def main() -> int:
                 db,
                 storage,
                 organisation_slug=args.organisation_slug,
-                create_organisation=is_local or args.create_staging_demo_organisation,
+                create_organisation=(
+                    is_local
+                    or args.create_staging_demo_organisation
+                    or args.create_production_demo_organisation
+                ),
+                grant_sole_platform_admin_access=args.grant_sole_platform_admin_access,
             ).as_dict()
             if replacement:
                 result["superseded_v1_removed"] = replacement
