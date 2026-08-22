@@ -20,4 +20,5 @@ tests
 scripts/*
 !scripts/__init__.py
 !scripts/bootstrap_admin.py
+!scripts/seed_rivermere_demo.py
 *.md
