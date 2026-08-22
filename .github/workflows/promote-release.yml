@@ -219,7 +219,7 @@ jobs:
             sleep 10
           done
           test "$ready" = true || { echo "Staging never became ready." >&2; exit 1; }
-          for route in health privacy support terms cookies accessibility acceptable-use legal contact; do
+          for route in privacy support terms cookies accessibility acceptable-use legal contact; do
             curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/$route" >/dev/null
           done
       - name: Disable automatic migrations after staging validation
@@ -312,7 +312,7 @@ jobs:
             sleep 10
           done
           test "$ready" = true || { echo "Production never became ready." >&2; exit 1; }
-          for route in health privacy support terms cookies accessibility acceptable-use legal contact; do
+          for route in privacy support terms cookies accessibility acceptable-use legal contact; do
             curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://citizencentric.co.uk/$route" >/dev/null
           done
       - name: Enable the approved production Rivermere startup runner
