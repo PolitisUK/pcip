@@ -7,4 +7,20 @@ if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
   alembic upgrade head
 fi
 
-uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
+if [ "${RUN_RIVERMERE_DEMO_SEED:-false}" = "true" ]; then
+  if [ "${ENVIRONMENT:-}" != "staging" ]; then
+    echo "RUN_RIVERMERE_DEMO_SEED is restricted to the staging environment." >&2
+    exit 1
+  fi
+  PYTHONPATH=. python scripts/seed_rivermere_demo.py \
+    --environment staging \
+    --organisation-slug rivermere-town-council \
+    --confirm-nonlocal-demo \
+    --create-staging-demo-organisation
+  PYTHONPATH=. python scripts/seed_rivermere_demo.py \
+    --environment staging \
+    --organisation-slug rivermere-town-council \
+    --verify
+fi
+
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"

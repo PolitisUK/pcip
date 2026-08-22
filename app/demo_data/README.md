@@ -73,8 +73,14 @@ own `ENVIRONMENT`, database and storage configuration:
 PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
   --environment staging \
   --organisation-slug rivermere-town-council \
-  --confirm-nonlocal-demo
+  --confirm-nonlocal-demo \
+  --create-staging-demo-organisation
 ```
+
+`--create-staging-demo-organisation` is accepted only in staging. It creates
+only the exact fictional organisation and its non-login demo researcher when
+they are absent. Production continues to require both records to be provisioned
+separately before import.
 
 Verify staging without writing:
 
