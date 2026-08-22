@@ -18,7 +18,9 @@ from app.demo_data.rivermere import (
     assert_safe_demo_target,
     project_analysis_manifest,
     quality_report,
+    record_rivermere_verification,
     remove_rivermere_project,
+    rivermere_verification_completed_at,
     rivermere_datasets,
     seed_rivermere,
     verify_rivermere,
@@ -26,6 +28,7 @@ from app.demo_data.rivermere import (
 from app.models import (
     Activity,
     ActivityResponse,
+    AuditEvent,
     EvidenceFile,
     Organisation,
     OrganisationMembership,
@@ -502,3 +505,28 @@ def test_existing_non_owner_membership_fails_closed_without_changing_it(rivermer
             OrganisationMembership.organisation_id == rivermere.id,
         ))
         assert membership.role == "admin"
+
+
+def test_completion_record_is_written_only_after_full_verification_without_owner_details(rivermere_database):
+    factory, storage = rivermere_database
+    with factory() as db:
+        assert rivermere_verification_completed_at(db) is None
+        seed_rivermere(db, storage)
+        completed_at = record_rivermere_verification(db)
+        event = db.scalar(select(AuditEvent).where(AuditEvent.action == "demo.rivermere.v1_1.verified"))
+        assert event.created_at == completed_at
+        assert event.entity_type == "fictional_dataset"
+        assert event.entity_id == "rivermere"
+        assert event.detail == "fictional_dataset=rivermere content_version=1.1.0 verification=successful"
+        assert "@" not in event.detail
+
+
+def test_inconsistent_existing_dataset_fails_closed_without_automatic_repair(rivermere_database):
+    factory, storage = rivermere_database
+    with factory() as db:
+        seed_rivermere(db, storage)
+        project = db.scalar(select(Project).where(Project.code == EVERYDAY_PROJECT_CODE))
+        db.delete(project)
+        db.commit()
+        with pytest.raises(UnsafeDemoTarget, match="incomplete or inconsistent"):
+            seed_rivermere(db, storage)

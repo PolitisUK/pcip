@@ -47,6 +47,11 @@ def test_production_rivermere_runner_preserves_release_and_cleanup_gates():
     assert "secrets.RIVERMERE_DEMO_OWNER_USER_ID" in promotion
     assert "RIVERMERE_DEMO_OWNER_EMAIL=\"$RIVERMERE_DEMO_OWNER_EMAIL\"" in promotion
     assert "--setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL" in promotion
+    assert "RIVERMERE_DEMO_VERIFICATION_NOT_BEFORE" in promotion
+    assert "Wait for durable production Rivermere verification" in promotion
+    assert "/api/v1/rivermere/verification" in promotion
+    assert "for attempt in {1..90}" in promotion
+    assert "for final_check in {1..3}" in promotion
     assert "echo \"$RIVERMERE_DEMO_OWNER_EMAIL\"" not in promotion
     assert "echo \"$RIVERMERE_DEMO_OWNER_USER_ID\"" not in promotion
     assert "RIVERMERE_DEMO_OWNER_EMAIL" not in entrypoint
