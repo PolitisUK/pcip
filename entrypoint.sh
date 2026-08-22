@@ -23,4 +23,22 @@ if [ "${RUN_RIVERMERE_DEMO_SEED:-false}" = "true" ]; then
     --verify
 fi
 
+if [ "${RUN_RIVERMERE_PRODUCTION_DEMO_SEED:-false}" = "true" ]; then
+  if [ "${ENVIRONMENT:-}" != "production" ]; then
+    echo "RUN_RIVERMERE_PRODUCTION_DEMO_SEED is restricted to the production environment." >&2
+    exit 1
+  fi
+  PYTHONPATH=. python scripts/seed_rivermere_demo.py \
+    --environment production \
+    --organisation-slug rivermere-town-council \
+    --confirm-nonlocal-demo \
+    --confirm-production-demo \
+    --create-production-demo-organisation \
+    --grant-sole-platform-admin-access
+  PYTHONPATH=. python scripts/seed_rivermere_demo.py \
+    --environment production \
+    --organisation-slug rivermere-town-council \
+    --verify
+fi
+
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
