@@ -41,6 +41,11 @@ on:
         required: true
         default: false
         type: boolean
+      seed_rivermere_demo:
+        description: Create and verify the exact fictional Rivermere v1.1 workspace in production after promotion.
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -81,6 +86,8 @@ jobs:
           BACKUP_RECOVERY_POINT: ${{ inputs.backup_recovery_point }}
           CURRENT_ALEMBIC_REVISION: ${{ inputs.current_alembic_revision }}
           APPROVED_IMAGE_DIGEST: ${{ inputs.approved_image_digest }}
+          PROMOTE_TO_PRODUCTION: ${{ inputs.promote_to_production }}
+          SEED_RIVERMERE_DEMO: ${{ inputs.seed_rivermere_demo }}
         run: |
           set -euo pipefail
           for value in RELEASE_SHA RELEASE_OPERATOR RELEASE_WINDOW ROLLBACK_DECISION_OWNER BACKUP_RECOVERY_POINT CURRENT_ALEMBIC_REVISION; do
@@ -89,6 +96,10 @@ jobs:
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full lowercase commit SHA." >&2; exit 1; }
           if test -n "$APPROVED_IMAGE_DIGEST"; then
             [[ "$APPROVED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "approved_image_digest must be an immutable sha256 digest." >&2; exit 1; }
+          fi
+          if [ "$SEED_RIVERMERE_DEMO" = "true" ] && [ "$PROMOTE_TO_PRODUCTION" != "true" ]; then
+            echo "The production Rivermere import requires promote_to_production=true." >&2
+            exit 1
           fi
           git cat-file -e "${RELEASE_SHA}^{commit}"
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main || {
@@ -241,7 +252,8 @@ jobs:
           set -euo pipefail
           # A normal restart must never discover a stale true setting and run
           # schema changes outside this explicitly approved promotion job.
-          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=false >/dev/null
+          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" \
+            --settings RUN_MIGRATIONS=false RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false >/dev/null
       - name: Verify production evidence and rollback target
         shell: bash
         env:
@@ -303,6 +315,68 @@ jobs:
           for route in health privacy support terms cookies accessibility acceptable-use legal contact; do
             curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://citizencentric.co.uk/$route" >/dev/null
           done
+      - name: Enable the approved production Rivermere startup runner
+        if: ${{ inputs.seed_rivermere_demo }}
+        id: rivermere_seed_control
+        shell: bash
+        run: >-
+          az webapp config appsettings set
+          -g "$AZURE_RESOURCE_GROUP"
+          -n "$PRODUCTION_APP"
+          --settings RUN_RIVERMERE_PRODUCTION_DEMO_SEED=true
+      - name: Restart production for the Rivermere import
+        if: ${{ inputs.seed_rivermere_demo }}
+        run: az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP"
+      - name: Verify the production Rivermere import reached sustained readiness
+        if: ${{ inputs.seed_rivermere_demo }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
+          ready=false
+          for attempt in {1..30}; do
+            response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready" || true)
+            if grep -q '"status":"ready"' <<<"$response"; then
+              ready=true
+              break
+            fi
+            sleep 10
+          done
+          test "$ready" = true || { echo "Production did not become ready after the Rivermere import." >&2; exit 1; }
+          for stable_check in {1..6}; do
+            sleep 10
+            response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready" || true)
+            grep -q '"status":"ready"' <<<"$response" || {
+              echo "Production became unhealthy after the Rivermere import." >&2
+              exit 1
+            }
+          done
+      - name: Clear the production Rivermere startup runner
+        if: ${{ always() && steps.rivermere_seed_control.outcome == 'success' }}
+        shell: bash
+        run: >-
+          az webapp config appsettings set
+          -g "$AZURE_RESOURCE_GROUP"
+          -n "$PRODUCTION_APP"
+          --settings RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false
+      - name: Restart production after clearing the Rivermere runner
+        if: ${{ always() && steps.rivermere_seed_control.outcome == 'success' }}
+        run: az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP"
+      - name: Verify final production readiness
+        if: ${{ always() && steps.rivermere_seed_control.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
+          for attempt in {1..30}; do
+            response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready" || true)
+            if grep -q '"status":"ready"' <<<"$response"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Production did not recover after the Rivermere runner was cleared." >&2
+          exit 1
       - name: Fail safe to the no-migration production steady state
         if: always()
         shell: bash
