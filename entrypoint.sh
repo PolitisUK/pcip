@@ -38,7 +38,8 @@ if [ "${RUN_RIVERMERE_PRODUCTION_DEMO_SEED:-false}" = "true" ]; then
   PYTHONPATH=. python scripts/seed_rivermere_demo.py \
     --environment production \
     --organisation-slug rivermere-town-council \
-    --verify
+    --verify \
+    --verify-configured-production-owner-access
 fi
 
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"

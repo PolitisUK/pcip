@@ -224,15 +224,32 @@ def _grant_sole_platform_admin_access(db: Session, organisation: Organisation, c
     counts.memberships += 1
 
 
-def _resolve_explicit_production_owner(db: Session, *, owner_user_id: str | None) -> User:
-    """Resolve one configured active platform administrator before mutating data."""
-    configured_id = (owner_user_id or "").strip()
-    if not configured_id or not configured_id.isdecimal() or int(configured_id) <= 0:
-        raise UnsafeDemoTarget("Production Rivermere access requires one configured intended owner.")
+def resolve_configured_production_owner(
+    db: Session,
+    *,
+    owner_user_id: str | None,
+    owner_email: str | None,
+) -> User:
+    """Resolve one configured active platform administrator before mutating data.
 
-    # User.id is a primary key, but retain an explicit cardinality check so this
-    # gate remains fail-closed if the persistence model ever changes.
-    matches = db.scalars(select(User).where(User.id == int(configured_id))).all()
+    The protected selector is deliberately never included in an exception or a
+    result.  Email lookup is exact only after lower-casing and trimming both
+    sides, so it remains stable across harmless presentation differences.
+    """
+    configured_id = (owner_user_id or "").strip()
+    configured_email = (owner_email or "").strip().lower()
+    if bool(configured_id) == bool(configured_email):
+        raise UnsafeDemoTarget("Production Rivermere access requires exactly one configured intended owner selector.")
+    if configured_id:
+        if not configured_id.isdecimal() or int(configured_id) <= 0:
+            raise UnsafeDemoTarget("Production Rivermere access requires one configured intended owner.")
+        # User.id is a primary key, but retain an explicit cardinality check so
+        # this gate remains fail-closed if the persistence model ever changes.
+        matches = db.scalars(select(User).where(User.id == int(configured_id))).all()
+    else:
+        matches = db.scalars(
+            select(User).where(func.lower(func.trim(User.email)) == configured_email)
+        ).all()
     if len(matches) != 1:
         raise UnsafeDemoTarget("Production Rivermere intended owner could not be resolved uniquely.")
     owner = matches[0]
@@ -256,7 +273,7 @@ def _grant_explicit_production_owner_access(
         OrganisationMembership.organisation_id == organisation.id,
     ))
     if membership:
-        if not membership.is_active or membership.role not in {"owner", "admin"}:
+        if not membership.is_active or membership.role != "owner":
             raise UnsafeDemoTarget("The intended owner already has an incompatible Rivermere membership.")
         return
     db.add(OrganisationMembership(
@@ -487,13 +504,18 @@ def seed_rivermere(
     create_organisation: bool = True,
     grant_sole_platform_admin_access: bool = False,
     grant_configured_production_owner_access: bool = False,
-    production_owner_user_id: str | None = None,
+    demo_owner_user_id: str | None = None,
+    demo_owner_email: str | None = None,
 ) -> SeedCounts:
     """Create the exact v1.1 data once; a repeat call only verifies existing rows."""
     if grant_sole_platform_admin_access and grant_configured_production_owner_access:
         raise UnsafeDemoTarget("Production Rivermere access must use one owner selection mechanism.")
     explicit_owner = (
-        _resolve_explicit_production_owner(db, owner_user_id=production_owner_user_id)
+        resolve_configured_production_owner(
+            db,
+            owner_user_id=demo_owner_user_id,
+            owner_email=demo_owner_email,
+        )
         if grant_configured_production_owner_access
         else None
     )
@@ -538,13 +560,31 @@ def project_analysis_manifest(project_code: str) -> dict[str, Any]:
     }
 
 
-def verify_rivermere(db: Session, *, organisation_slug: str = RIVERMERE_SLUG) -> dict[str, Any]:
+def verify_rivermere(
+    db: Session,
+    *,
+    organisation_slug: str = RIVERMERE_SLUG,
+    expected_owner: User | None = None,
+) -> dict[str, Any]:
     """Read-only verification against the bundled v1.1 source pack."""
     datasets = rivermere_datasets()
     result: dict[str, Any] = {"valid": True, "projects": {}, "errors": []}
     organisation = db.scalar(select(Organisation).where(Organisation.slug == organisation_slug))
     if not organisation or organisation.name != RIVERMERE_NAME:
         return {"valid": False, "projects": {}, "errors": ["designated fictional organisation is missing or has an unexpected name"]}
+    if expected_owner is not None:
+        membership = db.scalar(select(OrganisationMembership).where(
+            OrganisationMembership.user_id == expected_owner.id,
+            OrganisationMembership.organisation_id == organisation.id,
+        ))
+        if not membership or not membership.is_active or membership.role != "owner":
+            return {
+                "valid": False,
+                "projects": {},
+                "errors": ["configured Rivermere owner access is missing or incompatible"],
+                "intended_owner_access": False,
+            }
+        result["intended_owner_access"] = True
     for code, data in datasets.items():
         errors: list[str] = []
         project = db.scalar(select(Project).where(Project.organisation_id == organisation.id, Project.code == code))

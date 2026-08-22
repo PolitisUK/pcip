@@ -254,6 +254,8 @@ jobs:
           # schema changes outside this explicitly approved promotion job.
           az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" \
             --settings RUN_MIGRATIONS=false RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false >/dev/null
+          az webapp config appsettings delete -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" \
+            --setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL >/dev/null
       - name: Verify production evidence and rollback target
         shell: bash
         env:
@@ -320,19 +322,21 @@ jobs:
         id: rivermere_seed_control
         shell: bash
         env:
-          RIVERMERE_PRODUCTION_OWNER_USER_ID: ${{ secrets.RIVERMERE_PRODUCTION_OWNER_USER_ID }}
+          RIVERMERE_DEMO_OWNER_USER_ID: ${{ secrets.RIVERMERE_DEMO_OWNER_USER_ID }}
+          RIVERMERE_DEMO_OWNER_EMAIL: ${{ secrets.RIVERMERE_DEMO_OWNER_EMAIL }}
         run: |
           set -euo pipefail
-          test -n "$RIVERMERE_PRODUCTION_OWNER_USER_ID" || {
+          if { test -z "$RIVERMERE_DEMO_OWNER_USER_ID" && test -z "$RIVERMERE_DEMO_OWNER_EMAIL"; } || \
+             { test -n "$RIVERMERE_DEMO_OWNER_USER_ID" && test -n "$RIVERMERE_DEMO_OWNER_EMAIL"; }; then
             echo "The protected Rivermere production owner configuration is required." >&2
             exit 1
-          }
+          fi
           # Updating App Service settings restarts the app. Do not also issue a
           # manual restart: that could invoke the one-time importer twice.
           az webapp config appsettings set \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$PRODUCTION_APP" \
-            --settings RUN_RIVERMERE_PRODUCTION_DEMO_SEED=true RIVERMERE_PRODUCTION_OWNER_USER_ID="$RIVERMERE_PRODUCTION_OWNER_USER_ID" \
+            --settings RUN_RIVERMERE_PRODUCTION_DEMO_SEED=true RIVERMERE_DEMO_OWNER_USER_ID="$RIVERMERE_DEMO_OWNER_USER_ID" RIVERMERE_DEMO_OWNER_EMAIL="$RIVERMERE_DEMO_OWNER_EMAIL" \
             >/dev/null
       - name: Verify the production Rivermere import reached sustained readiness
         if: ${{ inputs.seed_rivermere_demo }}
@@ -359,24 +363,24 @@ jobs:
             }
           done
       - name: Clear the production Rivermere startup runner
-        if: ${{ always() && steps.rivermere_seed_control.outcome == 'success' }}
+        if: ${{ always() && inputs.seed_rivermere_demo }}
         shell: bash
         run: |
           set -euo pipefail
           # Setting the flag false restarts the app; remove the transient
-          # protected identifier before the final readiness verification.
+          # protected selectors before the final readiness verification.
           az webapp config appsettings set \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$PRODUCTION_APP" \
-            --settings RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false \
+            --settings RUN_MIGRATIONS=false RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false \
             >/dev/null
           az webapp config appsettings delete \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$PRODUCTION_APP" \
-            --setting-names RIVERMERE_PRODUCTION_OWNER_USER_ID \
+            --setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL \
             >/dev/null
       - name: Verify final production readiness
-        if: ${{ always() && steps.rivermere_seed_control.outcome == 'success' }}
+        if: ${{ always() && inputs.seed_rivermere_demo }}
         shell: bash
         run: |
           set -euo pipefail
