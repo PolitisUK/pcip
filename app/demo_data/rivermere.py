@@ -224,6 +224,50 @@ def _grant_sole_platform_admin_access(db: Session, organisation: Organisation, c
     counts.memberships += 1
 
 
+def _resolve_explicit_production_owner(db: Session, *, owner_user_id: str | None) -> User:
+    """Resolve one configured active platform administrator before mutating data."""
+    configured_id = (owner_user_id or "").strip()
+    if not configured_id or not configured_id.isdecimal() or int(configured_id) <= 0:
+        raise UnsafeDemoTarget("Production Rivermere access requires one configured intended owner.")
+
+    # User.id is a primary key, but retain an explicit cardinality check so this
+    # gate remains fail-closed if the persistence model ever changes.
+    matches = db.scalars(select(User).where(User.id == int(configured_id))).all()
+    if len(matches) != 1:
+        raise UnsafeDemoTarget("Production Rivermere intended owner could not be resolved uniquely.")
+    owner = matches[0]
+    if not owner.is_active:
+        raise UnsafeDemoTarget("Production Rivermere intended owner must be active.")
+    if not owner.is_platform_admin:
+        raise UnsafeDemoTarget("Production Rivermere intended owner must already be a platform administrator.")
+    return owner
+
+
+def _grant_explicit_production_owner_access(
+    db: Session,
+    organisation: Organisation,
+    counts: SeedCounts,
+    *,
+    owner: User,
+) -> None:
+    """Grant the resolved intended owner access without touching peers."""
+    membership = db.scalar(select(OrganisationMembership).where(
+        OrganisationMembership.user_id == owner.id,
+        OrganisationMembership.organisation_id == organisation.id,
+    ))
+    if membership:
+        if not membership.is_active or membership.role not in {"owner", "admin"}:
+            raise UnsafeDemoTarget("The intended owner already has an incompatible Rivermere membership.")
+        return
+    db.add(OrganisationMembership(
+        user_id=owner.id,
+        organisation_id=organisation.id,
+        role="owner",
+        is_active=True,
+    ))
+    counts.memberships += 1
+
+
 def _get_or_create_project(db: Session, organisation_id: int, user_id: int, data: dict[str, Any], counts: SeedCounts) -> Project:
     project_data = data["project"]
     code = project_data["code"]
@@ -442,14 +486,30 @@ def seed_rivermere(
     organisation_slug: str = RIVERMERE_SLUG,
     create_organisation: bool = True,
     grant_sole_platform_admin_access: bool = False,
+    grant_configured_production_owner_access: bool = False,
+    production_owner_user_id: str | None = None,
 ) -> SeedCounts:
     """Create the exact v1.1 data once; a repeat call only verifies existing rows."""
+    if grant_sole_platform_admin_access and grant_configured_production_owner_access:
+        raise UnsafeDemoTarget("Production Rivermere access must use one owner selection mechanism.")
+    explicit_owner = (
+        _resolve_explicit_production_owner(db, owner_user_id=production_owner_user_id)
+        if grant_configured_production_owner_access
+        else None
+    )
     datasets = rivermere_datasets()
     counts = SeedCounts()
     organisation = _find_or_create_organisation(db, organisation_slug, create=create_organisation)
     operator = _ensure_operator(db, organisation, counts, create=create_organisation)
     if grant_sole_platform_admin_access:
         _grant_sole_platform_admin_access(db, organisation, counts)
+    if explicit_owner is not None:
+        _grant_explicit_production_owner_access(
+            db,
+            organisation,
+            counts,
+            owner=explicit_owner,
+        )
     for code in (EVERYDAY_PROJECT_CODE, CHAPEL_PROJECT_CODE):
         data = datasets[code]
         project = _get_or_create_project(db, organisation.id, operator.id, data, counts)

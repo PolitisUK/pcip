@@ -32,7 +32,8 @@ def test_production_rivermere_runner_preserves_release_and_cleanup_gates():
     assert '[ "${ENVIRONMENT:-}" != "production" ]' in entrypoint
     assert "--confirm-production-demo" in entrypoint
     assert "--create-production-demo-organisation" in entrypoint
-    assert "--grant-sole-platform-admin-access" in entrypoint
+    assert "--grant-configured-production-owner-access" in entrypoint
+    assert "--grant-sole-platform-admin-access" not in entrypoint
     assert "--verify" in entrypoint
     assert 'requested_environment != "production"' in importer
     assert "args.create_production_demo_organisation" in importer
@@ -40,6 +41,12 @@ def test_production_rivermere_runner_preserves_release_and_cleanup_gates():
     assert "The production Rivermere import requires promote_to_production=true." in promotion
     assert "RUN_RIVERMERE_PRODUCTION_DEMO_SEED=true" in promotion
     assert promotion.count("RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false") == 2
-    assert promotion.count("steps.rivermere_seed_control.outcome == 'success'") == 3
+    assert promotion.count("steps.rivermere_seed_control.outcome == 'success'") == 2
+    assert "secrets.RIVERMERE_PRODUCTION_OWNER_USER_ID" in promotion
+    assert "RIVERMERE_PRODUCTION_OWNER_USER_ID=\"$RIVERMERE_PRODUCTION_OWNER_USER_ID\"" in promotion
+    assert "--setting-names RIVERMERE_PRODUCTION_OWNER_USER_ID" in promotion
+    assert "echo \"$RIVERMERE_PRODUCTION_OWNER_USER_ID\"" not in promotion
+    assert "Restart production for the Rivermere import" not in promotion
+    assert "Restart production after clearing the Rivermere runner" not in promotion
     assert "backup_recovery_point" in promotion
     assert "rollback_digest" in promotion

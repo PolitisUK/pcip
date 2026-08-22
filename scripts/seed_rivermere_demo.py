@@ -41,6 +41,11 @@ def main() -> int:
         action="store_true",
         help="Grant the sole active platform administrator owner access to the fictional production workspace.",
     )
+    parser.add_argument(
+        "--grant-configured-production-owner-access",
+        action="store_true",
+        help="Grant the protected configured production platform administrator owner access to the fictional workspace.",
+    )
     parser.add_argument("--remove", choices=["everyday-life", "chapel-lane"], help="Remove only the selected Rivermere demonstration project.")
     parser.add_argument("--verify", action="store_true", help="Read-only verification against the bundled v1.1 content pack.")
     args = parser.parse_args()
@@ -63,6 +68,10 @@ def main() -> int:
         parser.error("--create-production-demo-organisation is only valid when seeding; no records were changed")
     if args.grant_sole_platform_admin_access and not args.create_production_demo_organisation:
         parser.error("--grant-sole-platform-admin-access requires the production demo-organisation flag; no records were changed")
+    if args.grant_configured_production_owner_access and not args.create_production_demo_organisation:
+        parser.error("--grant-configured-production-owner-access requires the production demo-organisation flag; no records were changed")
+    if args.grant_sole_platform_admin_access and args.grant_configured_production_owner_access:
+        parser.error("Only one production owner selection mechanism is allowed; no records were changed")
     if not args.verify and is_local and not args.confirm_local_development:
         parser.error("--confirm-local-development is required; no records were changed")
     if not args.verify and not is_local and not args.confirm_nonlocal_demo:
@@ -101,6 +110,12 @@ def main() -> int:
                     or args.create_production_demo_organisation
                 ),
                 grant_sole_platform_admin_access=args.grant_sole_platform_admin_access,
+                grant_configured_production_owner_access=args.grant_configured_production_owner_access,
+                production_owner_user_id=(
+                    settings.rivermere_production_owner_user_id
+                    if args.grant_configured_production_owner_access
+                    else None
+                ),
             ).as_dict()
             if replacement:
                 result["superseded_v1_removed"] = replacement

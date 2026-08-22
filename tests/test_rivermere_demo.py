@@ -290,3 +290,128 @@ def test_production_access_fails_closed_when_platform_admin_is_ambiguous(riverme
             )
         db.rollback()
         assert db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG)) is None
+
+
+def _production_admin(db, home, *, active=True, platform_admin=True, number=1):
+    user = User(
+        organisation_id=home.id,
+        name=f"Production administrator {number}",
+        email=f"production-administrator-{number}@example.invalid",
+        password_hash=None,
+        role="owner",
+        is_platform_admin=platform_admin,
+        is_active=active,
+    )
+    db.add(user)
+    db.flush()
+    db.add(OrganisationMembership(
+        user_id=user.id,
+        organisation_id=home.id,
+        role="owner",
+        is_active=True,
+    ))
+    return user
+
+
+def test_production_access_uses_the_explicit_active_platform_admin_and_keeps_peers_unchanged(rivermere_database):
+    factory, storage = rivermere_database
+    with factory() as db:
+        home = Organisation(name="Politis Operations", slug="politis-operations")
+        db.add(home)
+        db.flush()
+        intended_owner = _production_admin(db, home, number=1)
+        other_administrator = _production_admin(db, home, number=2)
+        db.commit()
+
+        first = seed_rivermere(
+            db,
+            storage,
+            create_organisation=True,
+            grant_configured_production_owner_access=True,
+            production_owner_user_id=str(intended_owner.id),
+        )
+        rivermere = db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG))
+        intended_membership = db.scalar(select(OrganisationMembership).where(
+            OrganisationMembership.user_id == intended_owner.id,
+            OrganisationMembership.organisation_id == rivermere.id,
+        ))
+        assert intended_membership.role == "owner"
+        assert intended_membership.is_active is True
+        assert db.scalar(select(OrganisationMembership).where(
+            OrganisationMembership.user_id == other_administrator.id,
+            OrganisationMembership.organisation_id == rivermere.id,
+        )) is None
+        assert other_administrator.is_active is True
+        assert other_administrator.is_platform_admin is True
+        assert first.memberships == 2
+
+        repeat = seed_rivermere(
+            db,
+            storage,
+            create_organisation=True,
+            grant_configured_production_owner_access=True,
+            production_owner_user_id=str(intended_owner.id),
+        )
+        assert repeat.as_dict() == {
+            "projects": 0, "studies": 0, "participants": 0, "enrolments": 0,
+            "prompts": 0, "entries": 0, "media": 0, "code_assignments": 0,
+            "memos": 0, "memberships": 0, "created_project_codes": [],
+        }
+        assert db.scalar(select(func.count(Project.id)).where(
+            Project.organisation_id == rivermere.id,
+            Project.code.in_([EVERYDAY_PROJECT_CODE, CHAPEL_PROJECT_CODE]),
+        )) == 2
+        assert verify_rivermere(db)["valid"] is True
+
+
+@pytest.mark.parametrize("configured_owner", [None, "", "not-an-id", "1,1", "1,2", "999999"])
+def test_explicit_production_owner_requires_one_existing_target(rivermere_database, configured_owner):
+    factory, storage = rivermere_database
+    with factory() as db:
+        home = Organisation(name="Politis Operations", slug="politis-operations")
+        db.add(home)
+        db.flush()
+        _production_admin(db, home)
+        db.commit()
+
+        with pytest.raises(UnsafeDemoTarget):
+            seed_rivermere(
+                db,
+                storage,
+                create_organisation=True,
+                grant_configured_production_owner_access=True,
+                production_owner_user_id=configured_owner,
+            )
+        assert db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG)) is None
+
+
+@pytest.mark.parametrize(
+    "active,platform_admin,expected_error",
+    [
+        (False, True, "must be active"),
+        (True, False, "must already be a platform administrator"),
+    ],
+)
+def test_explicit_production_owner_fails_closed_for_an_ineligible_user(
+    rivermere_database,
+    active,
+    platform_admin,
+    expected_error,
+):
+    factory, storage = rivermere_database
+    with factory() as db:
+        home = Organisation(name="Politis Operations", slug="politis-operations")
+        db.add(home)
+        db.flush()
+        target = _production_admin(db, home, active=active, platform_admin=platform_admin)
+        db.commit()
+
+        with pytest.raises(UnsafeDemoTarget, match=expected_error):
+            seed_rivermere(
+                db,
+                storage,
+                create_organisation=True,
+                grant_configured_production_owner_access=True,
+                production_owner_user_id=str(target.id),
+            )
+        assert db.scalar(select(Organisation).where(Organisation.slug == RIVERMERE_SLUG)) is None
