@@ -1,0 +1,25 @@
+{
+  "fictional_demo": true,
+  "title": "When participation disappears, the underlying problem may not have disappeared",
+  "memo": "Rivermere 2035 shows that residents routinely absorb service unreliability through private buffers, local knowledge and informal support. Chapel Lane follows the same mechanism under prolonged reporting: residents initially make conditions administratively visible, then withdraw the labour when acknowledgements cannot be connected to an intelligible outcome. Across both projects, a quieter administrative record can coexist with continuing inconvenience because people have left earlier, changed route, moved rooms, relied on others or stopped reporting.",
+  "supporting_rivermere_entries": [
+    "R35-E001",
+    "R35-E024",
+    "R35-E054",
+    "R35-E064",
+    "R35-E094"
+  ],
+  "supporting_chapel_entries": [
+    "CL-E073",
+    "CL-E085",
+    "CL-E089",
+    "CL-E096",
+    "CL-E108"
+  ],
+  "negative_cases_and_limits": [
+    "CL-E060 distinguishes apparent non-resolution from evidence of no internal work.",
+    "CL-E112 retains support for proportionate enforcement alongside criticism of exaggerated resident claims.",
+    "R35-E028 shows visible maintenance changing interpretation without erasing earlier communication failure.",
+    "R35-E102 records a beneficial aspect of an unwanted travel adaptation."
+  ]
+}

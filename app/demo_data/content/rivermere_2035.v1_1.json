@@ -1,0 +1,2399 @@
+{
+  "dataset_version": "1.1.0",
+  "fictional_demo": true,
+  "organisation": {
+    "name": "Rivermere Town Council",
+    "slug": "rivermere-town-council"
+  },
+  "project": {
+    "title": "Rivermere 2035: Everyday Life and the Future of Our Town",
+    "code": "RIV-2035",
+    "description": "A fictional sixteen-week longitudinal ethnographic study of how infrastructure, services, relationships and place become visible in residents' everyday routines.",
+    "methodology": "longitudinal ethnographic diary and photo elicitation",
+    "timeline": {
+      "start": "2026-02-02",
+      "end": "2026-06-08"
+    },
+    "research_safeguards": {
+      "individual_consent": "Each participant is separately consented to the fictional research study.",
+      "individual_authorship": "Every diary response and research upload is authored and submitted only by the named participant.",
+      "no_proxy_submission": "No researcher or participant submits material for another participant.",
+      "ordinary_routines_only": "Prompts focus on participants' existing routines and do not direct risky, intrusive or unusual observation.",
+      "media_minimisation": "Fictional media specifications exclude identifiable people, children, registration plates and precise private addresses."
+    }
+  },
+  "participants": [
+    {
+      "reference": "R35-P01",
+      "name": "Celia Ward",
+      "age": 38,
+      "neighbourhood": "Willowbank",
+      "context": "Teaching assistant; rents with partner and two children; daily school walk and bus commute.",
+      "voice": "Warm, time-conscious, attentive to children's routines.",
+      "trajectory": "Sees workarounds as ordinary competence → recognises their hidden cost → becomes cautiously hopeful after visible maintenance."
+    },
+    {
+      "reference": "R35-P02",
+      "name": "Malik Fern",
+      "age": 27,
+      "neighbourhood": "Station Quarter",
+      "context": "Hospital porter on rotating shifts; flat-share tenant; mostly walks and uses late buses.",
+      "voice": "Compact, observational, strongest on night-time atmosphere.",
+      "trajectory": "Town centre as shortcut → notices uneven night safety → values familiar workers and informal guardianship."
+    },
+    {
+      "reference": "R35-P03",
+      "name": "June Bell",
+      "age": 73,
+      "neighbourhood": "Old Market",
+      "context": "Widowed homeowner; forty-eight years in Rivermere; library volunteer and market regular.",
+      "voice": "Memory-rich without assuming the past was better.",
+      "trajectory": "Mourns lost shops → notices new forms of community use → reframes change as continuity plus loss."
+    },
+    {
+      "reference": "R35-P04",
+      "name": "Ewan Pike",
+      "age": 45,
+      "neighbourhood": "Northgate",
+      "context": "Wheelchair user and remote accountant; drives when accessible parking is predictable.",
+      "voice": "Exact about gradients, doorways and the sequence of an accessible journey.",
+      "trajectory": "Avoids unreliable places → maps relational accessibility → distinguishes technical compliance from usable welcome."
+    },
+    {
+      "reference": "R35-P05",
+      "name": "Rosa Dene",
+      "age": 32,
+      "neighbourhood": "Riverside",
+      "context": "Single parent and café supervisor; school, work and childcare linked by two bus routes.",
+      "voice": "Energetic, practical and candid about money and time.",
+      "trajectory": "Absorbs bus failure privately → sees shared pattern at stops → supports information changes more than grand infrastructure promises."
+    },
+    {
+      "reference": "R35-P06",
+      "name": "Harold Wynn",
+      "age": 64,
+      "neighbourhood": "Hilltop",
+      "context": "Recently retired engineer; owns a car; walks Meadow Park daily with an elderly terrier.",
+      "voice": "Analytical, initially critical, gradually more relational.",
+      "trajectory": "Reads maintenance as standards failure → observes crews' constraints → retains criticism while recognising care work."
+    },
+    {
+      "reference": "R35-P07",
+      "name": "Tia Moss",
+      "age": 19,
+      "neighbourhood": "Eastfield",
+      "context": "College student; lives with mother and younger brother; bus, bicycle and leisure-centre user.",
+      "voice": "Visual, humorous and alert to who public space seems designed for.",
+      "trajectory": "Feels peripheral to civic spaces → finds belonging through informal youth activity → develops conditional optimism."
+    },
+    {
+      "reference": "R35-P08",
+      "name": "Gordon Hale",
+      "age": 52,
+      "neighbourhood": "Southbank",
+      "context": "Warehouse supervisor; mortgaged semi; drives to Southbank Retail Park and works early shifts.",
+      "voice": "Blunt, sceptical of consultation language, responsive to practical results.",
+      "trajectory": "Sees centre spending as irrelevant → experiences cross-town dependencies → moderates territorial view without losing inequality concern."
+    },
+    {
+      "reference": "R35-P09",
+      "name": "Mae Okoro",
+      "age": 41,
+      "neighbourhood": "Westmere",
+      "context": "District nurse; cares for father; combines car, walking and occasional bus journeys.",
+      "voice": "Calm, relational and attentive to hidden caring logistics.",
+      "trajectory": "Treats adaptations as necessary → recognises spatial inequality in care routes → values small reliability improvements."
+    },
+    {
+      "reference": "R35-P10",
+      "name": "Nico Vale",
+      "age": 36,
+      "neighbourhood": "Old Market",
+      "context": "Runs fictional independent grocer Vale & Finch; lives above the shop.",
+      "voice": "Street-level commercial observer; notices footfall, deliveries and conversations.",
+      "trajectory": "Suspicious of regeneration disruption → sees temporary public-realm benefits → remains wary of rent and displacement."
+    },
+    {
+      "reference": "R35-P11",
+      "name": "Beth Orme",
+      "age": 58,
+      "neighbourhood": "Meadow Park",
+      "context": "Part-time carer for adult sister; social-housing tenant; low digital confidence.",
+      "voice": "Direct, quietly funny and honest about forms and finances.",
+      "trajectory": "Avoids digital systems → gains confidence through library support → argues that assisted access is a service, not a favour."
+    },
+    {
+      "reference": "R35-P12",
+      "name": "Samir Quay",
+      "age": 30,
+      "neighbourhood": "Riverside",
+      "context": "Architectural technician; private renter; cycles and attends community design events.",
+      "voice": "Spatial and self-critical; notices design intentions and unintended use.",
+      "trajectory": "Enthusiastic about regeneration → confronts construction and displacement trade-offs → becomes more cautious about who benefits."
+    },
+    {
+      "reference": "R35-P13",
+      "name": "Faye Linton",
+      "age": 47,
+      "neighbourhood": "Willowbank",
+      "context": "Primary-school cook; multigenerational household; organiser at community centre.",
+      "voice": "Conversation-led, attentive to reciprocal help and local rumours.",
+      "trajectory": "Sees strong community networks → notices who falls outside them → pushes against romanticising informal support."
+    },
+    {
+      "reference": "R35-P14",
+      "name": "Leon Cross",
+      "age": 22,
+      "neighbourhood": "Station Quarter",
+      "context": "Apprentice electrician; lives with grandmother; skateboarder and evening town-centre user.",
+      "voice": "Fast, place-specific and resistant to adult assumptions about youth.",
+      "trajectory": "Experiences surveillance and exclusion → documents contribution and restraint → identifies design-based rather than punitive safety measures."
+    },
+    {
+      "reference": "R35-P15",
+      "name": "Asha Wren",
+      "age": 55,
+      "neighbourhood": "Eastfield",
+      "context": "Secondary-school librarian; homeowner; active in local history group.",
+      "voice": "Layered, curious and evidence-minded.",
+      "trajectory": "Protective of local memory → sees selective nostalgia → develops a plural account of neighbourhood identity."
+    },
+    {
+      "reference": "R35-P16",
+      "name": "Peter Saye",
+      "age": 69,
+      "neighbourhood": "Northgate",
+      "context": "Retired bus driver; car-free; hearing impairment; regular at Northgate Library.",
+      "voice": "Detailed about transport operations and social etiquette.",
+      "trajectory": "Defends operational complexity → experiences passenger-information failures → argues trust depends on honest explanations."
+    },
+    {
+      "reference": "R35-P17",
+      "name": "Inez Fox",
+      "age": 26,
+      "neighbourhood": "Southbank",
+      "context": "Zero-hours hospitality worker; private tenant; income and travel vary weekly.",
+      "voice": "Candid, improvisational and attentive to price.",
+      "trajectory": "Uses town opportunistically → shows how cost reshapes belonging → becomes more engaged after a free cultural event."
+    },
+    {
+      "reference": "R35-P18",
+      "name": "David Pell",
+      "age": 49,
+      "neighbourhood": "Westmere",
+      "context": "Separated father; owns small plumbing business; children stay alternate weeks.",
+      "voice": "Practical and contrastive, comparing child and non-child weeks.",
+      "trajectory": "Sees services as isolated transactions → recognises cumulative family coordination → values predictable basics over slogans."
+    },
+    {
+      "reference": "R35-P19",
+      "name": "Lin Harper",
+      "age": 34,
+      "neighbourhood": "Riverside",
+      "context": "Freelance translator; visually impaired; guide-dog user; frequent train traveller.",
+      "voice": "Sensory and route-based, focused on information consistency.",
+      "trajectory": "Relies on memorised routes → construction disrupts tacit maps → identifies staff and other residents as social infrastructure."
+    },
+    {
+      "reference": "R35-P20",
+      "name": "Omar Silt",
+      "age": 61,
+      "neighbourhood": "Hilltop",
+      "context": "Former factory worker; allotment holder; mosque committee volunteer; moved to Rivermere in 1994.",
+      "voice": "Measured, sociable and attentive to seasonal rhythms.",
+      "trajectory": "Town experienced as fragmented → traces connections through food, worship and green space → articulates several coexisting Rivermere identities."
+    }
+  ],
+  "prompts": [
+    {
+      "id": "R35-Q01",
+      "week": 1,
+      "prompt": "Take us through an ordinary day in Rivermere. Where do you go, what do you notice, and who do you encounter?"
+    },
+    {
+      "id": "R35-Q02",
+      "week": 2,
+      "prompt": "Show us a place you use without really thinking about it. Why is it part of your routine?"
+    },
+    {
+      "id": "R35-Q03",
+      "week": 3,
+      "prompt": "Photograph something that makes everyday life easier."
+    },
+    {
+      "id": "R35-Q04",
+      "week": 4,
+      "prompt": "Photograph something you have learned to work around."
+    },
+    {
+      "id": "R35-Q05",
+      "week": 5,
+      "prompt": "Tell us about a recent journey through Rivermere."
+    },
+    {
+      "id": "R35-Q06",
+      "week": 6,
+      "prompt": "Spend ten minutes somewhere you use regularly and describe what happens around you."
+    },
+    {
+      "id": "R35-Q07",
+      "week": 7,
+      "prompt": "Tell us about a conversation you had about Rivermere this week."
+    },
+    {
+      "id": "R35-Q08",
+      "week": 8,
+      "prompt": "Show us a place that has changed."
+    },
+    {
+      "id": "R35-Q09",
+      "week": 9,
+      "prompt": "Tell us about somewhere you feel you belong."
+    },
+    {
+      "id": "R35-Q10",
+      "week": 10,
+      "prompt": "Tell us about somewhere that feels as though it is not designed for you."
+    },
+    {
+      "id": "R35-Q11",
+      "week": 11,
+      "prompt": "What signs do you notice that the council is present in everyday life?"
+    },
+    {
+      "id": "R35-Q12",
+      "week": 12,
+      "prompt": "What signs do you notice when something is not being maintained?"
+    },
+    {
+      "id": "R35-Q13",
+      "week": 13,
+      "prompt": "Tell us about something you now do differently because of a problem in the town."
+    },
+    {
+      "id": "R35-Q14",
+      "week": 14,
+      "prompt": "What have you become more aware of since taking part?"
+    },
+    {
+      "id": "R35-Q15",
+      "week": 15,
+      "prompt": "Has another resident made you see an issue differently?"
+    },
+    {
+      "id": "R35-Q16",
+      "week": 16,
+      "prompt": "What would someone miss about Rivermere if they only visited for one day?"
+    }
+  ],
+  "entries": [
+    {
+      "id": "R35-E001",
+      "participant": "R35-P01",
+      "date": "2026-02-02T07:18:00Z",
+      "week": 1,
+      "prompt": "R35-Q01",
+      "text": "The day begins by checking whether the 7:32 still appears on the app, packing two lunch bags, and walking the children to Willowbank Primary. At the stop, the display held at six minutes until the bus disappeared. Four regulars compared yesterday's delay without introducing themselves. I put the children into breakfast club and caught the next service. I arrived at work; the record of that arrival does not show the extra £4.20 or Mia asking why I could not walk her inside.",
+      "codes": [
+        "Everyday Routines > School run",
+        "Mobility > Bus reliability",
+        "Everyday Routines > Workarounds",
+        "Inequality & Inclusion > Financial constraint"
+      ],
+      "media": [
+        "R35-A017"
+      ]
+    },
+    {
+      "id": "R35-E002",
+      "participant": "R35-P01",
+      "date": "2026-02-23T15:17:00Z",
+      "week": 4,
+      "prompt": "R35-Q04",
+      "text": "The school-gate shelter has one cracked side panel, so on wet afternoons parents stand in a particular diagonal line to avoid the wind. Nobody arranged it; newcomers learn by copying. I photographed the dry strip where six pairs of shoes fit. It is a tiny workaround that makes waiting possible, but it also means buggies block the gate and everybody apologises to everybody else.",
+      "codes": [
+        "Everyday Routines > School run",
+        "Everyday Routines > Workarounds",
+        "Public Space > Comfort",
+        "Community > Informal social life"
+      ],
+      "media": [
+        "R35-A001"
+      ]
+    },
+    {
+      "id": "R35-E003",
+      "participant": "R35-P01",
+      "date": "2026-03-16T07:27:00Z",
+      "week": 7,
+      "prompt": "R35-Q07",
+      "text": "At the bus stop a man said the missing service was because drivers were being moved to the station route. Another woman said it was roadworks. None of us knew, but within minutes the first explanation was being repeated as fact. The display gave no cancellation message. I realised the stop is not only where we wait; it is where residents manufacture an explanation when formal information leaves a gap.",
+      "codes": [
+        "Mobility > Bus reliability",
+        "Community > Local networks",
+        "Council in Everyday Life > Communication",
+        "Council in Everyday Life > Invisible council"
+      ],
+      "media": [
+        "R35-A018"
+      ]
+    },
+    {
+      "id": "R35-E004",
+      "participant": "R35-P01",
+      "date": "2026-04-20T15:10:00Z",
+      "week": 12,
+      "prompt": "R35-Q12",
+      "text": "The clear panel at the school shelter was replaced today. It is a small repair, but parents noticed because we no longer had to crowd into the dry corner. Nobody knew whether our reports had anything to do with it. One father said, 'Well, somebody noticed.' The new panel mattered to us more that afternoon than the big consultation banner beside the gate.",
+      "codes": [
+        "Environment > Maintenance",
+        "Council in Everyday Life > Visible council action",
+        "Council in Everyday Life > Response",
+        "Council in Everyday Life > Trust"
+      ],
+      "media": [
+        "R35-A019"
+      ]
+    },
+    {
+      "id": "R35-E005",
+      "participant": "R35-P01",
+      "date": "2026-05-18T07:22:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A one-day visitor would see a mother and two children catch a bus. They would miss the calculations underneath: which service tends to vanish, which breakfast-club days are affordable, who at the stop will text if the display changes, and which shelter corner stays dry. Rivermere works for us through a mixture of public service, family money and strangers' local knowledge. When one element fails, the others stretch until the journey still looks ordinary.",
+      "codes": [
+        "Everyday Routines > School run",
+        "Mobility > Journey planning",
+        "Community > Informal support",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E006",
+      "participant": "R35-P02",
+      "date": "2026-02-04T22:48:00Z",
+      "week": 1,
+      "prompt": "R35-Q01",
+      "text": "After the late shift I cut through Market Square because it saves eight minutes. The restaurants were closing and two cleaners were hosing the paving. A group by the fountain was loud but moved aside before I reached them. The person who made the square feel safe was the bakery worker locking up, because we recognise each other and he looks up when I pass. Safety at that hour is less about brightness than knowing somebody else has a reason to be there.",
+      "codes": [
+        "Everyday Routines > Commuting",
+        "Public Space > Safety",
+        "Town Centre > Evening economy",
+        "Community > Informal social life"
+      ],
+      "media": [
+        "R35-A020"
+      ]
+    },
+    {
+      "id": "R35-E007",
+      "participant": "R35-P02",
+      "date": "2026-02-25T23:12:00Z",
+      "week": 4,
+      "prompt": "R35-Q04",
+      "text": "The light outside the closed pharmacy has been out for weeks. I cross to the side with the takeaway, not because the dark patch is automatically dangerous but because I cannot see who is standing by the cashpoint until I am close. Three other night workers use the same crossing point. Our footprints would make the town look well used; they would not show the route adjustment around one missing light.",
+      "codes": [
+        "Public Space > Lighting",
+        "Public Space > Safety",
+        "Everyday Routines > Workarounds",
+        "Environment > Maintenance"
+      ],
+      "media": [
+        "R35-A002"
+      ]
+    },
+    {
+      "id": "R35-E008",
+      "participant": "R35-P02",
+      "date": "2026-03-25T00:05:00Z",
+      "week": 8,
+      "prompt": "R35-Q08",
+      "text": "The Foundry used to be a place I walked past. Its late café now stays open on Thursdays, and tonight the volunteer at the door let me fill my bottle without buying anything. There were students, two taxi drivers and an older chess group in the same room. The building has changed less physically than socially. It gives the night shift somewhere that is neither work, home nor a venue charging for every minute.",
+      "codes": [
+        "Town Centre > Evening economy",
+        "Community > Community venues",
+        "Public Space > Informal social life",
+        "Place & Belonging > Attachment"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E009",
+      "participant": "R35-P02",
+      "date": "2026-04-29T23:03:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now wait five minutes at the hospital entrance if the station bus is due, rather than walking to the interchange and discovering it has gone. The security guard can see the real-time staff screen and tells us whether to bother. That informal conversation has become part of the transport system. It works because one person is helpful, not because passengers have reliable information available to everyone.",
+      "codes": [
+        "Mobility > Bus reliability",
+        "Mobility > Travel adaptation",
+        "Community > Informal support",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E010",
+      "participant": "R35-P02",
+      "date": "2026-05-20T22:39:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A daytime visitor would miss the changeover around ten at night: hospital staff at the interchange, delivery riders eating on the library steps, and cleaners greeting security guards. We know one another by sight, even if we do not know names. That makes the empty parts of town feel less empty. When a shop closes early or a light goes out, you notice that familiar face is missing too.",
+      "codes": [
+        "Town Centre > Evening economy",
+        "Community > Local networks",
+        "Public Space > Safety",
+        "Council in Everyday Life > Invisible council"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E011",
+      "participant": "R35-P03",
+      "date": "2026-02-06T09:42:00Z",
+      "week": 1,
+      "prompt": "R35-Q01",
+      "text": "Friday means the market, then tea at Northgate Library before my volunteer shift. I still turn toward where Harrow's bakery stood, although it has been an empty unit for six years. At the fruit stall, Sana puts bruised pears aside for my crumble and asks after my neighbour. The High Street has lost shops, but the market routine contains relationships that shop-count statistics would miss.",
+      "codes": [
+        "Everyday Routines > Shopping",
+        "Town Centre > Empty shops",
+        "Place & Belonging > Memory",
+        "Community > Local networks"
+      ],
+      "media": [
+        "R35-A021"
+      ]
+    },
+    {
+      "id": "R35-E012",
+      "participant": "R35-P03",
+      "date": "2026-03-02T10:15:00Z",
+      "week": 5,
+      "prompt": "R35-Q05",
+      "text": "The bus diverted around Station Road and I got off by Old Market Hall. The paving is smoother than I remember, but there are fewer benches and the distance between them matters now. I rested on the low wall where teenagers were eating chips. One moved his bag without being asked. The diversion looked manageable on the map. That small kindness was what made it manageable for me.",
+      "codes": [
+        "Mobility > Accessibility",
+        "Public Space > Seating",
+        "Community > Intergenerational contact",
+        "Mobility > Travel adaptation"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E013",
+      "participant": "R35-P03",
+      "date": "2026-03-30T11:08:00Z",
+      "week": 9,
+      "prompt": "R35-Q09",
+      "text": "I belong at the library desk because people expect me there. A woman I helped with local newspapers now brings me a crossword clipping every Tuesday. The building is not grand and the carpet is tired, but familiarity means I can arrive alone and be missed if I do not. When people discuss closing or moving services, the square metres do not capture that kind of membership.",
+      "codes": [
+        "Place & Belonging > Attachment",
+        "Community > Community venues",
+        "Community > Local networks",
+        "Place & Belonging > Familiarity"
+      ],
+      "media": [
+        "R35-A022"
+      ]
+    },
+    {
+      "id": "R35-E014",
+      "participant": "R35-P03",
+      "date": "2026-04-27T10:22:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I started shopping at Vale & Finch later in the morning because construction deliveries block the narrow side of Market Square before ten. That change led me to meet the parents who come after school drop-off rather than the older market crowd. The disruption still inconveniences me, but it also revealed a different daily town occupying the same shops at another hour.",
+      "codes": [
+        "Town Centre > Construction disruption",
+        "Everyday Routines > Workarounds",
+        "Town Centre > Changing footfall",
+        "Community > Intergenerational contact"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E015",
+      "participant": "R35-P03",
+      "date": "2026-05-22T09:55:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would photograph the boarded units and say the centre is dying, or photograph the busy market and say it is thriving. Both pictures would be honest and incomplete. The town I know is the route between them: the missing bakery I still remember, Sana saving pears, students using the hall differently, and people adjusting the time they shop. Loss and invention sit beside each other.",
+      "codes": [
+        "Town Centre > Empty shops",
+        "Place & Belonging > Memory",
+        "Futures > Trade-offs",
+        "Place & Belonging > Local identity"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E016",
+      "participant": "R35-P04",
+      "date": "2026-02-03T10:05:00Z",
+      "week": 1,
+      "prompt": "R35-Q01",
+      "text": "An ordinary trip to the council office starts the night before: check whether the accessible bay is suspended, charge the chair, phone to confirm the lift, and leave forty minutes for a journey that takes twelve if everything aligns. Today a delivery van occupied the hatched area beside the bay. The driver moved after I asked, but that conversation is itself an access barrier I have to be prepared to negotiate.",
+      "codes": [
+        "Mobility > Accessibility",
+        "Mobility > Parking",
+        "Mobility > Journey planning",
+        "Inequality & Inclusion > Disability access"
+      ],
+      "media": [
+        "R35-A023"
+      ]
+    },
+    {
+      "id": "R35-E017",
+      "participant": "R35-P04",
+      "date": "2026-02-24T14:20:00Z",
+      "week": 4,
+      "prompt": "R35-Q04",
+      "text": "The dropped kerb outside Northgate Library is there, but on bin day bags collect at its lowest point. I photographed the narrow clean line left by wheelchair tyres through the grit. I have to come off the pavement, travel a short way in the road and turn sharply back up. Moving a few rubbish bags would change the whole approach.",
+      "codes": [
+        "Mobility > Accessibility",
+        "Environment > Maintenance",
+        "Everyday Routines > Workarounds",
+        "Inequality & Inclusion > Disability access"
+      ],
+      "media": [
+        "R35-A003"
+      ]
+    },
+    {
+      "id": "R35-E018",
+      "participant": "R35-P04",
+      "date": "2026-03-23T13:10:00Z",
+      "week": 8,
+      "prompt": "R35-Q08",
+      "text": "The café in Old Market Hall has a level entrance, but the queue crosses it and the menu board makes the turn tight. One member of staff recognises me and moves the board before I ask. The doorway meets the rules, but it is her noticing that lets me use it without a fuss. If she leaves, I may be back to asking every time.",
+      "codes": [
+        "Mobility > Accessibility",
+        "Community > Informal support",
+        "Town Centre > Regeneration",
+        "Inequality & Inclusion > Disability access"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E019",
+      "participant": "R35-P04",
+      "date": "2026-04-18T11:32:00Z",
+      "week": 11,
+      "prompt": "R35-Q11",
+      "text": "Council workers repainted the accessible-bay markings. Bright lines will not stop every driver using the space, but they make it obvious where the transfer area begins. If somebody parks across it now, I can point to the markings rather than argue that I am asking for extra room. It feels less like a personal request and more like using the bay as intended.",
+      "codes": [
+        "Council in Everyday Life > Visible council action",
+        "Environment > Maintenance",
+        "Mobility > Parking",
+        "Council in Everyday Life > Trust"
+      ],
+      "media": [
+        "R35-A024"
+      ]
+    },
+    {
+      "id": "R35-E020",
+      "participant": "R35-P04",
+      "date": "2026-05-19T10:40:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor could tick off ramps, bays and lifts and conclude Rivermere is accessible. They would miss the chained sequence: one blocked hatched area prevents the chair leaving the car; one bin at a kerb removes the route; one menu board makes a doorway theoretical. They would also miss the people who quietly repair those failures each day. Access is not a feature attached to a place. It is whether the whole journey remains usable.",
+      "codes": [
+        "Mobility > Accessibility",
+        "Inequality & Inclusion > Disability access",
+        "Community > Informal support",
+        "Council in Everyday Life > Invisible council"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E021",
+      "participant": "R35-P05",
+      "date": "2026-02-05T07:14:00Z",
+      "week": 1,
+      "prompt": "R35-Q01",
+      "text": "I leave Riverside at 07:14 because the 7:28 gives me nine minutes to change at the interchange. Today the first bus arrived at 07:39. Three of us ran across the bays as the Eastfield service pulled away. I paid for breakfast club and called the café from the pavement. By ten, every visible part of the problem had gone except the dent in my wages and the rushed goodbye with Leo.",
+      "codes": [
+        "Mobility > Bus reliability",
+        "Everyday Routines > Caring",
+        "Inequality & Inclusion > Financial constraint",
+        "Everyday Routines > Workarounds"
+      ],
+      "media": [
+        "R35-A025"
+      ]
+    },
+    {
+      "id": "R35-E022",
+      "participant": "R35-P05",
+      "date": "2026-02-26T07:36:00Z",
+      "week": 4,
+      "prompt": "R35-Q04",
+      "text": "The most useful object at the interchange is not the electronic display; it is the handwritten whiteboard in the kiosk window. When a route is cancelled, Jo writes it there before the display updates. I photographed today's message—'R4 delayed, driver coming from depot'—because it gave a reason and a person behind the delay. Bad news with an explanation is easier to organise around than six minutes that never changes.",
+      "codes": [
+        "Mobility > Bus reliability",
+        "Council in Everyday Life > Communication",
+        "Community > Informal support",
+        "Mobility > Journey planning"
+      ],
+      "media": [
+        "R35-A004"
+      ]
+    },
+    {
+      "id": "R35-E023",
+      "participant": "R35-P05",
+      "date": "2026-03-19T07:33:00Z",
+      "week": 7,
+      "prompt": "R35-Q07",
+      "text": "At the stop, Celia described paying for breakfast club after a vanished bus. I had assumed my combination of two routes made my situation unusually fragile. Hearing her showed that unreliability reaches family routines differently but repeatedly. We swapped numbers and now text if one of us sees the first service leave Riverside. The system became slightly more usable because two tired parents formed an unofficial information service.",
+      "codes": [
+        "Mobility > Bus reliability",
+        "Community > Informal support",
+        "Community > Local networks",
+        "Everyday Routines > Caring"
+      ],
+      "media": [
+        "R35-A026"
+      ]
+    },
+    {
+      "id": "R35-E024",
+      "participant": "R35-P05",
+      "date": "2026-04-23T07:20:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now leave one bus earlier on Mondays and Wednesdays, which means paying breakfast club automatically on those days rather than only after disruption. The journey feels more reliable because I have purchased a buffer. If performance is measured by whether I arrive at work, this looks like success. The service has not become more dependable; I have moved money and family time around its uncertainty.",
+      "codes": [
+        "Mobility > Travel adaptation",
+        "Everyday Routines > Workarounds",
+        "Inequality & Inclusion > Financial constraint",
+        "Mobility > Bus reliability"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E025",
+      "participant": "R35-P05",
+      "date": "2026-05-21T15:42:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would see buses moving through the interchange and miss the shadow timetable regular passengers carry: which driver waits for the connection, when the kiosk knows more than the screen, who can afford a taxi, and which parents have already bought extra childcare. Rivermere's transport network includes those private buffers. The most useful future change for me is honest live information, because uncertainty is what turns one delay into several household decisions.",
+      "codes": [
+        "Mobility > Journey planning",
+        "Council in Everyday Life > Communication",
+        "Inequality & Inclusion > Unequal service experience",
+        "Futures > Desired change"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E026",
+      "participant": "R35-P06",
+      "date": "2026-02-07T08:26:00Z",
+      "week": 1,
+      "prompt": "R35-Q01",
+      "text": "Meadow Park is the first place I assess each morning. I notice the overflowing bin before the frost on the grass, which says something about my habits. Bert the terrier stops at the same bench, and I inspect the loose slat while he sniffs. I reported it last month. Nothing dramatic happens, but repeated small defects make the park feel as if nobody in authority walks the route from end to end.",
+      "codes": [
+        "Everyday Routines > Leisure",
+        "Environment > Parks",
+        "Environment > Maintenance",
+        "Council in Everyday Life > Reporting"
+      ],
+      "media": [
+        "R35-A027"
+      ]
+    },
+    {
+      "id": "R35-E027",
+      "participant": "R35-P06",
+      "date": "2026-02-28T08:35:00Z",
+      "week": 4,
+      "prompt": "R35-Q04",
+      "text": "The muddy shortcut around the closed footpath is now wider than the original path. Dog walkers step through a gap beside the barrier, duck under hawthorn and rejoin by the pond. I photographed the polished roots where hundreds of feet have made an unofficial route. The closure sign says 'temporary' but gives no date, so behaviour has supplied its own timetable.",
+      "codes": [
+        "Environment > Parks",
+        "Everyday Routines > Workarounds",
+        "Environment > Maintenance",
+        "Council in Everyday Life > Communication"
+      ],
+      "media": [
+        "R35-A005"
+      ]
+    },
+    {
+      "id": "R35-E028",
+      "participant": "R35-P06",
+      "date": "2026-03-28T08:44:00Z",
+      "week": 8,
+      "prompt": "R35-Q08",
+      "text": "The park path reopened today. One of the workers said flooding had delayed the repair and the crew had been moving between several parks. I still think the closure sign should have given people an update. Seeing them at work changed my mood, though. The delay no longer felt like the path had simply been forgotten.",
+      "codes": [
+        "Council in Everyday Life > Visible council action",
+        "Environment > Maintenance",
+        "Council in Everyday Life > Communication",
+        "Futures > Trade-offs"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E029",
+      "participant": "R35-P06",
+      "date": "2026-04-25T08:50:00Z",
+      "week": 12,
+      "prompt": "R35-Q12",
+      "text": "The loose bench slat was replaced, but the new timber is a different colour and makes the repair conspicuous. I like that. It shows the park is used enough to be worn and cared for enough to be mended. My earlier notes treated maintenance as a pass-or-fail standard. I am now more aware of it as a continuing relationship between weather, budgets, workers and residents.",
+      "codes": [
+        "Environment > Maintenance",
+        "Council in Everyday Life > Visible council action",
+        "Council in Everyday Life > Trust",
+        "Environment > Seasonal change"
+      ],
+      "media": [
+        "R35-A028"
+      ]
+    },
+    {
+      "id": "R35-E030",
+      "participant": "R35-P06",
+      "date": "2026-05-23T08:22:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor might see a pleasant park. They would miss the retired men who notice when one of them is absent, the young mother who knows the café toilet will be open, and the walkers who made their own muddy route during the closure. The benches and paths give people reasons to cross one another's week, even when nobody has organised a group.",
+      "codes": [
+        "Environment > Green space",
+        "Community > Local networks",
+        "Public Space > Informal social life",
+        "Place & Belonging > Familiarity"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E031",
+      "participant": "R35-P07",
+      "date": "2026-02-09T16:18:00Z",
+      "week": 2,
+      "prompt": "R35-Q02",
+      "text": "The concrete ledge behind Eastfield Leisure Centre is somewhere we sit without naming it. It is sheltered, close to the bus and not attached to a café purchase. Staff sometimes ask us to move if a class is leaving, but mostly they wave. The ledge is not designed as youth space, which may be why it works: nobody has installed signs telling us what being young there should look like.",
+      "codes": [
+        "Public Space > Children in public space",
+        "Public Space > Informal social life",
+        "Place & Belonging > Familiarity",
+        "Inequality & Inclusion > Financial constraint"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E032",
+      "participant": "R35-P07",
+      "date": "2026-03-01T17:02:00Z",
+      "week": 4,
+      "prompt": "R35-Q04",
+      "text": "The cycle lane on Beacon Road ends where the parked cars begin. I photographed the worn strip where riders bump onto the pavement to get around it. I used to think I was the only person losing my nerve at that point. The marks show that plenty of other cyclists make the same choice, even though it then puts us in the way of people walking.",
+      "codes": [
+        "Mobility > Cycling",
+        "Mobility > Safety",
+        "Everyday Routines > Workarounds",
+        "Public Space > Safety"
+      ],
+      "media": [
+        "R35-A006"
+      ]
+    },
+    {
+      "id": "R35-E033",
+      "participant": "R35-P07",
+      "date": "2026-03-29T18:12:00Z",
+      "week": 8,
+      "prompt": "R35-Q08",
+      "text": "The new lighting beside The Foundry has made the square busier after college. People call that antisocial behaviour because groups are visible now. We watched two boys pick up bottles after a toddler nearly stepped on one, while an older man complained about noise from the same bench. The place has changed from empty and uncomfortable to shared and negotiated. That is improvement for me, not quiet.",
+      "codes": [
+        "Public Space > Lighting",
+        "Town Centre > Evening economy",
+        "Community > Intergenerational contact",
+        "Community > Disagreement"
+      ],
+      "media": [
+        "R35-A029"
+      ]
+    },
+    {
+      "id": "R35-E034",
+      "participant": "R35-P07",
+      "date": "2026-04-26T17:40:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I use the Riverside path instead of Beacon Road even though it adds ten minutes. The detour feels like leisure in good weather and punishment in rain. Since recording journeys, I have become aware that people praising cycle routes often picture optional rides, not getting to college with a bag and a clock. A route can be beautiful and still fail as transport.",
+      "codes": [
+        "Mobility > Cycling",
+        "Mobility > Travel adaptation",
+        "Environment > Green space",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E035",
+      "participant": "R35-P07",
+      "date": "2026-05-24T16:35:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would miss the places young people keep alive without owning them: the leisure-centre ledge, the lit edge of Market Square, the wall where skateboards pause rather than perform. Adults often read our presence as a problem before observing what we do. We share space, move when access is needed, pick things up and sometimes make noise. The future I want is not a fenced youth zone; it is permission to belong visibly.",
+      "codes": [
+        "Place & Belonging > Local identity",
+        "Public Space > Informal social life",
+        "Public Space > Children in public space",
+        "Futures > Desired change"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E036",
+      "participant": "R35-P08",
+      "date": "2026-02-10T05:58:00Z",
+      "week": 2,
+      "prompt": "R35-Q02",
+      "text": "The lay-by beside Southbank Retail Park is part of my routine because the bakery van arrives before my shift. It has no bench, poor lighting and a bin that is often full, but six early workers use it as a breakfast stop. Town strategies talk about Market Square while this strip serves people before most of the centre opens. Southbank feels like the place Rivermere uses and forgets.",
+      "codes": [
+        "Everyday Routines > Commuting",
+        "Place & Belonging > Territoriality",
+        "Public Space > Comfort",
+        "Inequality & Inclusion > Spatial inequality"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E037",
+      "participant": "R35-P08",
+      "date": "2026-03-03T17:26:00Z",
+      "week": 5,
+      "prompt": "R35-Q05",
+      "text": "Roadworks at Station Road diverted me through Old Market. I expected empty shops and traffic. Instead I found Vale & Finch open late and bought vegetables cheaper than at the retail park. The diversion cost twenty minutes but disturbed my story that the centre offers nothing relevant to Southbank households. I still think investment is uneven; I now have one shopkeeper's face attached to the other side of that argument.",
+      "codes": [
+        "Mobility > Traffic",
+        "Town Centre > Independent business",
+        "Place & Belonging > Territoriality",
+        "Futures > Trade-offs"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E038",
+      "participant": "R35-P08",
+      "date": "2026-03-31T18:20:00Z",
+      "week": 9,
+      "prompt": "R35-Q09",
+      "text": "I belong at the Southbank five-a-side cage, where warehouse staff, delivery drivers and teenagers make teams without much ceremony. The floodlight timer cuts out at eight, even in the middle of a game. One player keeps a stick by the fence so he can press the reset button. It is a ridiculous little fact that everybody learns after their first dark match.",
+      "codes": [
+        "Place & Belonging > Attachment",
+        "Community > Local networks",
+        "Everyday Routines > Leisure",
+        "Everyday Routines > Workarounds"
+      ],
+      "media": [
+        "R35-A030"
+      ]
+    },
+    {
+      "id": "R35-E039",
+      "participant": "R35-P08",
+      "date": "2026-04-28T06:04:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now avoid the retail-park junction between 16:45 and 17:20 because one queue can add half an hour. On late-shift weeks that means leaving home before I need to and sitting in the canteen. Traffic planning turns into unpaid waiting that happens off the road and disappears from congestion figures. People assume drivers have flexibility because we are in cars; shift clocks remove most of it.",
+      "codes": [
+        "Mobility > Traffic",
+        "Mobility > Travel adaptation",
+        "Everyday Routines > Workarounds",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E040",
+      "participant": "R35-P08",
+      "date": "2026-05-26T06:12:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would miss Southbank's early timetable: the bakery van, warehouse shift changes, school cleaners and the first retail deliveries. They might call the lay-by untidy and never see it used like a workers' café. People talk as though the town centre is Rivermere and Southbank only drives into it. Plenty of our daily life happens here before the centre opens.",
+      "codes": [
+        "Place & Belonging > Local identity",
+        "Inequality & Inclusion > Spatial inequality",
+        "Council in Everyday Life > Invisible council",
+        "Public Space > Informal social life"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E041",
+      "participant": "R35-P09",
+      "date": "2026-02-11T08:40:00Z",
+      "week": 2,
+      "prompt": "R35-Q02",
+      "text": "The bench outside Westmere Pharmacy is part of Dad's routine even though we never planned it. He rests there between the car and the consultation room, and the pharmacist comes outside if the queue is long. When a delivery cage occupied the space today, we waited in the car and lost our place. One movable object changed the whole care sequence.",
+      "codes": [
+        "Everyday Routines > Caring",
+        "Public Space > Seating",
+        "Mobility > Accessibility",
+        "Inequality & Inclusion > Disability access"
+      ],
+      "media": [
+        "R35-A031"
+      ]
+    },
+    {
+      "id": "R35-E042",
+      "participant": "R35-P09",
+      "date": "2026-03-05T10:14:00Z",
+      "week": 5,
+      "prompt": "R35-Q05",
+      "text": "A home visit in Hilltop took twelve minutes longer because the only nearby parking was suspended for tree work. The patient apologised as though the street arrangement were hers. I carried the bag uphill and arrived flustered. Necessary environmental maintenance created a temporary care barrier; that is a trade-off, not proof the tree work should not happen. The missing piece was advance information that would let me plan the visit differently.",
+      "codes": [
+        "Everyday Routines > Caring",
+        "Mobility > Parking",
+        "Environment > Maintenance",
+        "Council in Everyday Life > Communication"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E043",
+      "participant": "R35-P09",
+      "date": "2026-04-02T14:05:00Z",
+      "week": 9,
+      "prompt": "R35-Q09",
+      "text": "I feel I belong at Willowbank Community Centre because nobody asks whether I am there as a nurse, daughter or neighbour. Faye keeps a chair by the door for Dad and quietly changes things if he is tired. It is not written down anywhere. She remembers him, and that is what makes the place easy for us to use.",
+      "codes": [
+        "Place & Belonging > Attachment",
+        "Community > Community venues",
+        "Community > Informal support",
+        "Everyday Routines > Caring"
+      ],
+      "media": [
+        "R35-A032"
+      ]
+    },
+    {
+      "id": "R35-E044",
+      "participant": "R35-P09",
+      "date": "2026-04-30T08:25:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I book Dad's appointments on Tuesdays because parking is easier after the market clears. I had done it for so long that I had forgotten why. His clinic time, the market vans, the busy buses and the pharmacy delivery all affect whether one morning works. None of those places plans around the others, so I do the joining-up in my diary.",
+      "codes": [
+        "Everyday Routines > Caring",
+        "Mobility > Journey planning",
+        "Everyday Routines > Workarounds",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E045",
+      "participant": "R35-P09",
+      "date": "2026-05-27T09:18:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would miss the quiet coordination that keeps older residents present in town: the pharmacist carrying a bag, Faye saving a chair, a neighbour texting about parking, relatives combining appointments. Informal help is valuable, but it depends on relationships and can make unreliable access appear adequate. The future should preserve the kindness without making care depend on being known to the right person.",
+      "codes": [
+        "Community > Informal support",
+        "Everyday Routines > Caring",
+        "Inequality & Inclusion > Unequal service experience",
+        "Futures > Desired change"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E046",
+      "participant": "R35-P10",
+      "date": "2026-02-12T07:05:00Z",
+      "week": 2,
+      "prompt": "R35-Q02",
+      "text": "Before opening, I move fruit crates through the rear lane while construction fencing narrows the turn. The delivery driver and I have developed a three-point routine that would horrify anyone watching from a desk. At eight, June buys pears and tells me which old shop sign the contractors uncovered. The business day begins with logistics, local history and gossip before the first till receipt.",
+      "codes": [
+        "Everyday Routines > Shopping",
+        "Town Centre > Construction disruption",
+        "Town Centre > Independent business",
+        "Community > Local networks"
+      ],
+      "media": [
+        "R35-A033"
+      ]
+    },
+    {
+      "id": "R35-E047",
+      "participant": "R35-P10",
+      "date": "2026-03-06T11:22:00Z",
+      "week": 5,
+      "prompt": "R35-Q05",
+      "text": "A paving closure redirected pedestrians past my window but put the entrance behind a barrier. Footfall increased and sales fell. People waved as they passed, assuming we were closed. I made a cardboard arrow and placed a basket outside the permitted line. Regeneration data may record more people in Market Square; my till recorded fewer people able to cross the final two metres.",
+      "codes": [
+        "Town Centre > Regeneration",
+        "Town Centre > Construction disruption",
+        "Town Centre > Changing footfall",
+        "Everyday Routines > Workarounds"
+      ],
+      "media": [
+        "R35-A007"
+      ]
+    },
+    {
+      "id": "R35-E048",
+      "participant": "R35-P10",
+      "date": "2026-04-03T17:35:00Z",
+      "week": 9,
+      "prompt": "R35-Q09",
+      "text": "The Friday tasting table has become somewhere I belong rather than simply a promotion. Harold brings park gossip, Tia challenges the music, and June corrects my account of the old shops. The store generates sales, but the conversation is not reducible to customers. Independent businesses provide semi-public rooms while rent, refrigeration and staff still have to be paid.",
+      "codes": [
+        "Place & Belonging > Attachment",
+        "Town Centre > Independent business",
+        "Public Space > Informal social life",
+        "Community > Intergenerational contact"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E049",
+      "participant": "R35-P10",
+      "date": "2026-05-01T09:12:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now schedule deliveries before the contractor's vehicles arrive, which means paying a driver an early supplement. The pavement looks calmer and complaints have reduced because businesses adapted. That can be mistaken for construction management improving. Some improvement is real; some is cost moved into private arrangements that small shops absorb differently from chains.",
+      "codes": [
+        "Town Centre > Construction disruption",
+        "Everyday Routines > Workarounds",
+        "Inequality & Inclusion > Unequal service experience",
+        "Futures > Trade-offs"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E050",
+      "participant": "R35-P10",
+      "date": "2026-05-29T16:50:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A one-day visitor would miss how the High Street breathes around routines: pension day, school pickup, mosque traffic, market weather, construction deliveries and the half-hour when office workers buy dinner. Empty units and new paving matter, but so do the counter conversations that tell people where a bus moved or who needs groceries carried home. My optimism about regeneration depends on whether the businesses holding those relationships can afford to remain afterward.",
+      "codes": [
+        "Town Centre > Changing footfall",
+        "Community > Local networks",
+        "Town Centre > Regeneration",
+        "Futures > Trade-offs"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E051",
+      "participant": "R35-P11",
+      "date": "2026-02-13T10:32:00Z",
+      "week": 2,
+      "prompt": "R35-Q02",
+      "text": "Northgate Library's computer by the radiator is part of my week. I use it to check my sister's care account because the phone version hides buttons I need. Alan at the desk never takes the mouse; he asks what I can see and lets me do it. That difference matters. The library is where a digital service becomes usable without making me feel somebody else has taken over my affairs.",
+      "codes": [
+        "Everyday Routines > Caring",
+        "Inequality & Inclusion > Digital exclusion",
+        "Community > Community venues",
+        "Community > Informal support"
+      ],
+      "media": [
+        "R35-A034"
+      ]
+    },
+    {
+      "id": "R35-E052",
+      "participant": "R35-P11",
+      "date": "2026-03-07T10:45:00Z",
+      "week": 5,
+      "prompt": "R35-Q05",
+      "text": "The care portal logged me out halfway through a bus journey because I tried to finish a form on the phone. I went to the library, where the same task took nine minutes. Travel cost and opening hours are now part of accessing an online-only service. Digital sounds placeless, but for me it has a building, a helpful person and a timetable.",
+      "codes": [
+        "Inequality & Inclusion > Digital exclusion",
+        "Mobility > Bus reliability",
+        "Everyday Routines > Caring",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E053",
+      "participant": "R35-P11",
+      "date": "2026-04-04T11:06:00Z",
+      "week": 9,
+      "prompt": "R35-Q09",
+      "text": "I belong at the library's Friday table even though we are not a formal group. One man reads newspapers, I do forms, two mothers print school letters, and we help one another find the right tray. The council service in that room is partly computers and partly permission to need assistance without booking an appointment.",
+      "codes": [
+        "Place & Belonging > Attachment",
+        "Community > Community venues",
+        "Community > Informal support",
+        "Inequality & Inclusion > Digital exclusion"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E054",
+      "participant": "R35-P11",
+      "date": "2026-05-02T10:18:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now photograph every confirmation screen because I once received no email and could not prove the care update was sent. The camera roll is full of grey boxes and reference numbers. This habit makes me more secure and more anxious. A reliable system should not require residents to build a private audit trail of every click.",
+      "codes": [
+        "Everyday Routines > Workarounds",
+        "Inequality & Inclusion > Digital exclusion",
+        "Council in Everyday Life > Distrust",
+        "Council in Everyday Life > Reporting"
+      ],
+      "media": [
+        "R35-A008"
+      ]
+    },
+    {
+      "id": "R35-E055",
+      "participant": "R35-P11",
+      "date": "2026-05-30T10:40:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would miss the help that happens quietly at Northgate Library: staff explaining one screen at a time, residents showing each other where to print, and people taking screenshots because they are not sure an email will arrive. Some people talk as though this help will no longer be needed once everyone is online. For me, the help is part of the service.",
+      "codes": [
+        "Inequality & Inclusion > Digital exclusion",
+        "Community > Informal support",
+        "Council in Everyday Life > Communication",
+        "Futures > Desired change"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E056",
+      "participant": "R35-P12",
+      "date": "2026-02-14T09:30:00Z",
+      "week": 2,
+      "prompt": "R35-Q02",
+      "text": "Riverside Walk is the route I take without thinking because it joins home, the station and coffee without traffic lights. I notice design details for work, but here I mostly notice who pauses: runners at the bridge, anglers by the reeds, teenagers where the wall widens. The path succeeds because it permits several speeds and reasons for being there without announcing zones.",
+      "codes": [
+        "Mobility > Walking",
+        "Environment > Green space",
+        "Public Space > Informal social life",
+        "Place & Belonging > Familiarity"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E057",
+      "participant": "R35-P12",
+      "date": "2026-03-08T08:12:00Z",
+      "week": 5,
+      "prompt": "R35-Q05",
+      "text": "Construction at Station Quarter closed the cycle ramp, and the signed diversion used three tight barriers that cannot be ridden. I carried the bicycle while a parent lifted a buggy one end at a time. On the plan, the diversion connects two points. In practice it assumes bodies and objects that can be folded, lifted or delayed.",
+      "codes": [
+        "Town Centre > Construction disruption",
+        "Mobility > Cycling",
+        "Mobility > Accessibility",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": [
+        "R35-A009"
+      ]
+    },
+    {
+      "id": "R35-E058",
+      "participant": "R35-P12",
+      "date": "2026-04-05T15:10:00Z",
+      "week": 9,
+      "prompt": "R35-Q09",
+      "text": "I felt proud at the public-realm preview until Nico asked what happens to traders' rents after the square becomes desirable. My training makes me look at surfaces, movement and sightlines; his question made tenure part of the design. I still support the scheme. I no longer describe disruption as a short-term inconvenience without asking who can financially survive the short term.",
+      "codes": [
+        "Town Centre > Regeneration",
+        "Housing & Development > Affordability",
+        "Town Centre > Independent business",
+        "Futures > Trade-offs"
+      ],
+      "media": [
+        "R35-A035"
+      ]
+    },
+    {
+      "id": "R35-E059",
+      "participant": "R35-P12",
+      "date": "2026-05-03T18:02:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I avoid the station diversion by locking the bicycle before the works and walking the final part. It is slower, but I can watch people choosing the gap that takes them where they actually want to go. Some can carry a bike or lift a buggy over the edge; others have to follow the long signed route. The shortcut is not available to everybody.",
+      "codes": [
+        "Mobility > Travel adaptation",
+        "Town Centre > Construction disruption",
+        "Mobility > Accessibility",
+        "Everyday Routines > Workarounds"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E060",
+      "participant": "R35-P12",
+      "date": "2026-05-31T14:25:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A one-day visitor would see the glossy picture of the finished square and today's barriers, as if those were the only two moments. They would miss months of hidden shop doors, earlier deliveries, longer walks and people unable to squeeze through shortcuts. The time while a place is being rebuilt is still part of residents' lives. It should not be treated as a gap that does not count.",
+      "codes": [
+        "Town Centre > Regeneration",
+        "Town Centre > Construction disruption",
+        "Futures > Trade-offs",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E061",
+      "participant": "R35-P13",
+      "date": "2026-02-16T08:00:00Z",
+      "week": 3,
+      "prompt": "R35-Q03",
+      "text": "The key rack at Willowbank Community Centre makes life easier. Six trusted people can open up, so a delayed bus or sick child does not cancel breakfast club. I photographed the coloured labels, not the names. The arrangement looks informal but rests on years of reliability and invisible checking. Resilience here is a network of people carrying small responsibilities for one another.",
+      "codes": [
+        "Community > Community venues",
+        "Community > Informal support",
+        "Everyday Routines > Caring",
+        "Community > Local networks"
+      ],
+      "media": [
+        "R35-A010"
+      ]
+    },
+    {
+      "id": "R35-E062",
+      "participant": "R35-P13",
+      "date": "2026-03-09T15:25:00Z",
+      "week": 6,
+      "prompt": "R35-Q06",
+      "text": "In ten minutes at the centre, three people came in without attending the advertised class: one to charge a phone, one to ask about a landlord letter and one because she knew there would be tea. A programme list would miss all three. What matters is that people can walk through the door with a problem that is not yet tidy enough for an appointment.",
+      "codes": [
+        "Community > Community venues",
+        "Public Space > Informal social life",
+        "Inequality & Inclusion > Financial constraint",
+        "Community > Informal support"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E063",
+      "participant": "R35-P13",
+      "date": "2026-03-31T10:55:00Z",
+      "week": 7,
+      "prompt": "R35-Q07",
+      "text": "At coffee morning people said Willowbank looks after its own. Beth pointed out that this is easier if you know which door to try and who has a key. A new tenant had spent weeks alone two streets away because nobody knew she needed help. The conversation changed my view of strong community: networks can be generous and still have edges that exclude quietly.",
+      "codes": [
+        "Community > Neighbour relations",
+        "Community > Isolation",
+        "Community > Local networks",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": [
+        "R35-A036"
+      ]
+    },
+    {
+      "id": "R35-E064",
+      "participant": "R35-P13",
+      "date": "2026-05-04T07:35:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "We now keep two spare breakfast places unallocated because bus delays regularly bring children after the register closes. It prevents a crisis and makes the service look smoothly flexible. The kitchen absorbs uncertainty through food stock, staff attention and small budget choices. Our workaround helps families; it can also hide the transport problem from anyone looking only at attendance.",
+      "codes": [
+        "Everyday Routines > Caring",
+        "Everyday Routines > Workarounds",
+        "Mobility > Bus reliability",
+        "Community > Informal support"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E065",
+      "participant": "R35-P13",
+      "date": "2026-06-01T10:22:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would see a busy community centre and call Willowbank cohesive. They would miss the phone calls, spare keys, unpaid lifts and the residents nobody has met yet. Informal support is one of Rivermere's strengths, but I have become wary of praising it as a substitute for reliable services. People help because they care, and sometimes because there is no other way for the day to work.",
+      "codes": [
+        "Community > Informal support",
+        "Community > Isolation",
+        "Futures > Trade-offs",
+        "Council in Everyday Life > Invisible council"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E066",
+      "participant": "R35-P14",
+      "date": "2026-02-17T17:44:00Z",
+      "week": 3,
+      "prompt": "R35-Q03",
+      "text": "The smooth strip beside Old Market Hall makes skating easier, but the important thing is the low wall where we can stop without blocking doors. I photographed the worn wax marks because they show repeated use adults usually describe only when complaining. We pick up cans before skating because broken glass ends our evening too. That maintenance is real even though nobody assigns it.",
+      "codes": [
+        "Everyday Routines > Leisure",
+        "Public Space > Children in public space",
+        "Environment > Maintenance",
+        "Place & Belonging > Familiarity"
+      ],
+      "media": [
+        "R35-A011"
+      ]
+    },
+    {
+      "id": "R35-E067",
+      "participant": "R35-P14",
+      "date": "2026-03-10T18:20:00Z",
+      "week": 6,
+      "prompt": "R35-Q06",
+      "text": "In ten minutes by the hall, a security guard asked us to move once for a delivery, two younger kids copied a trick, a woman used the wall to tie her shoe, and June stopped to tell us the building used to host dances. The space is negotiated minute by minute. A sign saying 'no skating' would simplify management by erasing most of what actually happens there.",
+      "codes": [
+        "Public Space > Informal social life",
+        "Community > Intergenerational contact",
+        "Public Space > Safety",
+        "Place & Belonging > Memory"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E068",
+      "participant": "R35-P14",
+      "date": "2026-04-07T19:02:00Z",
+      "week": 10,
+      "prompt": "R35-Q10",
+      "text": "The benches under the new cameras feel designed for people who sit correctly and leave. We use the edge behind them because it has space for boards and does not put us under the lens. Cameras may make others feel safe; they make me conscious that ordinary hanging around can be collected as suspicious behaviour. I want lighting and people around, not only surveillance.",
+      "codes": [
+        "Public Space > Safety",
+        "Public Space > Seating",
+        "Inequality & Inclusion > Unequal service experience",
+        "Futures > Desired change"
+      ],
+      "media": [
+        "R35-A037"
+      ]
+    },
+    {
+      "id": "R35-E069",
+      "participant": "R35-P14",
+      "date": "2026-05-05T18:15:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "When organised events take over Market Square, we go to the station underpass. It is rougher and commuters get annoyed, but nobody asks us to move every fifteen minutes. The event programme makes the square look busier. For us, it can mean the place we use most weeks has been handed to people who are seen as more welcome.",
+      "codes": [
+        "Town Centre > Market Square",
+        "Public Space > Children in public space",
+        "Place & Belonging > Territoriality",
+        "Everyday Routines > Workarounds"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E070",
+      "participant": "R35-P14",
+      "date": "2026-06-02T18:40:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A one-day visitor might see teenagers and decide the square feels lively or threatening, depending on who they are. They would miss the rules we enforce ourselves: leave doorways, stop for small children, clear glass, warn beginners when security is tense. Youth presence is treated as an outcome to manage, but it is also labour that keeps a place inhabited after shops close.",
+      "codes": [
+        "Public Space > Informal social life",
+        "Public Space > Safety",
+        "Town Centre > Evening economy",
+        "Place & Belonging > Local identity"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E071",
+      "participant": "R35-P15",
+      "date": "2026-02-18T12:05:00Z",
+      "week": 3,
+      "prompt": "R35-Q03",
+      "text": "The tiled street-name inset on Mill Street makes daily life easier because it anchors stories. Pupils ask why 'Malt Row' appears beneath the modern sign, and residents tell them about uses that have vanished. I photographed both names together. Memory is not an obstacle to change; it is a way people locate themselves while change happens.",
+      "codes": [
+        "Place & Belonging > Memory",
+        "Place & Belonging > Local identity",
+        "Community > Intergenerational contact",
+        "Town Centre > Regeneration"
+      ],
+      "media": [
+        "R35-A012"
+      ]
+    },
+    {
+      "id": "R35-E072",
+      "participant": "R35-P15",
+      "date": "2026-03-11T16:10:00Z",
+      "week": 6,
+      "prompt": "R35-Q06",
+      "text": "I sat outside Eastfield Leisure Centre for ten minutes and heard three languages, skateboard wheels, a bus brake and parents calling children. Old photographs show an empty field here, which some people describe as peaceful. They cannot show who had nowhere to meet. Today's noise is also the sound of many more people using the place.",
+      "codes": [
+        "Place & Belonging > Memory",
+        "Environment > Noise",
+        "Public Space > Informal social life",
+        "Community > Intergenerational contact"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E073",
+      "participant": "R35-P15",
+      "date": "2026-04-08T19:00:00Z",
+      "week": 10,
+      "prompt": "R35-Q10",
+      "text": "The refurbished Market Hall displays industrial photographs but none of the garment workshops that migrant women ran in upstairs rooms during the 1990s. Omar pointed that out. I had described the exhibition as inclusive because it showed workers rather than dignitaries. His correction revealed which workers our archive had preserved and which depended on living memory.",
+      "codes": [
+        "Place & Belonging > Memory",
+        "Place & Belonging > Local identity",
+        "Inequality & Inclusion > Spatial inequality",
+        "Community > Intergenerational contact"
+      ],
+      "media": [
+        "R35-A038"
+      ]
+    },
+    {
+      "id": "R35-E074",
+      "participant": "R35-P15",
+      "date": "2026-05-06T14:30:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now take blank caption cards to the history group so people can add names, uses and disagreements. One photograph of Chapel Lane produced three different memories of the same yard, and we kept all three rather than choosing a winner. It reminded me that an old photograph does not settle a story. People remember the same place from different lives.",
+      "codes": [
+        "Place & Belonging > Memory",
+        "Community > Disagreement",
+        "Place & Belonging > Local identity",
+        "Everyday Routines > Workarounds"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E075",
+      "participant": "R35-P15",
+      "date": "2026-06-03T13:50:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would miss the layers residents carry through one street: June's bakery, Omar's workshop deliveries, Tia's cycle pinch point, and my pupils' new names for old corners. Rivermere is not a preserved identity or a blank surface for reinvention. Its future should make room for several memories, including those absent from formal archives, without requiring every change to imitate the past.",
+      "codes": [
+        "Place & Belonging > Memory",
+        "Place & Belonging > Local identity",
+        "Futures > Trade-offs",
+        "Futures > Desired change"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E076",
+      "participant": "R35-P16",
+      "date": "2026-02-19T09:11:00Z",
+      "week": 3,
+      "prompt": "R35-Q03",
+      "text": "The printed timetable in the interchange makes life easier because I can read it close up without listening for announcements I may miss. Somebody has taped a handwritten bay change across the bottom. It is inelegant and useful. Information does not need to be high-tech; it needs to be consistent across the places passengers actually look.",
+      "codes": [
+        "Mobility > Bus reliability",
+        "Mobility > Accessibility",
+        "Council in Everyday Life > Communication",
+        "Inequality & Inclusion > Disability access"
+      ],
+      "media": [
+        "R35-A013"
+      ]
+    },
+    {
+      "id": "R35-E077",
+      "participant": "R35-P16",
+      "date": "2026-03-12T09:18:00Z",
+      "week": 6,
+      "prompt": "R35-Q06",
+      "text": "I sat at Bay 4 for ten minutes. Two buses arrived, one driver changed, three passengers asked each other whether the R6 had gone, and the display continued showing 'due.' As a former driver, I know a vehicle can be lost to traffic or staffing at short notice. What damages trust is not disruption itself but information pretending certainty after operations have changed.",
+      "codes": [
+        "Mobility > Bus reliability",
+        "Council in Everyday Life > Communication",
+        "Council in Everyday Life > Distrust",
+        "Interpreting services > Operational complexity"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E078",
+      "participant": "R35-P16",
+      "date": "2026-04-09T10:00:00Z",
+      "week": 10,
+      "prompt": "R35-Q10",
+      "text": "The audio announcement at Northgate Library is clear; the interchange one dissolves into echo. Both may meet a volume standard. I position myself near the kiosk and watch other passengers' movement to infer bay changes. Accessibility here is social reading: faces turning, queues shifting, someone pointing. It works until the interchange is quiet or everybody else is equally uncertain.",
+      "codes": [
+        "Mobility > Accessibility",
+        "Inequality & Inclusion > Disability access",
+        "Community > Informal support",
+        "Mobility > Journey planning"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E079",
+      "participant": "R35-P16",
+      "date": "2026-05-07T09:05:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now take the service before the one I need for hospital appointments. I used to criticise passengers who arrived too early and crowded shelters. Keeping this diary made me see the rationality of the crowd: each person has built a buffer around unreliable information. Operational resilience for the network can look like wasted time for the passenger.",
+      "codes": [
+        "Mobility > Travel adaptation",
+        "Mobility > Bus reliability",
+        "Everyday Routines > Workarounds",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E080",
+      "participant": "R35-P16",
+      "date": "2026-06-04T09:30:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would miss the etiquette that makes buses usable: regulars repeating an announcement, drivers waiting for a slow crossing, passengers guarding a place in the queue, kiosk staff translating a missing service into a likely wait. Those practices are generous but should not be required to compensate for information that excludes hearing, sight or confidence. Trust begins with saying clearly what the system knows and does not know.",
+      "codes": [
+        "Community > Informal support",
+        "Council in Everyday Life > Communication",
+        "Mobility > Accessibility",
+        "Futures > Desired change"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E081",
+      "participant": "R35-P17",
+      "date": "2026-02-20T13:20:00Z",
+      "week": 3,
+      "prompt": "R35-Q03",
+      "text": "The refill tap in Market Square makes days easier when I am between split shifts. I bring food and fill the bottle rather than spending £6 in cafés to occupy the gap. The nearest bench is exposed in rain, so I rotate between the library foyer and Southbank bus shelter depending on who is checking doors. Public space is affordable only when it allows you to remain without purchasing.",
+      "codes": [
+        "Inequality & Inclusion > Financial constraint",
+        "Public Space > Comfort",
+        "Everyday Routines > Workarounds",
+        "Town Centre > Market Square"
+      ],
+      "media": [
+        "R35-A014"
+      ]
+    },
+    {
+      "id": "R35-E082",
+      "participant": "R35-P17",
+      "date": "2026-03-13T16:05:00Z",
+      "week": 6,
+      "prompt": "R35-Q06",
+      "text": "In ten minutes outside Southbank Retail Park, twelve people waited without sitting, four ate standing up, and one woman balanced a toddler on the trolley rail. The space is designed to move purchases and cars, not to hold people between tasks. I use it because work schedules create gaps too short to go home and too long to stand comfortably.",
+      "codes": [
+        "Public Space > Seating",
+        "Inequality & Inclusion > Spatial inequality",
+        "Everyday Routines > Commuting",
+        "Public Space > Comfort"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E083",
+      "participant": "R35-P17",
+      "date": "2026-04-10T18:30:00Z",
+      "week": 10,
+      "prompt": "R35-Q10",
+      "text": "The wine bar in Station Quarter looks as if it was designed for someone with a regular salary and clothes that do not smell of kitchen shifts. Nobody has ever refused me entry. The prices and atmosphere do the excluding quietly. I use the library event room instead, where a free poetry night let me stay without calculating the cheapest acceptable purchase.",
+      "codes": [
+        "Town Centre > Evening economy",
+        "Inequality & Inclusion > Financial constraint",
+        "Place & Belonging > Territoriality",
+        "Community > Community venues"
+      ],
+      "media": [
+        "R35-A039"
+      ]
+    },
+    {
+      "id": "R35-E084",
+      "participant": "R35-P17",
+      "date": "2026-05-08T14:22:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now keep a list of free indoor places by opening time: library, Foundry foyer, community centre on Tuesdays. It is not a tourist guide; it is how I bridge cancelled shifts without spending wages I did not earn. Since the poetry night I have started checking council events rather than assuming they are not for me. One invitation altered the social map more than the new paving did.",
+      "codes": [
+        "Everyday Routines > Workarounds",
+        "Inequality & Inclusion > Financial constraint",
+        "Community > Community venues",
+        "Council in Everyday Life > Trust"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E085",
+      "participant": "R35-P17",
+      "date": "2026-06-05T15:12:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would miss how price sets invisible boundaries across Rivermere. A bench, toilet, socket and free event determine whether a gap between shifts feels like time in my town or time spent trying not to be moved on. I do not need every space to be free. I need enough places where presence is not measured by what I buy.",
+      "codes": [
+        "Inequality & Inclusion > Financial constraint",
+        "Public Space > Comfort",
+        "Place & Belonging > Attachment",
+        "Futures > Desired change"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E086",
+      "participant": "R35-P18",
+      "date": "2026-02-21T10:05:00Z",
+      "week": 3,
+      "prompt": "R35-Q03",
+      "text": "The family parking bay at Eastfield Leisure Centre makes alternate Saturdays possible. With two children, swimming bags and a tight lesson time, the extra door width is the difference between calm and shouting. On non-child weeks I barely notice those bays. My town changes every Friday evening when the children arrive: routes, shops and services become linked by their patience and my ability to carry things.",
+      "codes": [
+        "Everyday Routines > Caring",
+        "Mobility > Parking",
+        "Everyday Routines > Leisure",
+        "Place & Belonging > Familiarity"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E087",
+      "participant": "R35-P18",
+      "date": "2026-03-14T09:50:00Z",
+      "week": 6,
+      "prompt": "R35-Q06",
+      "text": "We sat for ten minutes beside the leisure-centre entrance. Parents swapped lost goggles, a staff member moved a cone so Ewan could pass, and teenagers held the door while pretending not to. I usually think of swimming as one lesson I have paid for. Watching the doorway showed me how many small favours make that lesson run smoothly.",
+      "codes": [
+        "Community > Informal support",
+        "Community > Intergenerational contact",
+        "Mobility > Accessibility",
+        "Everyday Routines > Caring"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E088",
+      "participant": "R35-P18",
+      "date": "2026-04-11T11:15:00Z",
+      "week": 10,
+      "prompt": "R35-Q10",
+      "text": "Southbank Retail Park feels designed for me on workdays and against me with children. The crossings assume one adult pace, trolleys block sightlines, and there is nowhere to pause between units. Gordon says the park serves workers well before dawn. His account made me see that 'bad design' changes by time and purpose. The same place can fit my van and fail my family.",
+      "codes": [
+        "Mobility > Walking",
+        "Public Space > Safety",
+        "Community > Disagreement",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E089",
+      "participant": "R35-P18",
+      "date": "2026-05-09T09:20:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now pack a snack before every trip with the children because a late bus or a toilet queue can tip the whole morning into tears. It looks like ordinary parenting, and it is, but I started doing it after being caught out several times. My van carries plumbing tools on workdays and a second bag of things that help family days survive delays.",
+      "codes": [
+        "Everyday Routines > Caring",
+        "Everyday Routines > Workarounds",
+        "Mobility > Journey planning",
+        "Inequality & Inclusion > Unequal service experience"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E090",
+      "participant": "R35-P18",
+      "date": "2026-06-06T10:30:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would miss the alternating town I inhabit. One week Rivermere is suppliers, parking and quick routes; the next it is toilets, benches, safe crossings and whether two children can remain interested. Strategies divide business, transport and family services into headings. Everyday life stitches them into one morning, where failure in any part changes the whole day.",
+      "codes": [
+        "Everyday Routines > Caring",
+        "Mobility > Journey planning",
+        "Public Space > Comfort",
+        "Council in Everyday Life > Invisible council"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E091",
+      "participant": "R35-P19",
+      "date": "2026-02-22T08:55:00Z",
+      "week": 3,
+      "prompt": "R35-Q03",
+      "text": "The textured edge beside the station café makes the concourse easier because Moss, my guide dog, uses it as a consistent line to the ticket gates. A planter has been moved into the route during construction. Staff guide us around it each morning, so I still arrive. The human assistance prevents failure while making the physical obstruction easy to overlook.",
+      "codes": [
+        "Mobility > Accessibility",
+        "Town Centre > Construction disruption",
+        "Community > Informal support",
+        "Inequality & Inclusion > Disability access"
+      ],
+      "media": [
+        "R35-A015"
+      ]
+    },
+    {
+      "id": "R35-E092",
+      "participant": "R35-P19",
+      "date": "2026-03-15T08:48:00Z",
+      "week": 6,
+      "prompt": "R35-Q06",
+      "text": "For ten minutes at the station I listened rather than travelled: suitcase wheels change pitch at the temporary mat, barriers beep, coffee grinders mask platform announcements, and people stop abruptly where the route narrows. Construction changes my acoustic map before anybody updates the tactile one. Moss learns quickly; I spend attention confirming that his new choice is intentional.",
+      "codes": [
+        "Mobility > Accessibility",
+        "Environment > Noise",
+        "Town Centre > Construction disruption",
+        "Mobility > Journey planning"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E093",
+      "participant": "R35-P19",
+      "date": "2026-04-12T09:05:00Z",
+      "week": 10,
+      "prompt": "R35-Q10",
+      "text": "The redesigned Riverside crossing has audible signals but the approach is cluttered with café chairs. Samir praised the crossing geometry until I described reaching it. He returned with me and saw staff moving furniture as we approached. His willingness to revise the design story mattered. Accessibility often appears only when somebody accompanies the whole journey rather than inspects the feature.",
+      "codes": [
+        "Mobility > Accessibility",
+        "Town Centre > Regeneration",
+        "Community > Disagreement",
+        "Inequality & Inclusion > Disability access"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E094",
+      "participant": "R35-P19",
+      "date": "2026-05-10T08:40:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now leave by the north station exit because the construction route there changes less often. It adds six minutes and avoids helpful strangers steering me in conflicting directions. Choosing predictability over directness reduces daily negotiation. The works may be temporary, but sixteen weeks is long enough for a temporary route to become my default map of Rivermere.",
+      "codes": [
+        "Mobility > Travel adaptation",
+        "Town Centre > Construction disruption",
+        "Everyday Routines > Workarounds",
+        "Place & Belonging > Familiarity"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E095",
+      "participant": "R35-P19",
+      "date": "2026-06-07T09:15:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would miss the town I remember through sound and repetition: Moss's line to the gate, the doorway that gives a particular echo, and the kiosk worker whose voice explains a diversion clearly. Every moved chair, barrier or bin means checking the route again. I do not want Rivermere frozen in place. I want changes explained in ways I can use.",
+      "codes": [
+        "Mobility > Accessibility",
+        "Place & Belonging > Familiarity",
+        "Council in Everyday Life > Communication",
+        "Futures > Desired change"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E096",
+      "participant": "R35-P20",
+      "date": "2026-02-23T07:40:00Z",
+      "week": 4,
+      "prompt": "R35-Q04",
+      "text": "The allotment tap has a cable tie around the handle because the screw works loose. I photographed the blue tie against the frost. Everyone knows to twist gently and leave the watering can underneath. It is an effective repair until it is not, maintained by whoever notices. The council provides the site; users supply a layer of constant small care that keeps it functioning.",
+      "codes": [
+        "Environment > Green space",
+        "Environment > Maintenance",
+        "Community > Informal support",
+        "Everyday Routines > Workarounds"
+      ],
+      "media": [
+        "R35-A016"
+      ]
+    },
+    {
+      "id": "R35-E097",
+      "participant": "R35-P20",
+      "date": "2026-03-16T12:30:00Z",
+      "week": 7,
+      "prompt": "R35-Q07",
+      "text": "At the mosque after lunch, people discussed whether Market Square regeneration benefits Hilltop. One man said he goes only for the bank; another delivers herbs to Nico's shop; a teenager uses the station nightly. The phrase 'town centre user' flattened three different relationships. I began drawing our weekly routes and saw Hilltop connected to the centre through worship, food, work and family rather than shopping alone.",
+      "codes": [
+        "Community > Neighbour discussion",
+        "Place & Belonging > Territoriality",
+        "Town Centre > Regeneration",
+        "Mobility > Journey planning"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E098",
+      "participant": "R35-P20",
+      "date": "2026-04-13T17:05:00Z",
+      "week": 10,
+      "prompt": "R35-Q10",
+      "text": "People say the new Riverside flats will bring more customers and help protect bus services. At the allotment, younger members say they could never afford one. I can see both sides. More homes may help shops and buses, but prices decide who gets to live close enough to use them. I want to know who the flats are for, not only how many there will be.",
+      "codes": [
+        "Housing & Development > Development",
+        "Housing & Development > Affordability",
+        "Housing & Development > Infrastructure pressure",
+        "Futures > Trade-offs"
+      ],
+      "media": []
+    },
+    {
+      "id": "R35-E099",
+      "participant": "R35-P20",
+      "date": "2026-05-11T07:48:00Z",
+      "week": 13,
+      "prompt": "R35-Q13",
+      "text": "I now carry excess allotment herbs to Vale & Finch on Fridays rather than driving them to friends. The shop gives them away in small bunches. That route has connected Hilltop growers with Old Market customers and changed whom I greet on the High Street. A response to surplus became a social circuit across neighbourhoods that people often describe as separate.",
+      "codes": [
+        "Everyday Routines > Shopping",
+        "Community > Local networks",
+        "Place & Belonging > Local identity",
+        "Environment > Green space"
+      ],
+      "media": [
+        "R35-A040"
+      ]
+    },
+    {
+      "id": "R35-E100",
+      "participant": "R35-P20",
+      "date": "2026-06-08T08:10:00Z",
+      "week": 16,
+      "prompt": "R35-Q16",
+      "text": "A visitor would miss the journeys that join what people call separate parts of Rivermere: Hilltop herbs going to Old Market, school-run news travelling to the bus stop, and people from the mosque catching late trains for work. We disagree about spending partly because we move through different versions of the town. I would like the buses, affordable rooms and familiar meeting places between them to remain.",
+      "codes": [
+        "Place & Belonging > Local identity",
+        "Community > Local networks",
+        "Inequality & Inclusion > Spatial inequality",
+        "Futures > Desired change"
+      ],
+      "media": []
+    }
+  ],
+  "media_manifest": [
+    {
+      "id": "R35-A001",
+      "entry": "R35-E002",
+      "type": "photo",
+      "filename": "school-shelter-dry-strip.jpg",
+      "caption": "The narrow dry strip used by waiting families.",
+      "alt_text": "Wet fictional school-gate shelter with a diagonal dry strip where several pairs of shoes stand.",
+      "generation_prompt": "Fictional ethnographic photograph of rain-swept school gate shelter, narrow dry strip with shoes only, no faces or school branding."
+    },
+    {
+      "id": "R35-A002",
+      "entry": "R35-E007",
+      "type": "photo",
+      "filename": "pharmacy-light-out.jpg",
+      "caption": "Dark pavement beside the closed pharmacy.",
+      "alt_text": "Fictional town-centre pavement with one failed shopfront light and a brighter route opposite.",
+      "generation_prompt": "Fictional documentary night street, failed pharmacy exterior light, brighter takeaway side opposite, no logos or identifiable people."
+    },
+    {
+      "id": "R35-A003",
+      "entry": "R35-E017",
+      "type": "photo",
+      "filename": "library-dropped-kerb.jpg",
+      "caption": "Worn accessible line beside grit at the dropped kerb.",
+      "alt_text": "Wheelchair-height view of a fictional dropped kerb with grit and a narrow clean wheel line.",
+      "generation_prompt": "Fictional accessibility research photo, dropped kerb with grit and worn clean wheel line, no address or people."
+    },
+    {
+      "id": "R35-A004",
+      "entry": "R35-E022",
+      "type": "photo",
+      "filename": "interchange-whiteboard.jpg",
+      "caption": "Handwritten delay explanation in the kiosk window.",
+      "alt_text": "Clearly fictional handwritten bus-delay notice displayed beside an electronic timetable.",
+      "generation_prompt": "Clearly fictional demo bus interchange notice, handwritten route delay explanation, no real operator or council branding."
+    },
+    {
+      "id": "R35-A005",
+      "entry": "R35-E027",
+      "type": "photo",
+      "filename": "meadow-park-desire-line.jpg",
+      "caption": "Unofficial muddy route around a temporary closure.",
+      "alt_text": "Muddy desire line through grass around a fictional closed park path.",
+      "generation_prompt": "Fictional ethnographic park photo, well-worn muddy workaround around temporary path barrier, no people."
+    },
+    {
+      "id": "R35-A006",
+      "entry": "R35-E032",
+      "type": "photo",
+      "filename": "beacon-road-cycle-ending.jpg",
+      "caption": "Worn strip where cyclists leave the ending cycle lane.",
+      "alt_text": "Fictional cycle lane ending at parked cars with a worn route onto the pavement.",
+      "generation_prompt": "Fictional civic mobility observation, cycle lane terminates at parked cars, visible worn workaround, no plates."
+    },
+    {
+      "id": "R35-A007",
+      "entry": "R35-E047",
+      "type": "photo",
+      "filename": "shop-hidden-by-barrier.jpg",
+      "caption": "Cardboard arrow directing customers around construction fencing.",
+      "alt_text": "Fictional independent grocer entrance partly obscured by generic works barriers and a handmade arrow.",
+      "generation_prompt": "Fictional town-centre documentary photo, independent grocery hidden by construction barrier, handmade direction arrow, no real brands."
+    },
+    {
+      "id": "R35-A008",
+      "entry": "R35-E054",
+      "type": "photo",
+      "filename": "confirmation-screenshot-folder.jpg",
+      "caption": "A phone folder of fictional confirmation screenshots.",
+      "alt_text": "Clearly fictional collage of generic confirmation screens and demo reference numbers.",
+      "generation_prompt": "Clearly fictional demo artefact, generic confirmation screens with invented references, no real council app or branding."
+    },
+    {
+      "id": "R35-A009",
+      "entry": "R35-E057",
+      "type": "photo",
+      "filename": "station-cycle-diversion.jpg",
+      "caption": "Tight barriers on the signed cycle diversion.",
+      "alt_text": "Fictional station diversion with three barriers requiring a bicycle to be lifted.",
+      "generation_prompt": "Fictional accessibility documentary photo, station works diversion with tight staggered barriers, bicycle present, no people."
+    },
+    {
+      "id": "R35-A010",
+      "entry": "R35-E061",
+      "type": "photo",
+      "filename": "community-centre-key-rack.jpg",
+      "caption": "Colour-coded shared key rack without names visible.",
+      "alt_text": "Fictional community-centre key rack with coloured labels and all identifying text obscured.",
+      "generation_prompt": "Fictional ethnographic interior photo of shared community centre key rack, colour labels only, no names."
+    },
+    {
+      "id": "R35-A011",
+      "entry": "R35-E066",
+      "type": "photo",
+      "filename": "market-hall-skate-marks.jpg",
+      "caption": "Repeated skate use visible as wax and wheel marks.",
+      "alt_text": "Low fictional public wall with subtle skateboard wax and wheel traces; clear doorways remain unobstructed.",
+      "generation_prompt": "Fictional town public-space observation, low wall with skate marks beside old market hall, no people."
+    },
+    {
+      "id": "R35-A012",
+      "entry": "R35-E071",
+      "type": "photo",
+      "filename": "mill-street-double-name.jpg",
+      "caption": "Historic tiled street name beneath the modern sign.",
+      "alt_text": "Fictional wall showing a modern Mill Street plate above an old Malt Row tile inset.",
+      "generation_prompt": "Fictional local-history documentary photo, modern Mill Street sign above historic Malt Row tile, invented place names only."
+    },
+    {
+      "id": "R35-A013",
+      "entry": "R35-E076",
+      "type": "photo",
+      "filename": "printed-timetable-note.jpg",
+      "caption": "Printed timetable with a handwritten bay change.",
+      "alt_text": "Clearly fictional bus timetable with a taped handwritten bay-change note.",
+      "generation_prompt": "Clearly fictional demo transit artefact, printed timetable with handwritten bay change, no real logos or routes."
+    },
+    {
+      "id": "R35-A014",
+      "entry": "R35-E081",
+      "type": "photo",
+      "filename": "market-square-refill-tap.jpg",
+      "caption": "Public refill tap used between split shifts.",
+      "alt_text": "Fictional public water-refill tap beside a square bench, reusable bottle being filled; no person identifiable.",
+      "generation_prompt": "Fictional ethnographic public-space photo, water refill tap and reusable bottle, market square background, no branding."
+    },
+    {
+      "id": "R35-A015",
+      "entry": "R35-E091",
+      "type": "photo",
+      "filename": "station-planter-route.jpg",
+      "caption": "Planter interrupting the memorised tactile route.",
+      "alt_text": "Fictional station concourse from guide-dog-handler height with a planter placed beside a tactile edge.",
+      "generation_prompt": "Fictional accessibility evidence photo, station planter interrupting tactile navigation line, no people or real station branding."
+    },
+    {
+      "id": "R35-A016",
+      "entry": "R35-E096",
+      "type": "photo",
+      "filename": "allotment-tap-cable-tie.jpg",
+      "caption": "Blue cable tie holding the loose allotment tap handle.",
+      "alt_text": "Close view of a fictional allotment tap repaired informally with a blue cable tie.",
+      "generation_prompt": "Fictional ethnographic close-up, allotment water tap with blue cable-tie workaround, frost and watering can."
+    },
+    {
+      "id": "R35-A017",
+      "entry": "R35-E001",
+      "type": "photo",
+      "filename": "bus-display-six-minutes.jpg",
+      "caption": "Bus display apparently stuck at six minutes.",
+      "alt_text": "Fictional bus-stop display showing six minutes while four pairs of shoes wait below.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Fictional bus-stop display showing six minutes while four pairs of shoes wait below. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A018",
+      "entry": "R35-E003",
+      "type": "artefact",
+      "filename": "bus-stop-rumour-note.txt",
+      "caption": "Competing informal explanations for a missing service.",
+      "alt_text": "Demo field note separating roadworks rumour, driver rumour and confirmed display information.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Demo field note separating roadworks rumour, driver rumour and confirmed display information. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A019",
+      "entry": "R35-E004",
+      "type": "photo",
+      "filename": "repaired-shelter-panel.jpg",
+      "caption": "Clear replacement panel at Willowbank school gate.",
+      "alt_text": "New clear panel on a fictional school-gate shelter after rain.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: New clear panel on a fictional school-gate shelter after rain. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A020",
+      "entry": "R35-E006",
+      "type": "photo",
+      "filename": "market-square-night-workers.jpg",
+      "caption": "Overlapping late-shift routines in Market Square.",
+      "alt_text": "Distant unidentifiable bakery worker, cleaners and hospital staff in a fictional square at night.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Distant unidentifiable bakery worker, cleaners and hospital staff in a fictional square at night. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A021",
+      "entry": "R35-E011",
+      "type": "photo",
+      "filename": "market-pears-and-empty-unit.jpg",
+      "caption": "Market relationship beside a long-empty shop.",
+      "alt_text": "Fruit stall with bruised pears set aside against a fictional boarded shopfront.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Fruit stall with bruised pears set aside against a fictional boarded shopfront. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A022",
+      "entry": "R35-E013",
+      "type": "photo",
+      "filename": "library-friday-table.jpg",
+      "caption": "Northgate Library's informal Friday table.",
+      "alt_text": "Fictional library table with newspapers, crossword clippings and tea; no people identifiable.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Fictional library table with newspapers, crossword clippings and tea; no people identifiable. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A023",
+      "entry": "R35-E016",
+      "type": "photo",
+      "filename": "accessible-bay-hatched-area.jpg",
+      "caption": "Delivery van occupying the transfer space beside an accessible bay.",
+      "alt_text": "Generic van wheel over a hatched accessible transfer zone, no plate.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Generic van wheel over a hatched accessible transfer zone, no plate. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A024",
+      "entry": "R35-E019",
+      "type": "photo",
+      "filename": "repainted-accessible-bay.jpg",
+      "caption": "New bay markings making access expectations legible.",
+      "alt_text": "Freshly painted fictional accessible parking markings with empty transfer zone.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Freshly painted fictional accessible parking markings with empty transfer zone. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A025",
+      "entry": "R35-E021",
+      "type": "photo",
+      "filename": "missed-connection-platform.jpg",
+      "caption": "Empty connecting bay after a delayed arrival.",
+      "alt_text": "Fictional bus interchange bay just after a connecting service has departed.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Fictional bus interchange bay just after a connecting service has departed. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A026",
+      "entry": "R35-E023",
+      "type": "artefact",
+      "filename": "parent-bus-text-thread.txt",
+      "caption": "Two parents' informal bus-information exchange.",
+      "alt_text": "Clearly fictional anonymised text exchange about whether an early bus has departed.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Clearly fictional anonymised text exchange about whether an early bus has departed. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A027",
+      "entry": "R35-E026",
+      "type": "photo",
+      "filename": "loose-meadow-park-bench.jpg",
+      "caption": "Loose bench slat on Harold's daily circuit.",
+      "alt_text": "Close view of a loose slat on a fictional park bench beside frosty grass.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Close view of a loose slat on a fictional park bench beside frosty grass. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A028",
+      "entry": "R35-E029",
+      "type": "photo",
+      "filename": "visible-bench-repair.jpg",
+      "caption": "Contrasting new timber marking a completed repair.",
+      "alt_text": "Fictional park bench with one clearly newer replacement slat.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Fictional park bench with one clearly newer replacement slat. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A029",
+      "entry": "R35-E033",
+      "type": "photo",
+      "filename": "foundry-evening-light.jpg",
+      "caption": "Several generations sharing the newly lit edge of The Foundry.",
+      "alt_text": "Fictional public square at dusk with small unidentifiable groups and improved lighting.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Fictional public square at dusk with small unidentifiable groups and improved lighting. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A030",
+      "entry": "R35-E038",
+      "type": "photo",
+      "filename": "southbank-light-timer-stick.jpg",
+      "caption": "Local workaround for the five-a-side floodlight timer.",
+      "alt_text": "Generic sports-cage fence and a safe fictional reset tool stored nearby.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Generic sports-cage fence and a safe fictional reset tool stored nearby. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A031",
+      "entry": "R35-E041",
+      "type": "photo",
+      "filename": "pharmacy-rest-bench.jpg",
+      "caption": "Bench anchoring Mae's caring journey.",
+      "alt_text": "Fictional pharmacy exterior bench with walking aid nearby and no person visible.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Fictional pharmacy exterior bench with walking aid nearby and no person visible. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A032",
+      "entry": "R35-E043",
+      "type": "photo",
+      "filename": "community-centre-door-chair.jpg",
+      "caption": "Chair kept near the Willowbank Community Centre entrance.",
+      "alt_text": "Welcoming fictional community-centre entrance with a movable chair near the door.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Welcoming fictional community-centre entrance with a movable chair near the door. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A033",
+      "entry": "R35-E046",
+      "type": "photo",
+      "filename": "grocer-rear-lane-turn.jpg",
+      "caption": "Tight delivery route behind Vale & Finch.",
+      "alt_text": "Generic fruit crates and small delivery van navigating a fictional rear lane.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Generic fruit crates and small delivery van navigating a fictional rear lane. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A034",
+      "entry": "R35-E051",
+      "type": "photo",
+      "filename": "library-computer-radiator.jpg",
+      "caption": "Beth's familiar assisted-digital-access workstation.",
+      "alt_text": "Fictional public-library computer beside radiator with generic portal screen blurred.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Fictional public-library computer beside radiator with generic portal screen blurred. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A035",
+      "entry": "R35-E058",
+      "type": "artefact",
+      "filename": "regeneration-rent-question.txt",
+      "caption": "A design-event note adding tenure and rent to the public-realm discussion.",
+      "alt_text": "Clearly fictional caption card asking who can remain after regeneration.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Clearly fictional caption card asking who can remain after regeneration. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A036",
+      "entry": "R35-E063",
+      "type": "photo",
+      "filename": "community-network-edge-map.jpg",
+      "caption": "Faye's map of strong links and unconnected households.",
+      "alt_text": "Abstract fictional neighbourhood network map with no names or addresses.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Abstract fictional neighbourhood network map with no names or addresses. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A037",
+      "entry": "R35-E068",
+      "type": "photo",
+      "filename": "bench-camera-sightline.jpg",
+      "caption": "Seating experienced differently under new cameras.",
+      "alt_text": "Fictional public benches and visible generic security camera with no people.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Fictional public benches and visible generic security camera with no people. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A038",
+      "entry": "R35-E073",
+      "type": "artefact",
+      "filename": "market-hall-archive-gap.txt",
+      "caption": "Exhibition note recording a missing strand of work history.",
+      "alt_text": "Clearly fictional local-history annotation about undocumented garment workshops.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Clearly fictional local-history annotation about undocumented garment workshops. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A039",
+      "entry": "R35-E083",
+      "type": "photo",
+      "filename": "free-poetry-night.jpg",
+      "caption": "Free event changing Inez's social map of Station Quarter.",
+      "alt_text": "Fictional library event room with poetry-night poster and empty seats, no real branding.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Fictional library event room with poetry-night poster and empty seats, no real branding. No real council branding, personal data, readable registration plates or real addresses."
+    },
+    {
+      "id": "R35-A040",
+      "entry": "R35-E099",
+      "type": "photo",
+      "filename": "allotment-herb-bunches.jpg",
+      "caption": "Hilltop herbs shared through an Old Market shop.",
+      "alt_text": "Small bunches of herbs with free fictional labels on an independent grocer counter.",
+      "generation_prompt": "Clearly fictional Citizen Centric demonstration artefact: Small bunches of herbs with free fictional labels on an independent grocer counter. No real council branding, personal data, readable registration plates or real addresses."
+    }
+  ],
+  "codebook": {
+    "Everyday Routines": [
+      "Commuting",
+      "School run",
+      "Shopping",
+      "Caring",
+      "Leisure",
+      "Workarounds"
+    ],
+    "Place & Belonging": [
+      "Attachment",
+      "Local identity",
+      "Memory",
+      "Pride",
+      "Loss",
+      "Familiarity",
+      "Territoriality"
+    ],
+    "Mobility": [
+      "Bus reliability",
+      "Walking",
+      "Cycling",
+      "Parking",
+      "Traffic",
+      "Accessibility",
+      "Journey planning",
+      "Travel adaptation",
+      "Safety"
+    ],
+    "Public Space": [
+      "Informal social life",
+      "Comfort",
+      "Safety",
+      "Seating",
+      "Lighting",
+      "Cleanliness",
+      "Children in public space"
+    ],
+    "Town Centre": [
+      "Empty shops",
+      "Independent business",
+      "Regeneration",
+      "Construction disruption",
+      "Evening economy",
+      "Market Square",
+      "Changing footfall"
+    ],
+    "Environment": [
+      "Parks",
+      "Green space",
+      "Litter",
+      "Noise",
+      "Air quality",
+      "Maintenance",
+      "Seasonal change"
+    ],
+    "Housing & Development": [
+      "Affordability",
+      "Renting",
+      "Development",
+      "Density",
+      "Neighbourhood change",
+      "Infrastructure pressure"
+    ],
+    "Community": [
+      "Neighbour relations",
+      "Informal support",
+      "Community venues",
+      "Isolation",
+      "Local networks",
+      "Intergenerational contact",
+      "Informal social life",
+      "Neighbour discussion",
+      "Disagreement"
+    ],
+    "Council in Everyday Life": [
+      "Visible council action",
+      "Invisible council",
+      "Communication",
+      "Trust",
+      "Distrust",
+      "Reporting",
+      "Response",
+      "Consultation",
+      "Consultation fatigue"
+    ],
+    "Inequality & Inclusion": [
+      "Disability access",
+      "Financial constraint",
+      "Digital exclusion",
+      "Spatial inequality",
+      "Unequal service experience"
+    ],
+    "Futures": [
+      "Optimism",
+      "Pessimism",
+      "Fear of change",
+      "Desired change",
+      "Trade-offs"
+    ],
+    "Interpreting services": [
+      "Operational complexity"
+    ]
+  },
+  "memos": [
+    {
+      "id": "R35-M01",
+      "title": "Everyday adaptations hide service failure",
+      "text": "Residents preserve routines by leaving earlier, changing routes, borrowing access, carrying equipment or relying on others. Successful arrival can therefore mask unreliable infrastructure."
+    },
+    {
+      "id": "R35-M02",
+      "title": "Familiar public spaces reduce cognitive load",
+      "text": "Repeated use makes benches, crossings, shop counters and library desks part of tacit navigation. Change is experienced through the loss of predictability as much as through physical redesign."
+    },
+    {
+      "id": "R35-M03",
+      "title": "Maintenance signifies institutional care",
+      "text": "Small acts—cleared leaves, repaired lights, legible displays—are interpreted as evidence that a place and its users are noticed. Their absence accumulates symbolically."
+    },
+    {
+      "id": "R35-M04",
+      "title": "Accessibility is relational",
+      "text": "A compliant route becomes inaccessible when parking, deliveries, construction or inconsistent information interrupt the whole journey. Staff and strangers often bridge technical gaps."
+    },
+    {
+      "id": "R35-M05",
+      "title": "Regeneration is hope plus inconvenience",
+      "text": "Participants can welcome long-term investment while bearing noise, detours, lost footfall and uncertainty. Support and criticism coexist within the same accounts."
+    },
+    {
+      "id": "R35-M06",
+      "title": "Local knowledge travels through ordinary talk",
+      "text": "Bus queues, school gates, shop counters and community venues circulate practical information faster than formal channels, but also transmit rumours and uneven access."
+    },
+    {
+      "id": "R35-M07",
+      "title": "Minor frustrations accumulate into distrust",
+      "text": "No single delayed bus, broken light or incomplete reply determines trust. Repetition teaches residents what they expect institutions to notice and whether reporting feels worthwhile."
+    },
+    {
+      "id": "R35-M08",
+      "title": "Green space is social infrastructure",
+      "text": "Meadow Park and Riverside Walk support weak ties, caring routines, exercise, memory and informal surveillance. Their value exceeds recreation provision."
+    },
+    {
+      "id": "R35-M09",
+      "title": "Civic trust is shaped by mundane encounters",
+      "text": "Participants infer council competence through bins, crossings, signs, parking, staff interactions and response loops rather than through strategy documents alone."
+    },
+    {
+      "id": "R35-M10",
+      "title": "Rivermere contains several towns",
+      "text": "Neighbourhood, income, mobility and caring responsibilities produce different functional geographies. A single town-centre narrative does not describe Southbank, Hilltop or Eastfield experience."
+    },
+    {
+      "id": "R35-M11",
+      "title": "Informal support is valuable but unequal",
+      "text": "Neighbours and community workers solve gaps, yet access depends on knowing whom to ask and on unpaid labour. Celebrating resilience can obscure exclusion and exhaustion."
+    },
+    {
+      "id": "R35-M12",
+      "title": "Visible action changes interpretation",
+      "text": "When participants observe a repair or altered service following repeated concern, the meaning exceeds the practical fix: it interrupts expectations that reporting disappears into an institution."
+    }
+  ]
+}

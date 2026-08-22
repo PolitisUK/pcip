@@ -1,0 +1,85 @@
+{
+  "fictional_demo": true,
+  "content_only": true,
+  "implementation_note": "These files contain authored research content. They are not database dumps and contain no credentials, tokens, real addresses or real authority documents.",
+  "chapel_lane": {
+    "participants": 14,
+    "prompts": 15,
+    "entries": 120,
+    "media_manifest_items": 45,
+    "code_families": 13,
+    "codes": 78,
+    "coding_assignments": 544,
+    "memos": 14
+  },
+  "rivermere_2035": {
+    "participants": 20,
+    "prompts": 16,
+    "entries": 100,
+    "media_manifest_items": 40,
+    "code_families": 12,
+    "codes": 78,
+    "coding_assignments": 400,
+    "memos": 12
+  },
+  "methodological_integrity_audit": {
+    "individual_participant_authorship": true,
+    "proxy_research_submissions": 0,
+    "pooled_private_complaint_records": 0,
+    "researcher_directed_site_monitoring": 0,
+    "participant_entries_with_forbidden_researcher_register": 0,
+    "interpretation_separated_into_researcher_memos": true
+  },
+  "chapel_lane_longitudinal_verification": {
+    "noticing_and_uncertainty": [
+      "CL-E001",
+      "CL-E005",
+      "CL-E012"
+    ],
+    "neighbours_compare_notes": [
+      "CL-E013",
+      "CL-E014",
+      "CL-E023"
+    ],
+    "told_to_report_to_get_action": [
+      "CL-E025",
+      "CL-E026",
+      "CL-E035"
+    ],
+    "active_evidence_work": [
+      "CL-E037",
+      "CL-E038",
+      "CL-E041"
+    ],
+    "acknowledgement_without_visible_change": [
+      "CL-E049",
+      "CL-E051",
+      "CL-E053"
+    ],
+    "frustration_and_uncertainty": [
+      "CL-E061",
+      "CL-E064",
+      "CL-E072"
+    ],
+    "reporting_fatigue": [
+      "CL-E073",
+      "CL-E075",
+      "CL-E080"
+    ],
+    "stopped_reporting": [
+      "CL-E085",
+      "CL-E086",
+      "CL-E096"
+    ],
+    "issue_remains_and_residents_adapt": [
+      "CL-E097",
+      "CL-E100",
+      "CL-E108"
+    ],
+    "retrospective_confirmation": [
+      "CL-E109",
+      "CL-E117",
+      "CL-E120"
+    ]
+  }
+}

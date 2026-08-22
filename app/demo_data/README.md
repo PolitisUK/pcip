@@ -1,25 +1,97 @@
 # Rivermere fictional demonstration data
 
-This package defines two repeatable, explicitly fictional ethnographic datasets:
+The versioned files in `app/demo_data/content/` are the authored Rivermere v1.1
+source pack. They contain two explicitly fictional datasets:
 
 - `RIV-2035` — **Rivermere 2035: Everyday Life and the Future of Our Town**
-- `RIV-CHAPEL` — **Chapel Lane: Living With an Unresolved Planning Breach**
+- `RIV-CHAPEL-LANE` — **Chapel Lane: Living With an Unresolved Planning Breach**
 
-The command in `scripts/seed_rivermere_demo.py` refuses non-development environments, non-SQLite databases, non-local storage, and database or storage paths outside the current checkout. It also requires an explicit confirmation flag.
+The importer uses the existing Organisation → Project → Study → Activity →
+Participant → ActivityResponse → EvidenceFile structure. It stores the
+authored hierarchical code labels as response-level coding assignments because
+the platform has no passage-level coding model. It maps authored analytical
+memos to the existing researcher-authored `ResearchTheme` model, never to an
+AI suggestion. The Analysis screen labels them as researcher-authored memos.
 
-The seed uses the platform's native Organisation → Project → Study → Activity → Participant → Response → Evidence structure. The current schema has no hierarchical codebook, coded-segment or memo table. Deterministic researcher-demo code assignments therefore live in each response's flexible JSON payload, while `project_analysis_manifest()` exposes the codebook and memo set for verification. No AI analysis job is fabricated.
+Media are safe JSON manifest attachments, not claimed photographs or external
+URLs. Every manifest is linked to its source entry and is available through the
+normal evidence route. No generated image, official council document or real
+case file is represented.
 
-The four JPEG seed assets are synthetic, non-identifying scenes generated for this fictional dataset. Remaining evidence rows are unique text artefacts explicitly marked as fictional demonstration material and stored through the configured local evidence backend.
+The source safeguards individual authorship and consent: no proxy submissions,
+no pooled complaint material, no sharing of another participant's reference,
+and no research-directed monitoring, photography or reporting. Chapel Lane
+accounts describe historical individual civic actions only; those actions are
+separate from the research submission.
 
-Create both projects:
+## Local development
+
+The command refuses a non-local database, non-local storage and any environment
+other than development/test unless separately confirmed. It also checks the
+requested environment and organisation slug before writing.
 
 ```bash
-PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py --confirm-local-development
+PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
+  --environment development \
+  --organisation-slug rivermere-town-council \
+  --confirm-local-development
 ```
 
-Remove only one project:
+Verify without writing:
 
 ```bash
-PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py --confirm-local-development --remove everyday-life
-PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py --confirm-local-development --remove chapel-lane
+PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
+  --environment development \
+  --organisation-slug rivermere-town-council \
+  --verify
+```
+
+Remove exactly one project:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
+  --environment development \
+  --organisation-slug rivermere-town-council \
+  --confirm-local-development --remove everyday-life
+
+PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
+  --environment development \
+  --organisation-slug rivermere-town-council \
+  --confirm-local-development --remove chapel-lane
+```
+
+On a local database, the importer also removes only the exact pre-v1.1 bundled
+Rivermere projects when they are present. If that legacy organisation contains
+unrelated records, it is retained and those records are not changed.
+
+## Staging and production
+
+Staging is an explicit non-local operation and assumes the deployment has its
+own `ENVIRONMENT`, database and storage configuration:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
+  --environment staging \
+  --organisation-slug rivermere-town-council \
+  --confirm-nonlocal-demo
+```
+
+Verify staging without writing:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
+  --environment staging \
+  --organisation-slug rivermere-town-council \
+  --verify
+```
+
+Production is disabled by default. The organisation and a Rivermere demo
+researcher must already exist; this command is deliberately not run by the
+importer or CI:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/seed_rivermere_demo.py \
+  --environment production \
+  --organisation-slug rivermere-town-council \
+  --confirm-nonlocal-demo --confirm-production-demo
 ```
