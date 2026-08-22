@@ -164,10 +164,10 @@ jobs:
           -n "${{ steps.resources.outputs.app }}"
           --settings RUN_RIVERMERE_DEMO_SEED=false
       - name: Restart after clearing the Rivermere startup runner
-        if: ${{ success() && inputs.seed_rivermere_demo }}
+        if: ${{ always() && inputs.seed_rivermere_demo }}
         run: az webapp restart -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ steps.resources.outputs.app }}"
       - name: Verify readiness after clearing the Rivermere startup runner
-        if: ${{ success() && inputs.seed_rivermere_demo }}
+        if: ${{ always() && inputs.seed_rivermere_demo }}
         shell: bash
         run: |
           APP_HOST=$(az webapp show \
