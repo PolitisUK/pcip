@@ -10,10 +10,12 @@
 </header>
 <main id="main-content" tabindex="-1" class="public-section">
   <article class="public-container legal-document">
-    <p class="public-kicker">Citizen Centric · Version {{ legal_version }} · Effective {{ legal_effective_date }}</p>
+    <p class="public-kicker">Citizen Centric · {{ document.title }} · Version {{ legal_version }} · Effective {{ legal_effective_date }}</p>
     <h1>{{ document.title }}</h1>
     <p class="public-lead">{{ document.summary }}</p>
-    {% for section in document.sections %}<section class="legal-document-section"><h2>{{ section.heading }}</h2>{% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}{% if section.bullets %}<ul>{% for bullet in section.bullets %}<li>{{ bullet }}</li>{% endfor %}</ul>{% endif %}</section>{% endfor %}
+    <nav class="legal-toc" aria-label="Contents"><h2>Contents</h2><ol>{% for section in document.sections %}<li class="legal-toc-level-{{ section.level }}"><a href="#{{ section.anchor }}">{{ section.heading }}</a></li>{% endfor %}</ol></nav>
+    {% for section in document.sections %}<section class="legal-document-section" aria-labelledby="{{ section.anchor }}">{% if section.level == 3 %}<h3 id="{{ section.anchor }}">{{ section.heading }}</h3>{% else %}<h2 id="{{ section.anchor }}">{{ section.heading }}</h2>{% endif %}{% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}{% if section.bullets %}<ul>{% for bullet in section.bullets %}<li>{{ bullet }}</li>{% endfor %}</ul>{% endif %}</section>{% endfor %}
+    <section class="legal-document-section legal-document-links"><h2>Related legal information</h2><p><a href="/legal">Return to the Legal Centre</a>. For questions about a particular study, use the contact details in that study's participant information.</p><p>Politis Ltd · Company No. 13661766 · ICO {{ ico_reference|default('ZB738312') }} · <a href="mailto:info@politisconsulting.co.uk">info@politisconsulting.co.uk</a></p></section>
   </article>
 </main>
 {% endblock %}

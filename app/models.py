@@ -205,6 +205,13 @@ class StudyGovernance(Base):
     consent_text_reference: Mapped[str] = mapped_column(String(500), default="")
     consent_text_version: Mapped[str] = mapped_column(String(80), default="")
     consent_text_effective_date: Mapped[str] = mapped_column(String(30), default="")
+    # The current immutable, controller-approved document bundle.  The
+    # governance fields above remain for launch-readiness display and legacy
+    # records; invitations point at a bundle so later edits cannot rewrite
+    # what a participant saw.
+    current_consent_bundle_id: Mapped[int | None] = mapped_column(
+        ForeignKey("study_consent_bundles.id"), nullable=True, index=True
+    )
     retention_description: Mapped[str] = mapped_column(Text, default="")
     deletion_retention_exception: Mapped[str] = mapped_column(Text, default="")
     withdrawal_process_defined: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -218,6 +225,58 @@ class StudyGovernance(Base):
     security_considerations: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class StudyConsentDocument(Base):
+    """One immutable study-specific participant-facing document version."""
+
+    __tablename__ = "study_consent_documents"
+    __table_args__ = (
+        UniqueConstraint("study_id", "document_type", "content_sha256", name="uq_study_consent_document_content"),
+        Index("ix_study_consent_documents_scope", "organisation_id", "study_id", "document_type"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    document_type: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(200))
+    version: Mapped[str] = mapped_column(String(80))
+    reference: Mapped[str] = mapped_column(String(500))
+    effective_date: Mapped[str] = mapped_column(String(30))
+    body: Mapped[str] = mapped_column(Text)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class StudyConsentBundle(Base):
+    """Immutable three-document binding used for one study invitation."""
+
+    __tablename__ = "study_consent_bundles"
+    __table_args__ = (
+        UniqueConstraint("study_id", "bundle_sha256", name="uq_study_consent_bundle_content"),
+        Index("ix_study_consent_bundles_scope", "organisation_id", "study_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    bundle_sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class StudyConsentBundleDocument(Base):
+    """The explicit document-version membership of an immutable bundle."""
+
+    __tablename__ = "study_consent_bundle_documents"
+    __table_args__ = (
+        UniqueConstraint("bundle_id", "document_type", name="uq_study_consent_bundle_document_type"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bundle_id: Mapped[int] = mapped_column(ForeignKey("study_consent_bundles.id"), index=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("study_consent_documents.id"), index=True)
+    document_type: Mapped[str] = mapped_column(String(40))
 
 
 class StudyMethodologyConfiguration(Base):
@@ -366,6 +425,9 @@ class ParticipantInvitation(Base):
     consent_text_reference: Mapped[str] = mapped_column(String(500), default="")
     consent_text_version: Mapped[str] = mapped_column(String(80), default="")
     consent_text_effective_date: Mapped[str] = mapped_column(String(30), default="")
+    consent_bundle_id: Mapped[int | None] = mapped_column(
+        ForeignKey("study_consent_bundles.id"), nullable=True, index=True
+    )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     invited_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

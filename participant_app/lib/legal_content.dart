@@ -1,35 +1,10 @@
-/// Controlled, participant-facing platform legal content.
-///
-/// Study-specific information, privacy information, legal bases and retention
-/// periods remain the controller's responsibility and must be supplied for the
-/// relevant study. They are deliberately not inferred here.
-class LegalDocument {
-  const LegalDocument({
-    required this.id,
-    required this.title,
-    required this.summary,
-    required this.sections,
-  });
+// Controlled, participant-facing platform legal content.
+// Study-specific information, privacy information, legal bases and retention
+// periods remain the controller's responsibility and must be supplied for the
+// relevant study. They are deliberately not inferred here.
+import 'legal_content.generated.dart';
 
-  final String id;
-  final String title;
-  final String summary;
-  final List<LegalSection> sections;
-}
-
-class LegalSection {
-  const LegalSection(this.heading, this.paragraphs);
-
-  final String heading;
-  final List<String> paragraphs;
-}
-
-const legalPackVersion = '1.1';
-const legalPackEffectiveDate = '18 August 2026';
-const legalContactEmail = 'info@politisconsulting.co.uk';
-const legalCompanyName = 'Politis Ltd';
-const legalCompanyNumber = '13661766';
-const legalIcoReference = 'ZB738312';
+export 'legal_content.generated.dart';
 
 const participantInformationDocument = LegalDocument(
   id: 'participant-information',
@@ -70,30 +45,6 @@ const privacyAtAGlanceDocument = LegalDocument(
   ],
 );
 
-const privacyNoticeDocument = LegalDocument(
-  id: 'privacy',
-  title: 'Privacy notice',
-  summary:
-      'How Citizen Centric supports research organisations and participants.',
-  sections: [
-    LegalSection('Our role', [
-      'Citizen Centric is provided by Politis Ltd. In many studies, the research organisation is the controller for Study Data and Politis Ltd processes that data on its documented instructions. The study-specific privacy information explains the arrangement for your study.',
-      'Politis Ltd is registered in England and Wales. Registered office: The Old Courthouse, Orsett Road, Grays, Essex, England, RM17 5DD. Company number 13661766. ICO registration reference ZB738312.',
-    ]),
-    LegalSection('Keeping information', [
-      'Information is kept only for as long as necessary for its purpose. Study Data follows the controller-approved retention period documented for the study. Where Politis Ltd acts as processor, it follows documented retention and deletion instructions, subject to lawful legal, security or accountability exceptions.',
-      'When deletion is confirmed, identifiable active study data is removed from active systems where technically and lawfully possible. Protected production backup copies expire after up to 14 days and are not used for ordinary research access.',
-      'We do not use a single arbitrary retention period for every study.',
-    ]),
-    LegalSection('Your rights and requests', [
-      'You can use the app to withdraw from a study, withdraw and delete active study data, or delete your Citizen Centric account for this organisation. These actions are sent to the server; they are not local-only actions. The app will not say deletion is complete until the service confirms active-system deletion.',
-    ]),
-    LegalSection('Where information is processed', [
-      'The approved platform policy is to host and process personal data in the UK and/or EU/EEA. Your study information should identify any study-specific arrangements that apply.',
-    ]),
-  ],
-);
-
 const termsDocument = LegalDocument(
   id: 'terms',
   title: 'Terms of use',
@@ -128,21 +79,6 @@ const cookiesDocument = LegalDocument(
   ],
 );
 
-const accessibilityDocument = LegalDocument(
-  id: 'accessibility',
-  title: 'Accessibility',
-  summary: 'Our approach to making participation usable for more people.',
-  sections: [
-    LegalSection('Our approach', [
-      'Citizen Centric is designed with clear labels, meaningful status messages, scalable text, accessible touch targets and controls that do not rely on colour alone. We continue to test with assistive technologies and real devices.',
-      'We do not claim a certification or full assistive-technology conformance that has not been independently verified.',
-    ]),
-    LegalSection('Getting help', [
-      'If you experience a barrier, contact your research team or email info@politisconsulting.co.uk with enough detail for us to understand the problem.',
-    ]),
-  ],
-);
-
 const acceptableUseDocument = LegalDocument(
   id: 'acceptable-use',
   title: 'Acceptable use',
@@ -153,35 +89,6 @@ const acceptableUseDocument = LegalDocument(
     ]),
     LegalSection('Please do not', [
       'Do not try to access another participant’s information, bypass the app’s security, upload malicious files, or use the service to harass or harm anyone.',
-    ]),
-  ],
-);
-
-const consentInformationDocument = LegalDocument(
-  id: 'consent-information',
-  title: 'Consent information',
-  summary: 'How consent works in this participant experience.',
-  sections: [
-    LegalSection('Research participation consent', [
-      'Before taking part, you are asked to confirm that you understand and agree to participate. This is research participation consent. It is distinct from the data-protection lawful basis selected by the research organisation.',
-      'Citizen Centric records consent only through the study’s server-side consent process. The study-specific consent wording, version and any required statements remain controlled by the research organisation.',
-    ]),
-    LegalSection('Changing your mind', [
-      'You can ask to withdraw later. The consequences are explained before you send the request and are handled according to the study’s information and server-authorised process.',
-    ]),
-  ],
-);
-
-const dataRightsDocument = LegalDocument(
-  id: 'data-rights',
-  title: 'Your data rights',
-  summary: 'How to ask for help with your information.',
-  sections: [
-    LegalSection('Requests in the app', [
-      'The Privacy choices area lets you withdraw from a study, withdraw and delete active study data, or delete your Citizen Centric account for this organisation. A deletion request can take a short time and the app will not promise completion until the service confirms it.',
-    ]),
-    LegalSection('Other requests', [
-      'For access, correction or other data-protection requests, contact the research organisation named in your study information. You can also contact Politis Ltd at info@politisconsulting.co.uk about the Citizen Centric service.',
     ]),
   ],
 );
@@ -198,15 +105,4 @@ const legalInformationDocument = LegalDocument(
   ],
 );
 
-const participantLegalDocuments = [
-  privacyAtAGlanceDocument,
-  privacyNoticeDocument,
-  participantInformationDocument,
-  consentInformationDocument,
-  termsDocument,
-  cookiesDocument,
-  accessibilityDocument,
-  acceptableUseDocument,
-  dataRightsDocument,
-  legalInformationDocument,
-];
+const participantLegalDocuments = platformLegalDocuments;

@@ -261,7 +261,7 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
 def test_public_legal_publication_uses_only_source_complete_policy_text():
     from app.legal_content import public_legal_document
 
-    for legal_slug in ('privacy', 'terms', 'cookies', 'accessibility', 'acceptable-use', 'legal'):
+    for legal_slug in ('privacy', 'data-rights', 'accessibility', 'consent'):
         source_document = public_legal_document(legal_slug)
         assert source_document is not None
         assert source_document.is_published is True
@@ -276,30 +276,21 @@ def test_public_legal_publication_uses_only_source_complete_policy_text():
 
     with client:
         client.cookies.clear()
-        terms = client.get('/terms')
-        assert terms.status_code == 200
-        assert 'Version 1.0' in terms.text
-        assert 'Effective 15 August 2026' in terms.text
-        assert 'invitation token/code rather than email/password sign-in' in terms.text
-        assert 'Participant material is not used to train public or shared foundation models.' in terms.text
-        assert 'info@politisconsulting.co.uk' in terms.text
-
-        support = client.get('/support')
-        assert support.status_code == 200
-        assert 'Citizen Centric support' in support.text
-        assert 'info@politisconsulting.co.uk' in support.text
-
-        assert client.get('/legal-information', follow_redirects=False).headers['location'] == '/legal'
+        legal_centre = client.get('/legal')
+        assert legal_centre.status_code == 200
+        assert 'Legal Centre' in legal_centre.text
         for path, title in {
-            '/privacy': 'Privacy Notice',
-            '/cookies': 'Cookie and Similar Technologies Policy',
-            '/accessibility': 'Accessibility Statement',
-            '/acceptable-use': 'Acceptable Use Policy',
-            '/legal': 'Legal Information',
+            '/privacy': 'Platform Privacy Notice',
+            '/data-rights': 'Data Rights Policy',
+            '/accessibility': 'Accessibility Policy',
+            '/consent': 'Consent Notice',
         }.items():
             response = client.get(path)
             assert response.status_code == 200
             assert title in response.text
+            assert 'Version 1.1' in response.text
+            assert 'Effective 18 August 2026' in response.text
+            assert 'aria-label="Contents"' in response.text
             assert 'CLIENT INPUT REQUIRED' not in response.text
 
 
@@ -320,28 +311,22 @@ def test_customer_agreements_are_owner_admin_only_and_source_backed():
 
 
 def test_legal_inventory_and_public_routes_are_source_backed_and_placeholder_free():
-    inventory = json.loads(Path('docs/legal_document_inventory.json').read_text(encoding='utf-8'))
+    inventory = json.loads(Path('docs/participant_legal_document_inventory_v1_1.json').read_text(encoding='utf-8'))
     assert inventory['legal_pack'] == {
-        'version': '1.0',
-        'effective_date': '2026-08-15',
-        'canonical_directory': '/Users/politisltd/Desktop/Politis/Citizen_Centric_Legal_Pack_v1.0_2026-08-15',
+        'version': '1.1',
+        'effective_date': '2026-08-18',
+        'operator': 'Politis Ltd',
     }
     by_id = {item['id']: item for item in inventory['documents']}
-    assert {'privacy', 'terms', 'cookies', 'accessibility', 'acceptable-use', 'legal'} <= by_id.keys()
-    source_files = inventory['source_files']
-    assert len(source_files) == 23
-    assert {item['selected'] for item in source_files if item['selected']} == set(by_id)
-    assert any(item['classification'] == 'internal_pack_metadata' for item in source_files)
+    assert set(by_id) == {'privacy', 'data-rights', 'accessibility', 'consent'}
 
     public_routes = {
-        'privacy': 'This Privacy Notice explains how personal data is handled',
-        'terms': 'These Terms govern use of the participant-facing',
-        'cookies': 'This policy explains how cookies and similar technologies may be used',
-        'accessibility': 'Politis Ltd wants Citizen Centric to be usable',
-        'acceptable-use': 'This Acceptable Use Policy',
-        'legal': 'These disclosures identify the legal operator',
+        'privacy': 'This is the platform-level privacy notice.',
+        'data-rights': 'This policy explains how individuals may exercise rights',
+        'accessibility': 'This policy applies to the Citizen Centric participant mobile application',
+        'consent': 'This notice applies to people invited to take part in research',
     }
-    placeholder_markers = ('CLIENT INPUT REQUIRED', '[confirm', 'example.com', 'TODO', 'TBC')
+    placeholder_markers = ('CLIENT INPUT REQUIRED', '[confirm', 'example.com', 'TODO', 'TBC', 'Clause draft', 'Optional additions', '[Insert Date]', '[1.0]', 'Greys, Essex')
     with client:
         client.cookies.clear()
         for document_id, required_source_text in public_routes.items():
@@ -633,12 +618,15 @@ def test_study_governance_blocks_live_until_controller_decisions_are_recorded():
                 'participant_information_reference': 'PI-GOV-1',
                 'participant_information_version': '1.0',
                 'participant_information_effective_date': '15 August 2026',
+                'participant_information_body': 'Synthetic participant information for this governed study.',
                 'privacy_notice_reference': 'PN-GOV-1',
                 'privacy_notice_version': '1.0',
                 'privacy_notice_effective_date': '15 August 2026',
+                'privacy_notice_body': 'Synthetic study privacy notice for this governed study.',
                 'consent_text_reference': 'CT-GOV-1',
                 'consent_text_version': '1.0',
                 'consent_text_effective_date': '15 August 2026',
+                'consent_text_body': 'I consent to take part in this synthetic governed study.',
                     'retention_description': 'Controller-approved study retention schedule',
                     'deletion_retention_exception': 'None',
                 'withdrawal_process_defined': 'true',
@@ -692,12 +680,15 @@ def _controller_governance_payload(version: str = '1.0') -> dict[str, str]:
         'participant_information_reference': f'PI-{version}',
         'participant_information_version': version,
         'participant_information_effective_date': '15 August 2026',
+        'participant_information_body': f'Participant information for the synthetic study, version {version}.',
         'privacy_notice_reference': f'PN-{version}',
         'privacy_notice_version': version,
         'privacy_notice_effective_date': '15 August 2026',
+        'privacy_notice_body': f'Study privacy notice for the synthetic study, version {version}.',
         'consent_text_reference': f'CT-{version}',
         'consent_text_version': version,
         'consent_text_effective_date': '15 August 2026',
+        'consent_text_body': f'I consent to take part in the synthetic study, version {version}.',
         'retention_description': 'Controller-approved study retention schedule',
         'deletion_retention_exception': 'None',
         'withdrawal_process_defined': 'true',
@@ -714,14 +705,29 @@ def _controller_governance_payload(version: str = '1.0') -> dict[str, str]:
 def test_participant_api_exposes_scoped_document_references_and_snapshots_consent_evidence():
     from app.models import ParticipantInvitation
 
-    token, participant_id, study_id = _create_participant_invitation_for_api('consent-documents')
     with client:
+        auth()
+        project = post_with_csrf('/projects', data={'title': 'Bound consent project', 'code': unique_value('BCP').upper(), 'description': '', 'status_value': 'draft'}, follow_redirects=False)
+        project_id = int(project.headers['location'].rsplit('/', 1)[-1])
+        created = post_with_csrf(f'/projects/{project_id}/studies', data={'title': 'Bound consent study', 'code': unique_value('BCS').upper(), 'description': '', 'methodology': 'diary', 'status_value': 'draft'}, follow_redirects=False)
+        study_id = int(created.headers['location'].rsplit('/', 1)[-1])
         configured = post_with_csrf(
             f'/studies/{study_id}/governance',
             data=_controller_governance_payload(),
             follow_redirects=False,
         )
         assert configured.status_code == 303
+    token, participant_id, _ = _create_participant_invitation_for_api('consent-documents', study_id=study_id)
+    with client:
+        landing = client.get(f'/join-study?token={token}', follow_redirects=False)
+        assert landing.status_code == 303
+        review = client.get('/join-study')
+        assert review.status_code == 200
+        assert 'Study-specific information and consent' in review.text
+        assert 'Participant information for the synthetic study, version 1.0.' in review.text
+        assert 'Legal Centre provides supplementary platform information' in review.text
+        blocked = post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False)
+        assert blocked.status_code == 400
         exchange = _exchange_participant_api_session(token)
         assert exchange.status_code == 200
         headers = {'Authorization': f"Bearer {exchange.json()['session']['access_token']}", 'Content-Type': 'application/json'}
@@ -730,16 +736,20 @@ def test_participant_api_exposes_scoped_document_references_and_snapshots_consen
         assert documents.status_code == 200
         body = documents.json()
         assert body['study_id'] == study_id
-        assert body['documents'] == [
-            {'document_type': 'participant_information', 'version': '1.0', 'reference': 'PI-1.0', 'effective_date': '15 August 2026'},
-            {'document_type': 'privacy_notice', 'version': '1.0', 'reference': 'PN-1.0', 'effective_date': '15 August 2026'},
-            {'document_type': 'consent_text', 'version': '1.0', 'reference': 'CT-1.0', 'effective_date': '15 August 2026'},
+        assert body['bundle_id']
+        assert [(item['document_type'], item['version'], item['reference']) for item in body['documents']] == [
+            ('participant_information', '1.0', 'PI-1.0'),
+            ('privacy_notice', '1.0', 'PN-1.0'),
+            ('consent_text', '1.0', 'CT-1.0'),
         ]
-        accepted = client.post('/api/v1/participant/consent', json={'consent': True}, headers=headers)
+        assert body['documents'][0]['body'].startswith('Participant information')
+        mismatch = client.post('/api/v1/participant/consent', json={'consent': True, 'document_hashes': {}}, headers=headers)
+        assert mismatch.status_code == 409
+        accepted = client.post('/api/v1/participant/consent', json={'consent': True, 'document_hashes': {item['document_type']: item['content_sha256'] for item in body['documents']}}, headers=headers)
         assert accepted.status_code == 200
 
         with SessionLocal() as db:
-            invitation = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id))
+            invitation = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id).order_by(ParticipantInvitation.id.desc()))
             assert invitation is not None
             assert invitation.participant_information_reference == 'PI-1.0'
             assert invitation.privacy_notice_version == '1.0'
@@ -752,7 +762,7 @@ def test_participant_api_exposes_scoped_document_references_and_snapshots_consen
         )
         assert updated.status_code == 303
         refreshed_documents = client.get('/api/v1/participant/legal-documents', headers=headers)
-        assert refreshed_documents.json()['documents'][0]['version'] == '2.0'
+        assert refreshed_documents.json()['documents'][0]['version'] == '1.0'
         with SessionLocal() as db:
             invitation = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id))
             assert invitation is not None
@@ -5361,7 +5371,7 @@ def test_clean_evidence_download_remains_authorised_and_downloadable(tmp_path):
         settings.local_storage_path = original_storage_path
 
 
-def _create_participant_invitation_for_api(email_suffix: str = 'api-auth') -> tuple[str, int, int]:
+def _create_participant_invitation_for_api(email_suffix: str = 'api-auth', study_id: int | None = None) -> tuple[str, int, int]:
     from app.models import Activity, OutboxEmail
 
     with client:
@@ -5388,7 +5398,7 @@ def _create_participant_invitation_for_api(email_suffix: str = 'api-auth') -> tu
         with SessionLocal() as db:
             first_activity = db.scalar(select(Activity).order_by(Activity.id.asc()))
             assert first_activity is not None
-            study_id = first_activity.study_id
+            study_id = study_id or first_activity.study_id
 
         post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id})
         post_with_csrf(f'/studies/{study_id}/invite/{participant_id}')
@@ -7867,7 +7877,12 @@ def test_participant_api_deletion_retains_minimised_request_when_controller_docu
     context = _prepare_participant_api_activity_response_context('api-privacy-controller-exception')
     with SessionLocal() as db:
         governance = db.scalar(select(StudyGovernance).where(StudyGovernance.study_id == context['study_id']))
-        assert governance is not None
+        if governance is None:
+            governance = StudyGovernance(
+                organisation_id=context['organisation_id'],
+                study_id=context['study_id'],
+            )
+            db.add(governance)
         governance.deletion_retention_exception = 'Statutory retention exception recorded by the controller.'
         db.commit()
 

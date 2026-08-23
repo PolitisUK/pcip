@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block page_title %}Legal Centre | Citizen Centric{% endblock %}
+{% block head_meta %}<meta name="description" content="Participant-facing legal information for Citizen Centric.">{% endblock %}
+{% block body_class %}public-site{% endblock %}
+{% block public %}
+<header class="public-header">
+  <a class="brand public-site-brand" href="/" aria-label="Citizen Centric by Politis home"><img class="brand-logo brand-logo--wordmark" src="/static/citizen-centric-logo.png" alt="Citizen Centric by Politis"></a>
+  <nav class="public-nav" aria-label="Public navigation"><a href="/#why">Why it matters</a><a href="/#trust">Trust</a><a href="/legal" aria-current="page">Legal Centre</a></nav>
+  <a class="btn secondary public-signin" href="/login">Researcher sign in</a>
+</header>
+<main id="main-content" tabindex="-1" class="public-section">
+  <section class="public-container legal-centre">
+    <p class="public-kicker">Citizen Centric legal information</p>
+    <h1>Legal Centre</h1>
+    <p class="public-lead">Read the complete platform policies issued by Politis Ltd. Study-specific information, privacy notices and consent statements are supplied by the research organisation for each study.</p>
+    <div class="legal-centre-grid">
+      {% for document in documents %}
+      <article class="legal-centre-card">
+        <h2><a href="/{{ document.document_id }}">{{ document.title }}</a></h2>
+        <p>{{ document.summary }}</p>
+        <p class="legal-meta">Version {{ document.version }} · Effective {{ document.effective_date }}</p>
+        <a class="btn secondary" href="/{{ document.document_id }}">Read the complete policy<span class="sr-only">: {{ document.title }}</span></a>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+</main>
+{% endblock %}
