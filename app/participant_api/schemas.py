@@ -34,6 +34,7 @@ class InvitationContext(BaseModel):
     invitation_status: str
     expires_at: datetime
     accepted_at: datetime | None
+    requires_study_documents: bool
 
 
 class StudySummary(BaseModel):
@@ -188,6 +189,8 @@ class ParticipantSessionResponse(BaseModel):
 
     session: SessionInfo
     participant: ParticipantSummary
+    invitation: InvitationContext
+    next_action: Literal["consent_required", "portal"]
     study_scope: list[int]
 
 
