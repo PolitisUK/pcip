@@ -318,13 +318,15 @@ def _production_admin(db, home, *, active=True, platform_admin=True, number=1, e
     return user
 
 
-def test_production_access_uses_one_normalised_email_platform_admin_and_keeps_peers_unchanged(rivermere_database):
+def test_production_access_uses_one_normalised_email_active_user_and_keeps_peers_unchanged(rivermere_database):
     factory, storage = rivermere_database
     with factory() as db:
         home = Organisation(name="Politis Operations", slug="politis-operations")
         db.add(home)
         db.flush()
-        intended_owner = _production_admin(db, home, number=1, email="owner@example.invalid")
+        intended_owner = _production_admin(
+            db, home, number=1, email="owner@example.invalid", platform_admin=False,
+        )
         other_administrator = _production_admin(db, home, number=2)
         db.commit()
 
@@ -342,6 +344,7 @@ def test_production_access_uses_one_normalised_email_platform_admin_and_keeps_pe
         ))
         assert intended_membership.role == "owner"
         assert intended_membership.is_active is True
+        assert intended_owner.is_platform_admin is False
         assert db.scalar(select(OrganisationMembership).where(
             OrganisationMembership.user_id == other_administrator.id,
             OrganisationMembership.organisation_id == rivermere.id,
@@ -394,7 +397,6 @@ def test_email_production_owner_requires_one_existing_target(rivermere_database,
     "active,platform_admin,expected_error",
     [
         (False, True, "must be active"),
-        (True, False, "must already be a platform administrator"),
     ],
 )
 def test_email_production_owner_fails_closed_for_an_ineligible_user(

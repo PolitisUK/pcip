@@ -266,7 +266,7 @@ def resolve_configured_production_owner(
     owner_user_id: str | None,
     owner_email: str | None,
 ) -> User:
-    """Resolve one configured active platform administrator before mutating data.
+    """Resolve one configured active intended owner before mutating data.
 
     The protected selector is deliberately never included in an exception or a
     result.  Email lookup is exact only after lower-casing and trimming both
@@ -291,8 +291,6 @@ def resolve_configured_production_owner(
     owner = matches[0]
     if not owner.is_active:
         raise UnsafeDemoTarget("Production Rivermere intended owner must be active.")
-    if not owner.is_platform_admin:
-        raise UnsafeDemoTarget("Production Rivermere intended owner must already be a platform administrator.")
     return owner
 
 
