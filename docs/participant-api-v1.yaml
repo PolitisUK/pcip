@@ -723,14 +723,14 @@ components:
     InvitationContext:
       type: object
       additionalProperties: false
-      required: [study_id, invitation_status, expires_at, accepted_at]
+      required: [study_id, invitation_status, expires_at, accepted_at, requires_study_documents]
       properties:
         study_id:
           type: integer
           minimum: 1
         invitation_status:
           type: string
-          enum: [valid, expired, revoked, accepted]
+          enum: [valid, accepted]
         expires_at:
           type: string
           format: date-time
@@ -738,14 +738,13 @@ components:
           type: string
           format: date-time
           nullable: true
+        requires_study_documents:
+          type: boolean
     ParticipantSummary:
       type: object
       additionalProperties: false
-      required: [participant_id, display_name, consent_status]
+      required: [display_name, consent_status]
       properties:
-        participant_id:
-          type: integer
-          minimum: 1
         display_name:
           type: string
         consent_status:
@@ -768,7 +767,7 @@ components:
     ParticipantSessionResponse:
       type: object
       additionalProperties: false
-      required: [session, participant, study_scope]
+      required: [session, participant, invitation, next_action, study_scope]
       properties:
         session:
           type: object
@@ -783,6 +782,11 @@ components:
               const: true
         participant:
           $ref: '#/components/schemas/ParticipantSummary'
+        invitation:
+          $ref: '#/components/schemas/InvitationContext'
+        next_action:
+          type: string
+          enum: [consent_required, portal]
         study_scope:
           type: array
           minItems: 1

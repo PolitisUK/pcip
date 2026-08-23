@@ -31,7 +31,7 @@ class InvitationContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     study_id: int
-    invitation_status: str
+    invitation_status: Literal["valid", "accepted"]
     expires_at: datetime
     accepted_at: datetime | None
     requires_study_documents: bool
@@ -174,7 +174,7 @@ class SessionExchangeResponse(BaseModel):
     session: BearerSession
     participant: ParticipantSummary
     invitation: InvitationContext
-    next_action: str
+    next_action: Literal["consent_required", "portal"]
 
 
 class SessionInfo(BaseModel):

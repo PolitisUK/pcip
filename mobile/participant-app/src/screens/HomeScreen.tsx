@@ -212,10 +212,17 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
               revocable: true,
             },
             participant: {
-              participant_id: sessionMaterial.participantId ?? -1,
               display_name: sessionMaterial.participantDisplayName || participantDisplayName || "Participant",
               consent_status: sessionMaterial.consentStatus || "granted",
             },
+            invitation: {
+              study_id: sessionMaterial.studyScope?.[0] ?? 0,
+              invitation_status: "accepted",
+              expires_at: sessionMaterial.expiresAt,
+              accepted_at: sessionMaterial.expiresAt,
+              requires_study_documents: false,
+            },
+            next_action: "portal",
             study_scope: sessionMaterial.studyScope || [],
           },
           preferredStudyId: sessionMaterial.studyScope?.[0],
@@ -1100,8 +1107,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
         {
           scope: "study",
           study_id: homeState.activeStudyId,
-          reason: "Participant requested withdrawal from account screen.",
-          contact_preference: "email",
+          confirmed: true,
         },
         { idempotencyKey: createIdempotencyKey("withdrawal", homeState.activeStudyId) },
       );
@@ -1147,9 +1153,10 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
       await requestParticipantDeletion(
         accessToken,
         {
-          mode_preference: "auto",
+          mode_preference: "delete",
           study_id: homeState.activeStudyId,
-          reason: "Participant requested deletion from account screen.",
+          scope: "study",
+          confirmed: true,
         },
         { idempotencyKey: createIdempotencyKey("deletion", homeState.activeStudyId) },
       );

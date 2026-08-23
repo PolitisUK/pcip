@@ -606,7 +606,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Submit consent withdrawal request. */
+        /** Confirm withdrawal from the current study and immediately revoke study access. */
         post: {
             parameters: {
                 query?: never;
@@ -623,7 +623,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Withdrawal request accepted. */
+                /** @description Withdrawal completed and participant study access revoked. */
                 202: {
                     headers: {
                         [name: string]: unknown;
@@ -656,7 +656,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Submit deletion or anonymisation request. */
+        /** Confirm withdrawal plus active-system deletion for the current study or organisation-scoped participant account. */
         post: {
             parameters: {
                 query?: never;
@@ -673,7 +673,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Deletion request accepted. */
+                /** @description Deletion lifecycle started; completion is reported only after active-system deletion succeeds. */
                 202: {
                     headers: {
                         [name: string]: unknown;
@@ -749,14 +749,14 @@ export interface components {
         InvitationContext: {
             study_id: number;
             /** @enum {string} */
-            invitation_status: "valid" | "expired" | "revoked" | "accepted";
+            invitation_status: "valid" | "accepted";
             /** Format: date-time */
             expires_at: string;
             /** Format: date-time */
             accepted_at: string | null;
+            requires_study_documents: boolean;
         };
         ParticipantSummary: {
-            participant_id: number;
             display_name: string;
             /** @enum {string} */
             consent_status: "pending" | "granted" | "declined" | "withdrawn";
@@ -776,6 +776,9 @@ export interface components {
                 revocable: true;
             };
             participant: components["schemas"]["ParticipantSummary"];
+            invitation: components["schemas"]["InvitationContext"];
+            /** @enum {string} */
+            next_action: "consent_required" | "portal";
             study_scope: number[];
         };
         LogoutResponse: {
@@ -940,7 +943,7 @@ export interface components {
             /** @enum {string} */
             request_type: "withdrawal" | "deletion";
             /** @enum {string} */
-            status: "received";
+            status: "received" | "in_progress" | "completed" | "failed_retrying" | "requires_controller_review";
             /** Format: date-time */
             submitted_at: string;
             message?: string | null;
@@ -952,18 +955,23 @@ export interface components {
              */
             scope: "study" | "all";
             study_id?: number | null;
-            reason?: string | null;
-            /** @enum {string|null} */
-            contact_preference?: "email" | "sms" | "phone" | "none" | null;
+            /** @enum {boolean} */
+            confirmed: true;
         };
         DeletionRequest: {
             /**
-             * @default auto
+             * @default delete
              * @enum {string}
              */
-            mode_preference: "auto" | "delete" | "anonymise";
-            reason?: string | null;
+            mode_preference: "delete";
             study_id?: number | null;
+            /**
+             * @default study
+             * @enum {string}
+             */
+            scope: "study" | "account";
+            /** @enum {boolean} */
+            confirmed: true;
         };
     };
     responses: {
