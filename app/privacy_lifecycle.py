@@ -20,6 +20,7 @@ from .models import (
     EvidenceConfidenceAssessment,
     EvidenceFile,
     Participant,
+    ParticipantAppAccessCode,
     ParticipantInvitation,
     ParticipantMessage,
     ParticipantPrivacyRequest,
@@ -234,6 +235,11 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
         invitation_ids = [row.id for row in invitations]
         if invitation_ids:
             db.execute(delete(PublicAuthSession).where(PublicAuthSession.participant_invitation_id.in_(invitation_ids)))
+            db.execute(
+                delete(ParticipantAppAccessCode).where(
+                    ParticipantAppAccessCode.participant_invitation_id.in_(invitation_ids)
+                )
+            )
         for row in invitations:
             db.delete(row)
         for row in db.scalars(enrolment_query):

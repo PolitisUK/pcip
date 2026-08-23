@@ -360,6 +360,47 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/participant/evidence/{evidence_id}:
+    get:
+      tags: [Evidence]
+      summary: Download the participant's own evidence after a clean malware scan.
+      parameters:
+        - $ref: '#/components/parameters/EvidenceId'
+      responses:
+        '200':
+          description: Evidence file bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '303':
+          description: Redirect to a short-lived private storage download URL.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/participant/submissions:
+    get:
+      tags: [Activities]
+      summary: List the participant's response history with its study context and evidence.
+      parameters:
+        - $ref: '#/components/parameters/PageLimit'
+      responses:
+        '200':
+          description: Submission history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmissionHistoryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/v1/participant/messages:
     get:
       tags: [Messaging]
@@ -699,7 +740,7 @@ components:
           type: string
           minLength: 1
           maxLength: 512
-          description: Invitation token accepted only at exchange.
+          description: One-time post-consent app access code, or a legacy invitation token, accepted only at exchange.
         device_hint:
           $ref: '#/components/schemas/DeviceHint'
     BearerSession:
@@ -1103,9 +1144,6 @@ components:
           minimum: 0
         scan_status:
           $ref: '#/components/schemas/EvidenceScanStatus'
-        scan_detail:
-          type: string
-          nullable: true
         created_at:
           type: string
           format: date-time
@@ -1126,6 +1164,77 @@ components:
         downloadable:
           type: boolean
           description: True only when scan_status equals clean.
+    SubmissionEvidenceItem:
+      type: object
+      additionalProperties: false
+      required: [evidence_id, original_name, content_type, scan_status, downloadable, created_at]
+      properties:
+        evidence_id:
+          type: integer
+          minimum: 1
+        original_name:
+          type: string
+        content_type:
+          type: string
+        scan_status:
+          $ref: '#/components/schemas/EvidenceScanStatus'
+        downloadable:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    SubmissionHistoryItem:
+      type: object
+      additionalProperties: false
+      required: [response_id, activity_id, activity_title, activity_prompt, study_title, project_title, answer, choices, evidence, status, submitted_at, updated_at]
+      properties:
+        response_id:
+          type: integer
+        activity_id:
+          type: integer
+        activity_title:
+          type: string
+        activity_prompt:
+          type: string
+          nullable: true
+        study_title:
+          type: string
+        project_title:
+          type: string
+        answer:
+          type: string
+          nullable: true
+        choices:
+          type: array
+          items:
+            type: string
+        evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubmissionEvidenceItem'
+        status:
+          type: string
+          enum: [draft, submitted]
+        submitted_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+    SubmissionHistoryResponse:
+      type: object
+      additionalProperties: false
+      required: [study_id, data, pagination]
+      properties:
+        study_id:
+          type: integer
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubmissionHistoryItem'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
     ParticipantMessage:
       type: object
       additionalProperties: false

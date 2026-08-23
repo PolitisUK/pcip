@@ -14,7 +14,11 @@ class DeviceHint(BaseModel):
 class SessionExchangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    invitation_token: str = Field(min_length=1, max_length=512)
+    invitation_token: str = Field(
+        min_length=1,
+        max_length=512,
+        description="A one-time app access code, or a legacy invitation token.",
+    )
     device_hint: DeviceHint | None = None
 
 
@@ -242,12 +246,29 @@ class StudyLegalDocumentsResponse(BaseModel):
     documents: list[LegalDocumentReference]
 
 
+class SubmissionEvidenceItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: int = Field(ge=1)
+    original_name: str
+    content_type: str
+    scan_status: Literal["pending", "clean", "infected", "scan_failed"]
+    downloadable: bool
+    created_at: datetime
+
+
 class SubmissionHistoryItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     response_id: int
     activity_id: int
     activity_title: str
+    activity_prompt: str | None = None
+    study_title: str
+    project_title: str
+    answer: str | None = None
+    choices: list[str] = Field(default_factory=list)
+    evidence: list[SubmissionEvidenceItem] = Field(default_factory=list)
     status: Literal["draft", "submitted"]
     submitted_at: datetime | None = None
     updated_at: datetime

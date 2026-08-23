@@ -22,7 +22,7 @@ def response_payload(value: str) -> dict:
 
 def response_body(value: str) -> str:
     payload = response_payload(value)
-    text = payload.get("text") or payload.get("value") or ""
+    text = payload.get("text") or payload.get("value") or payload.get("answer") or ""
     return text.strip() if isinstance(text, str) else ""
 
 

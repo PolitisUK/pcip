@@ -945,6 +945,25 @@ button.is-loading::after,
   padding: 28px;
 }
 
+.participant-app-access-wrap {
+  background: linear-gradient(145deg, #123d78, #215bb3);
+}
+
+.app-access-code {
+  margin: 22px 0;
+  border: 2px solid var(--brand-700);
+  border-radius: var(--radius-md);
+  background: #f4f7fb;
+  padding: 18px 12px;
+  color: var(--brand-900);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(1.15rem, 5vw, 1.55rem);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
 .public-back-link {
   display: inline-block;
   margin-bottom: 20px;
@@ -1722,9 +1741,26 @@ button.is-loading::after,
 }
 
 .public-footer {
-  border-top: 1px solid var(--border);
-  background: #f4f7fb;
+  border-top: 1px solid #174a8b;
+  background: linear-gradient(145deg, #123d78, #215bb3);
   padding: 54px 0 26px;
+}
+
+.brand-logo--on-blue {
+  filter: brightness(0) invert(1);
+}
+
+.public-footer a,
+.public-footer-group h2,
+.public-footer-brand p,
+.public-footer-bottom small,
+.public-footer .footer-placeholder {
+  color: #fff;
+}
+
+.public-footer a:hover {
+  color: #fff;
+  text-decoration: underline;
 }
 
 .public-footer-main {
@@ -1768,7 +1804,7 @@ button.is-loading::after,
   justify-content: space-between;
   gap: 30px;
   margin-top: 42px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(255, 255, 255, 0.3);
   padding-top: 22px;
 }
 

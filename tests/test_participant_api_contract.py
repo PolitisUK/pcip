@@ -10,6 +10,9 @@ from app.participant_api.schemas import (
     ParticipantSessionResponse,
     SessionInfo,
     SessionExchangeResponse,
+    SubmissionEvidenceItem,
+    SubmissionHistoryItem,
+    SubmissionHistoryResponse,
 )
 
 
@@ -62,3 +65,20 @@ def test_session_paths_reference_the_matching_response_schemas():
 
     assert exchange_schema == {"$ref": "#/components/schemas/SessionExchangeResponse"}
     assert session_schema == {"$ref": "#/components/schemas/ParticipantSessionResponse"}
+
+
+def test_submission_history_contract_matches_backend_response_models():
+    evidence = _contract_schema("SubmissionEvidenceItem")
+    item = _contract_schema("SubmissionHistoryItem")
+    response = _contract_schema("SubmissionHistoryResponse")
+
+    assert set(evidence["properties"]) == set(SubmissionEvidenceItem.model_fields)
+    assert set(evidence["required"]) == set(SubmissionEvidenceItem.model_fields)
+    assert set(item["properties"]) == set(SubmissionHistoryItem.model_fields)
+    assert set(item["required"]) == set(SubmissionHistoryItem.model_fields)
+    assert set(response["properties"]) == set(SubmissionHistoryResponse.model_fields)
+    assert set(response["required"]) == set(SubmissionHistoryResponse.model_fields)
+
+    contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    schema = contract["paths"]["/api/v1/participant/submissions"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert schema == {"$ref": "#/components/schemas/SubmissionHistoryResponse"}

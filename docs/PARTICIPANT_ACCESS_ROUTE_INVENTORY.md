@@ -7,13 +7,14 @@ participant or organisation identifier to widen that scope.
 
 | Route family | Participant purpose | Scope / disclosure controls |
 | --- | --- | --- |
-| `POST /api/v1/participant/session/exchange` | Exchange a valid invitation for a bearer session | Invitation-token lookup only; invalid/revoked/expired invitations return a generic error; token is not logged or returned after failure. |
+| `POST /api/v1/participant/session/exchange` | Exchange a short-lived, single-use app access code for a bearer session | The code resolves only to an already accepted invitation and is stored only as a hash; invalid/redeemed/expired codes return a generic error. The legacy invitation-token exchange remains temporarily compatible, but cannot bypass consent. |
 | `GET`/`DELETE /api/v1/participant/session` | Recover or revoke the current participant session | Current bearer only; no customer/researcher cookie is created. |
 | `GET`/`PUT /api/v1/participant/profile` | Read/update the caller's permitted profile preference | Current invitation participant only; no participant ID is accepted as input. |
 | `GET /api/v1/participant/legal-documents` and `POST /consent` | Study-specific legal references and consent | Current invitation study only; consent evidence is captured server-side. |
 | `GET /studies`, `GET /activities`, `GET /activities/{id}` | Study and activity access | Consent plus enrolment required; study query cannot differ from invitation scope; object lookups include organisation/study constraints. |
 | Draft/submit/evidence routes under `/activities/{id}` | Participant response and media evidence | Current participant, invitation study, organisation, availability and consent required; idempotency is invitation-scoped. |
-| `GET /evidence/{id}/status` | Participant-facing upload status | Evidence is constrained by organisation, study and participant; raw storage keys, blob URIs, hashes and scanner diagnostics are excluded. |
+| `GET /evidence/{id}/status` and `GET /evidence/{id}` | Participant-facing upload status and clean evidence retrieval | Evidence is constrained by organisation, study and participant. Downloads require a clean scan; raw storage keys, blob URIs, hashes and scanner diagnostics are excluded. |
+| `GET /submissions` | Participant's own submission history | Returns only the current invitation participant's answers and evidence in the current study, with no researcher-only annotations. |
 | `GET`/`POST /messages` | Participant-visible study messages and replies | Current participant/study only; internal notes are excluded server-side. |
 | Privacy request routes | Withdrawal/deletion request | Current participant and invitation study only; supplied out-of-scope study IDs are rejected. |
 

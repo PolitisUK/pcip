@@ -36,6 +36,7 @@ from .models import (
     OrganisationMembership,
     OutboxEmail,
     Participant,
+    ParticipantAppAccessCode,
     ParticipantInvitation,
     ParticipantMessage,
     ParticipantPrivacyRequest,
@@ -174,6 +175,7 @@ from .participant_api.schemas import (
     SessionExchangeResponse,
     SessionInfo,
     SubmissionHistoryItem,
+    SubmissionEvidenceItem,
     SubmissionHistoryResponse,
     SubmitResponseRequest,
     SubmittedResponseResult,
@@ -360,6 +362,30 @@ def _enforce_rate_limit(
 def hosted_environment(): return settings.environment.strip().lower() not in {"development","dev","test","testing"}
 
 
+class SensitiveAccessLogFilter(logging.Filter):
+    """Remove bearer-style query values before request paths reach access logs."""
+
+    _query_secret = re.compile(
+        r"(?i)([?&](?:token|invitation_token|access_token)=)[^&\s]*"
+    )
+
+    @classmethod
+    def redact(cls, value: object) -> object:
+        rendered = str(value)
+        redacted = cls._query_secret.sub(r"\1[REDACTED]", rendered)
+        return redacted if redacted != rendered else value
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(self.redact(value) for value in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {
+                key: self.redact(value) for key, value in record.args.items()
+            }
+        record.msg = self.redact(record.msg)
+        return True
+
+
 def configure_logging():
     level_name = (settings.log_level or "INFO").strip().upper()
     level = getattr(logging, level_name, logging.INFO)
@@ -371,6 +397,10 @@ def configure_logging():
         )
     else:
         root.setLevel(level)
+    for logger_name in ("uvicorn.access", "httpx", "httpcore"):
+        request_logger = logging.getLogger(logger_name)
+        if not any(isinstance(item, SensitiveAccessLogFilter) for item in request_logger.filters):
+            request_logger.addFilter(SensitiveAccessLogFilter())
 
 
 def validate_startup_environment():
@@ -3228,7 +3258,11 @@ def send_participant_invite(db,u,s,p):
         u.organisation_id,
         p.email,
         f"Invitation: {s.title}",
-        f"Join the study: {settings.base_url}/join-study?token={raw}",
+        (
+            "Review the study information and consent securely. After consenting, "
+            "the website will show a one-time code for the Citizen Centric app.\n\n"
+            f"Join the study: {settings.base_url}/join-study?token={raw}"
+        ),
         participant_id=p.id,
         study_id=s.id,
     ); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title); db.commit()
@@ -3324,7 +3358,56 @@ def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),rev
     grant_participant_consent(inv, p, now())
     audit(db, inv.organisation_id, None, "participant.invitation_accepted", "participant", p.id)
     db.commit()
+    set_flash(
+        request,
+        "success",
+        "Consent complete. Request a one-time code below to continue in the participant app.",
+    )
     return RedirectResponse("/participant-portal", 303)
+
+
+def normalise_participant_app_access_code(value: str) -> str:
+    compact = re.sub(r"[\s-]+", "", value or "").upper()
+    return compact if re.fullmatch(r"CC[0-9A-F]{16}", compact) else ""
+
+
+def create_participant_app_access_code(
+    db: Session,
+    invitation: ParticipantInvitation,
+) -> str:
+    compact = f"CC{secrets.token_hex(8).upper()}"
+    display = "-".join((compact[:2], compact[2:6], compact[6:10], compact[10:14], compact[14:18]))
+    db.add(
+        ParticipantAppAccessCode(
+            organisation_id=invitation.organisation_id,
+            participant_invitation_id=invitation.id,
+            code_hash=token_hash(compact),
+            expires_at=now() + timedelta(minutes=30),
+        )
+    )
+    return display
+
+
+@app.post("/participant-portal/app-access-code", response_class=HTMLResponse)
+def participant_portal_app_access_code(
+    request: Request,
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    _session_row, invitation, _participant, study_row, _enrolment = require_participant_portal_context(request, db)
+    app_code = create_participant_app_access_code(db, invitation)
+    audit(
+        db,
+        invitation.organisation_id,
+        None,
+        "participant.app_access_code_created",
+        "participant_invitation",
+        invitation.id,
+    )
+    db.commit()
+    response = render(request, "participant_app_access.html", study=study_row, app_code=app_code)
+    _cache_control_no_store(response)
+    return response
 
 
 def participant_portal_context(request: Request, db: Session):
@@ -3987,8 +4070,26 @@ def participant_api_session_exchange(
         account_limit=settings.rate_limit_invitation_accept_token,
     )
 
-    invitation = resolve_invitation_by_token(db, payload.invitation_token)
+    normalised_app_code = normalise_participant_app_access_code(payload.invitation_token)
+    access_code = None
+    if normalised_app_code:
+        access_code = db.scalar(
+            select(ParticipantAppAccessCode).where(
+                ParticipantAppAccessCode.code_hash == token_hash(normalised_app_code)
+            )
+        )
+        invitation = (
+            db.get(ParticipantInvitation, access_code.participant_invitation_id)
+            if access_code
+            and access_code.redeemed_at is None
+            and unexpired(access_code.expires_at)
+            else None
+        )
+    else:
+        invitation = resolve_invitation_by_token(db, payload.invitation_token)
     if not invitation or invitation.revoked_at or not unexpired(invitation.expires_at):
+        raise HTTPException(400, "This participant link is invalid or expired.")
+    if access_code and not invitation.accepted_at:
         raise HTTPException(400, "This participant link is invalid or expired.")
     participant_row = db.get(Participant, invitation.participant_id)
     if not participant_row:
@@ -4028,6 +4129,8 @@ def participant_api_session_exchange(
         invitation.id,
         next_action,
     )
+    if access_code:
+        access_code.redeemed_at = now()
     db.commit()
     _cache_control_no_store(response)
     return SessionExchangeResponse(
@@ -4178,7 +4281,7 @@ def participant_api_submission_history(
 ):
     _invitation, participant_row, study_row = _resolve_participant_api_study_scope(request, db, write_scope=False)
     rows = db.execute(
-        select(ActivityResponse, Activity.title)
+        select(ActivityResponse, Activity.title, Activity.prompt)
         .join(Activity, Activity.id == ActivityResponse.activity_id)
         .where(
             ActivityResponse.organisation_id == participant_row.organisation_id,
@@ -4186,10 +4289,60 @@ def participant_api_submission_history(
             ActivityResponse.participant_id == participant_row.id,
         ).order_by(ActivityResponse.updated_at.desc()).limit(limit)
     ).all()
+    response_ids = [item.id for item, _title, _prompt in rows]
+    evidence_by_response: dict[int, list[EvidenceFile]] = {}
+    if response_ids:
+        evidence_rows = db.scalars(
+            select(EvidenceFile)
+            .where(
+                EvidenceFile.organisation_id == participant_row.organisation_id,
+                EvidenceFile.study_id == study_row.id,
+                EvidenceFile.participant_id == participant_row.id,
+                EvidenceFile.response_id.in_(response_ids),
+            )
+            .order_by(EvidenceFile.created_at.asc(), EvidenceFile.id.asc())
+        ).all()
+        for evidence_row in evidence_rows:
+            evidence_by_response.setdefault(int(evidence_row.response_id), []).append(evidence_row)
+    project_row = db.scalar(
+        select(Project).where(
+            Project.id == study_row.project_id,
+            Project.organisation_id == participant_row.organisation_id,
+        )
+    )
+    data: list[SubmissionHistoryItem] = []
+    for item, title, prompt in rows:
+        value = _response_value_from_json(item.value_json)
+        data.append(
+            SubmissionHistoryItem(
+                response_id=item.id,
+                activity_id=item.activity_id,
+                activity_title=title,
+                activity_prompt=prompt or None,
+                study_title=study_row.title,
+                project_title=project_row.title if project_row else study_row.title,
+                answer=value.answer if value else None,
+                choices=value.choices if value else [],
+                evidence=[
+                    SubmissionEvidenceItem(
+                        evidence_id=evidence.id,
+                        original_name=evidence.original_name,
+                        content_type=evidence.content_type,
+                        scan_status=_participant_evidence_scan_status(evidence.scan_status),
+                        downloadable=is_evidence_downloadable(evidence.scan_status),
+                        created_at=evidence.created_at,
+                    )
+                    for evidence in evidence_by_response.get(item.id, [])
+                ],
+                status=item.status,
+                submitted_at=item.submitted_at,
+                updated_at=item.updated_at,
+            )
+        )
     _cache_control_no_store(response)
     return SubmissionHistoryResponse(
         study_id=study_row.id,
-        data=[SubmissionHistoryItem(response_id=item.id, activity_id=item.activity_id, activity_title=title, status=item.status, submitted_at=item.submitted_at, updated_at=item.updated_at) for item, title in rows],
+        data=data,
         pagination=Pagination(limit=limit, has_more=False),
     )
 
@@ -4951,11 +5104,27 @@ def participant_api_activity_evidence_upload(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=128),
     db: Session = Depends(get_db),
 ):
-    del note, idempotency_key
+    del note
     if form_activity_id != activity_id:
         raise HTTPException(400, "Form activity_id does not match path activity_id.")
 
     invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
+    upload_key_hash = token_hash(idempotency_key) if idempotency_key else None
+    if upload_key_hash:
+        previously_uploaded = db.scalar(
+            select(EvidenceFile).where(
+                EvidenceFile.organisation_id == invitation.organisation_id,
+                EvidenceFile.study_id == invitation.study_id,
+                EvidenceFile.participant_id == participant_row.id,
+                EvidenceFile.activity_id == activity_row.id,
+                EvidenceFile.upload_key_hash == upload_key_hash,
+            )
+        )
+        if previously_uploaded:
+            _cache_control_no_store(response)
+            return EvidenceUploadResponse(
+                evidence=_participant_evidence_metadata(previously_uploaded)
+            )
     existing_response = db.scalar(
         select(ActivityResponse).where(
             ActivityResponse.organisation_id == invitation.organisation_id,
@@ -4990,12 +5159,20 @@ def participant_api_activity_evidence_upload(
         else:
             scan_status, scan_detail = "pending", "Awaiting Microsoft Defender for Storage on-upload scan."
 
+        response_row = existing_response or resolve_or_create_activity_response(
+            db,
+            organisation_id=invitation.organisation_id,
+            study_id=invitation.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+        )
+        db.flush()
         evidence_row = build_evidence_file(
             organisation_id=invitation.organisation_id,
             study_id=invitation.study_id,
             activity_id=activity_row.id,
             participant_id=participant_row.id,
-            response_id=existing_response.id if existing_response else None,
+            response_id=response_row.id,
             original_name=original,
             stored_name=stored.key,
             content_type=file.content_type or "application/octet-stream",
@@ -5006,8 +5183,25 @@ def participant_api_activity_evidence_upload(
             storage_provider=stored.provider,
             blob_uri=stored.uri,
         )
+        evidence_row.upload_key_hash = upload_key_hash
         db.add(evidence_row)
         db.flush()
+        if activity_row.activity_type in {"photo", "audio", "video", "file"}:
+            apply_response_action(
+                response_row,
+                {"answer": "", "choices": [], "evidence_id": evidence_row.id},
+                "submit",
+                now(),
+            )
+            audit(
+                db,
+                invitation.organisation_id,
+                None,
+                "activity.submitted",
+                "activity_response",
+                response_row.id,
+                str(activity_row.id),
+            )
         audit(db, invitation.organisation_id, None, "evidence.uploaded", "evidence_file", evidence_row.id, str(activity_row.id))
         db.commit()
     except HTTPException:
@@ -5048,6 +5242,40 @@ def participant_api_evidence_status(
         evidence=_participant_evidence_metadata(evidence_row),
         downloadable=is_evidence_downloadable(evidence_row.scan_status),
     )
+
+
+@app.get("/api/v1/participant/evidence/{evidence_id}")
+def participant_api_evidence_download(
+    request: Request,
+    evidence_id: int = ApiPath(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    _invitation, _participant, _study, evidence_row = _resolve_participant_api_evidence_scope(
+        request, db, evidence_id
+    )
+    refresh_evidence_scan_status(db, evidence_row)
+    ensure_clean_scan_for_download(evidence_row.scan_status)
+    if evidence_row.storage_provider == "azure_blob":
+        response = RedirectResponse(
+            storage.download_url(
+                evidence_row.stored_name,
+                evidence_row.original_name,
+                evidence_row.content_type,
+                settings.azure_sas_minutes,
+            ),
+            303,
+        )
+    else:
+        path = storage.path(evidence_row.stored_name)
+        if not path.exists():
+            raise HTTPException(404, "Stored evidence is unavailable.")
+        response = FileResponse(
+            path,
+            media_type=evidence_row.content_type,
+            filename=evidence_row.original_name,
+        )
+    _cache_control_no_store(response)
+    return response
 
 
 @app.get("/api/v1/participant/messages", response_model=MessageListResponse)
@@ -5100,12 +5328,43 @@ def participant_api_message_create(
     if not body:
         raise HTTPException(400, "Message body is required.")
 
+    scoped_idempotency_key = (
+        f"participant:{invitation.id}:messages_create:{idempotency_key}"
+        if idempotency_key
+        else None
+    )
+    idempotency_key_hash = (
+        token_hash(scoped_idempotency_key) if scoped_idempotency_key else None
+    )
+    if idempotency_key_hash:
+        existing = db.scalar(
+            select(ParticipantMessage).where(
+                ParticipantMessage.organisation_id == invitation.organisation_id,
+                ParticipantMessage.study_id == invitation.study_id,
+                ParticipantMessage.participant_id == participant_row.id,
+                ParticipantMessage.idempotency_key_hash == idempotency_key_hash,
+            )
+        )
+        if existing:
+            if existing.body != body:
+                raise HTTPException(409, "Idempotency key was already used for another message.")
+            _cache_control_no_store(response)
+            return CreateMessageResponse(
+                message=ParticipantMessageSummary(
+                    message_id=existing.id,
+                    sender_type=existing.sender_type,
+                    body=existing.body,
+                    created_at=existing.created_at,
+                )
+            )
+
     try:
         _record_participant_idempotency(db, invitation.id, "messages_create", idempotency_key)
         row = create_participant_message(
             invitation,
             body=body,
         )
+        row.idempotency_key_hash = idempotency_key_hash
         db.add(row)
         db.flush()
         audit(
@@ -5123,6 +5382,25 @@ def participant_api_message_create(
         raise
     except IntegrityError:
         db.rollback()
+        if idempotency_key_hash:
+            existing = db.scalar(
+                select(ParticipantMessage).where(
+                    ParticipantMessage.organisation_id == invitation.organisation_id,
+                    ParticipantMessage.study_id == invitation.study_id,
+                    ParticipantMessage.participant_id == participant_row.id,
+                    ParticipantMessage.idempotency_key_hash == idempotency_key_hash,
+                )
+            )
+            if existing and existing.body == body:
+                _cache_control_no_store(response)
+                return CreateMessageResponse(
+                    message=ParticipantMessageSummary(
+                        message_id=existing.id,
+                        sender_type=existing.sender_type,
+                        body=existing.body,
+                        created_at=existing.created_at,
+                    )
+                )
         raise HTTPException(409, "Message state conflict.")
     except Exception:
         db.rollback()
