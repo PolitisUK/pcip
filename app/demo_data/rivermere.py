@@ -584,10 +584,12 @@ def seed_rivermere(
         _milestone(f"project_{code}_activities_completed", started)
         responses = _responses(db, organisation.id, study, data, participants, activities, counts)
         _milestone(f"project_{code}_responses_completed", started)
+        _milestone(f"project_{code}_codes_assignments_completed", started)
         _media(db, storage, organisation.id, study, data, responses, counts)
         _milestone(f"project_{code}_media_completed", started)
         _memos(db, organisation.id, operator.id, study, data, counts)
         _milestone(f"project_{code}_memos_completed", started)
+        _milestone(f"project_{code}_completed", started)
     db.add(AuditEvent(
         organisation_id=organisation.id, actor_user_id=operator.id, action="demo.rivermere.v1_1.seeded", entity_type="organisation",
         entity_id=str(organisation.id), detail=f"fictional_demo=true content_version={CONTENT_VERSION} {json.dumps(counts.as_dict(), sort_keys=True)}",

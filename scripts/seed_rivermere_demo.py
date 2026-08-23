@@ -35,6 +35,11 @@ def milestone(phase: str, **extra) -> None:
     logger.info(json.dumps({"event": "rivermere_importer", "phase": phase, **extra}, sort_keys=True))
 
 
+def sanitised_traceback_frames(exc: BaseException) -> list[str]:
+    """Return stack locations only; exception messages can contain runtime secrets."""
+    return [frame.name for frame in traceback.extract_tb(exc.__traceback__)[-8:]]
+
+
 def main() -> int:
     milestone("process_started")
     parser = argparse.ArgumentParser(description="Seed or remove the fictional Rivermere local-development dataset.")
@@ -198,6 +203,6 @@ if __name__ == "__main__":
             "error_category": exc.__class__.__name__,
             "seed_transaction_committed": current_phase in {"database_commit_completed", "verification_started", "verification_completed", "durable_verification_record_written"},
             "rollback_completed": current_phase not in {"database_commit_completed", "verification_started", "verification_completed", "durable_verification_record_written"},
-            "traceback": traceback.format_exc(limit=8).replace("\n", " | "),
+            "traceback_frames": sanitised_traceback_frames(exc),
         }, sort_keys=True))
         raise

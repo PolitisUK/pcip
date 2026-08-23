@@ -442,8 +442,16 @@ def test_platform_admin_is_explicit_and_customer_owner_cannot_open_global_view()
 
 
 def test_rivermere_completion_endpoint_is_non_sensitive_and_platform_detail_is_restricted():
+    from app.models import DemoImportStatus
+
     with client:
         client.cookies.clear()
+        with SessionLocal() as db:
+            db.merge(DemoImportStatus(
+                dataset='rivermere', status='running', phase='owner_configuration_validated',
+                content_version='1.1.0', error_category=None,
+            ))
+            db.commit()
         signal = client.get('/api/v1/rivermere/verification')
         assert signal.status_code == 200
         assert set(signal.json()) == {
@@ -451,7 +459,9 @@ def test_rivermere_completion_endpoint_is_non_sensitive_and_platform_detail_is_r
             'current_phase', 'error_category', 'started_at', 'committed_at',
         }
         assert signal.json()['dataset'] == 'rivermere'
-        assert 'owner' not in json.dumps(signal.json()).lower()
+        assert signal.json()['import_status'] == 'running'
+        assert signal.json()['current_phase'] == 'owner_configuration_validated'
+        assert '@' not in json.dumps(signal.json())
 
         auth()
         with SessionLocal() as db:

@@ -10,6 +10,10 @@ depends_on = None
 
 
 def upgrade():
+    # 0001 uses the current SQLAlchemy metadata for a clean bootstrap.  In
+    # that case this table already exists when Alembic reaches this revision.
+    if "demo_import_statuses" in sa.inspect(op.get_bind()).get_table_names():
+        return
     op.create_table(
         "demo_import_statuses",
         sa.Column("dataset", sa.String(length=80), primary_key=True),
@@ -25,4 +29,6 @@ def upgrade():
 
 
 def downgrade():
+    if "demo_import_statuses" not in sa.inspect(op.get_bind()).get_table_names():
+        return
     op.drop_table("demo_import_statuses")
