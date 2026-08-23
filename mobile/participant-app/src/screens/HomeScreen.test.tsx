@@ -1173,17 +1173,19 @@ describe("HomeScreen", () => {
     });
   });
 
-  it("submits withdrawal and deletion requests from account panel", async () => {
+  it("uses account scope and clears participant content after account deletion", async () => {
+    mockedGetCurrentSession.mockResolvedValue({ ...session, study_scope: [11, 22] });
     mockedGetParticipantStudies.mockResolvedValue({
       data: [
         { study_id: 11, title: "Study One", description: null, status: "active", methodology: "survey", enrolled: true },
+        { study_id: 22, title: "Study Two", description: null, status: "active", methodology: "survey", enrolled: true },
       ],
       pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
     });
     mockedGetParticipantActivities.mockResolvedValue({ data: [] });
     const onSessionExpired = jest.fn();
 
-    const { getByLabelText } = await renderHome({ onSessionExpired });
+    const { getByLabelText, queryByText } = await renderHome({ onSessionExpired });
 
     await waitFor(() => {
       expect(getByLabelText("Open account and privacy panel")).toBeTruthy();
@@ -1202,10 +1204,34 @@ describe("HomeScreen", () => {
     await waitFor(() => {
       expect(mockedRequestParticipantDeletion).toHaveBeenCalledWith(
         "token",
-        expect.objectContaining({ study_id: 11, mode_preference: "delete", scope: "study", confirmed: true }),
+        expect.objectContaining({ study_id: 11, mode_preference: "delete", scope: "account", confirmed: true }),
         expect.objectContaining({ idempotencyKey: expect.any(String) }),
       );
+      expect(onSessionExpired).toHaveBeenCalledTimes(1);
     });
+
+    expect(getByLabelText("Ending secure session")).toBeTruthy();
+    expect(() => getByLabelText("Open account and privacy panel")).toThrow();
+    expect(queryByText("Study One")).toBeNull();
+  });
+
+  it("keeps study-only withdrawal behaviour unchanged", async () => {
+    mockedGetParticipantStudies.mockResolvedValue({
+      data: [
+        { study_id: 11, title: "Study One", description: null, status: "active", methodology: "survey", enrolled: true },
+      ],
+      pagination: { cursor: null, next_cursor: null, limit: 25, has_more: false },
+    });
+    mockedGetParticipantActivities.mockResolvedValue({ data: [] });
+    const onSessionExpired = jest.fn();
+
+    const { getByLabelText } = await renderHome({ onSessionExpired });
+
+    await waitFor(() => {
+      expect(getByLabelText("Open account and privacy panel")).toBeTruthy();
+    });
+
+    fireEvent.press(getByLabelText("Open account and privacy panel"));
 
     fireEvent.press(getByLabelText("Start withdrawal request"));
     fireEvent.press(getByLabelText("Confirm withdrawal request"));

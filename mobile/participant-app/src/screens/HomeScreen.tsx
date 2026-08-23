@@ -123,6 +123,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
   const controller = useMemo(() => new ParticipantHomeController(), []);
   const [homeState, setHomeState] = useState<ParticipantHomeState>({ status: "initialising" });
   const accessTokenRef = useRef<string | null>(null);
+  const [sessionEnding, setSessionEnding] = useState(false);
   const [detailState, setDetailState] = useState<ActivityDetailViewState>({ status: "idle" });
   const [homePanel, setHomePanel] = useState<HomePanel>("home");
   const [consentStatus, setConsentStatus] = useState<string>("granted");
@@ -1155,17 +1156,48 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
         {
           mode_preference: "delete",
           study_id: homeState.activeStudyId,
-          scope: "study",
+          scope: "account",
           confirmed: true,
         },
         { idempotencyKey: createIdempotencyKey("deletion", homeState.activeStudyId) },
       );
 
+      accessTokenRef.current = null;
+      controller.clear();
+      detailRequestVersion.current += 1;
+      detailAbortController.current?.abort();
+      detailAbortController.current = null;
+      writeRequestVersion.current += 1;
+      writeAbortController.current?.abort();
+      writeAbortController.current = null;
+      evidenceRequestVersion.current += 1;
+      evidenceAbortController.current?.abort();
+      evidenceAbortController.current = null;
+      if (evidencePollTimeout.current) {
+        clearTimeout(evidencePollTimeout.current);
+        evidencePollTimeout.current = null;
+      }
+      messagesRequestVersion.current += 1;
+      messagesAbortController.current?.abort();
+      messagesAbortController.current = null;
+      setDetailState({ status: "idle" });
+      setHomePanel("home");
+      setMessagesState({
+        status: "idle",
+        items: [],
+        selectedThreadId: null,
+        composeBody: "",
+        sending: false,
+        message: null,
+      });
       setAccountState((current) => ({
         ...current,
         deleting: false,
-        message: { tone: "success", text: "Deletion request received. The research team will process it securely." },
+        confirmDelete: false,
+        message: null,
       }));
+      setSessionEnding(true);
+      onSessionExpired();
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 401) {
         onSessionExpired();
@@ -1236,6 +1268,15 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
   };
 
   const showDetail = detailState.status !== "idle";
+
+  if (sessionEnding) {
+    return (
+      <View accessibilityLabel="Ending secure session" style={styles.stateBlock}>
+        <ActivityIndicator size="small" color="#00573d" />
+        <Text style={styles.body}>Ending your session securely.</Text>
+      </View>
+    );
+  }
 
   if (showDetail) {
     return (
