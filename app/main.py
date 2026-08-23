@@ -84,6 +84,7 @@ from .legal_content import (
     LegalSection,
     CUSTOMER_LEGAL_DOCUMENTS,
     customer_legal_document,
+    participant_policy_documents,
     public_legal_document,
 )
 from .study_governance import (
@@ -92,6 +93,12 @@ from .study_governance import (
     SPECIAL_CATEGORY_STATES,
     study_document_references,
     study_launch_readiness,
+)
+from .study_consent import (
+    bind_invitation_to_current_bundle,
+    create_or_reuse_current_bundle,
+    current_bundle_documents,
+    require_bound_documents,
 )
 from .methodology import (
     MethodologyGateViolation,
@@ -866,7 +873,7 @@ def document_reference(value: str, label: str) -> str:
 
 def capture_consent_document_evidence(invitation: ParticipantInvitation, governance: StudyGovernance | None) -> None:
     """Snapshot controller-approved references once; historical consent is immutable."""
-    if invitation.accepted_at or governance is None:
+    if invitation.accepted_at or invitation.consent_bundle_id or governance is None:
         return
     for item in study_document_references(governance):
         prefix = item.document_type
@@ -1600,7 +1607,8 @@ def platform_rivermere_verification_signal(
 @app.get("/cookies", response_class=HTMLResponse)
 @app.get("/accessibility", response_class=HTMLResponse)
 @app.get("/acceptable-use", response_class=HTMLResponse)
-@app.get("/legal", response_class=HTMLResponse)
+@app.get("/data-rights", response_class=HTMLResponse)
+@app.get("/consent", response_class=HTMLResponse)
 def public_legal_page(request: Request):
     legal_slug = request.url.path.lstrip("/")
     document = public_legal_document(legal_slug)
@@ -1621,6 +1629,15 @@ def public_legal_page(request: Request):
         document=document,
         legal_version=document.version,
         legal_effective_date=document.effective_date,
+    )
+
+
+@app.get("/legal", response_class=HTMLResponse)
+def public_legal_centre(request: Request):
+    return render(
+        request,
+        "legal_centre.html",
+        documents=participant_policy_documents(),
     )
 
 
@@ -2424,7 +2441,7 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
     methodology_record = None
     if methodology_configuration and methodology_configuration.primary_methodology_id:
         methodology_record = next((item for item in library_records() if item["methodology_id"] == methodology_configuration.primary_methodology_id), None)
-    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,methodology_options=methodology_options(),methodology_categories=researcher_methodology_categories(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
+    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_documents={document.document_type: document for document in current_bundle_documents(db, governance)},governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,methodology_options=methodology_options(),methodology_categories=researcher_methodology_categories(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
 
 @app.post("/studies/{study_id}/governance")
 def update_study_governance(
@@ -2450,6 +2467,9 @@ def update_study_governance(
     consent_text_reference: str = Form(""),
     consent_text_version: str = Form(""),
     consent_text_effective_date: str = Form(""),
+    participant_information_body: str = Form(""),
+    privacy_notice_body: str = Form(""),
+    consent_text_body: str = Form(""),
     retention_description: str = Form(""),
     deletion_retention_exception: str = Form(""),
     withdrawal_process_defined: bool = Form(False),
@@ -2520,6 +2540,27 @@ def update_study_governance(
     governance.international_transfer_assessment = international_transfer_assessment
     governance.ethics_status = ethics_status
     governance.dpia_status = dpia_status
+    existing_documents = {item.document_type: item for item in current_bundle_documents(db, governance)}
+    supplied_bodies = (participant_information_body, privacy_notice_body, consent_text_body)
+    has_document_metadata = all(
+        getattr(governance, f"{document_type}_{field}").strip()
+        for document_type in ("participant_information", "privacy_notice", "consent_text")
+        for field in ("reference", "version", "effective_date")
+    )
+    if has_document_metadata and (any(value.strip() for value in supplied_bodies) or len(existing_documents) == 3):
+        try:
+            create_or_reuse_current_bundle(
+                db,
+                s,
+                governance,
+                {
+                    "participant_information": participant_information_body or (existing_documents["participant_information"].body if "participant_information" in existing_documents else ""),
+                    "privacy_notice": privacy_notice_body or (existing_documents["privacy_notice"].body if "privacy_notice" in existing_documents else ""),
+                    "consent_text": consent_text_body or (existing_documents["consent_text"].body if "consent_text" in existing_documents else ""),
+                },
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
     audit(db, u.organisation_id, u.id, "study.governance_updated", "study", s.id, s.title)
     db.commit()
     return RedirectResponse(f"/studies/{s.id}#governance", 303)
@@ -3165,7 +3206,7 @@ def enrol(study_id:int,participant_id:int=Form(...),u=Depends(roles("owner","adm
     return RedirectResponse(f"/studies/{s.id}",303)
 
 def send_participant_invite(db,u,s,p):
-    _, raw = create_participant_invitation(
+    invitation, raw = create_participant_invitation(
         db,
         organisation_id=u.organisation_id,
         participant_id=p.id,
@@ -3173,6 +3214,11 @@ def send_participant_invite(db,u,s,p):
         invited_by_id=u.id,
         expires_at=now() + timedelta(days=30),
     )
+    try:
+        bind_invitation_to_current_bundle(db, invitation, governance_for_study(db, s))
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(400, str(error)) from error
     queue_email(
         db,
         u.organisation_id,
@@ -3237,11 +3283,17 @@ def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
     p=db.get(Participant,inv.participant_id) if valid else None
     if valid and inv.accepted_at:
         return RedirectResponse("/participant-portal",303)
-    response = render(request,"join_study.html",invitation=inv,study=s,participant=p,valid=valid)
+    try:
+        documents = require_bound_documents(db, inv, governance_for_study(db, s)) if valid else ()
+    except ValueError as error:
+        response = render(request,"join_study.html",invitation=None,study=None,participant=None,documents=(),valid=False,flash_error=str(error))
+        _cache_control_no_store(response)
+        return response
+    response = render(request,"join_study.html",invitation=inv,study=s,participant=p,documents=documents,valid=valid)
     _cache_control_no_store(response)
     return response
 @app.post("/join-study")
-def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),reviewed_participant_information:bool=Form(False),reviewed_privacy_notice:bool=Form(False),reviewed_consent_text:bool=Form(False),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
     inv = resolve_participant_invitation(db, session_row)
     account_key = f"invitation:{inv.id}" if inv else (token_hash(token) if token else "missing")
@@ -3257,7 +3309,14 @@ def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),csr
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not consent: raise HTTPException(400,"Consent is required.")
     p = db.get(Participant, inv.participant_id)
-    capture_consent_document_evidence(inv, governance_for_study(db, study(db, inv.study_id, inv.organisation_id)))
+    governance = governance_for_study(db, study(db, inv.study_id, inv.organisation_id))
+    try:
+        documents = require_bound_documents(db, inv, governance)
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
+    if documents and not all((reviewed_participant_information, reviewed_privacy_notice, reviewed_consent_text)):
+        raise HTTPException(400, "Read each study-specific document before consenting.")
+    capture_consent_document_evidence(inv, governance)
     grant_participant_consent(inv, p, now())
     audit(db, inv.organisation_id, None, "participant.invitation_accepted", "participant", p.id)
     db.commit()
@@ -4025,18 +4084,24 @@ def participant_api_legal_documents(request: Request, response: Response, db: Se
     _session_row, invitation, _participant_row = _resolve_participant_api_context(request, db)
     study_row = study(db, invitation.study_id, invitation.organisation_id)
     governance = governance_for_study(db, study_row)
+    try:
+        bound_documents = require_bound_documents(db, invitation, governance)
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
     documents = [
         LegalDocumentReference(
             document_type=item.document_type,
+            title=item.title,
             version=item.version,
             reference=item.reference,
             effective_date=item.effective_date,
+            body=item.body,
+            content_sha256=item.content_sha256,
         )
-        for item in study_document_references(governance)
-        if item.reference and item.version and item.effective_date
+        for item in bound_documents
     ]
     _cache_control_no_store(response)
-    return StudyLegalDocumentsResponse(study_id=study_row.id, documents=documents)
+    return StudyLegalDocumentsResponse(study_id=study_row.id, bundle_id=invitation.consent_bundle_id, documents=documents)
 
 
 @app.put("/api/v1/participant/profile", response_model=ParticipantProfile)
@@ -4073,9 +4138,16 @@ def participant_api_consent_accept(
     if invitation.revoked_at or not unexpired(invitation.expires_at):
         raise _participant_api_unauthorised()
     if not invitation.accepted_at:
+        governance = governance_for_study(db, study(db, invitation.study_id, invitation.organisation_id))
+        try:
+            bound_documents = require_bound_documents(db, invitation, governance)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        if bound_documents and payload.document_hashes != {item.document_type: item.content_sha256 for item in bound_documents}:
+            raise HTTPException(409, "The consent documents have not been confirmed. Review the exact study documents and try again.")
         capture_consent_document_evidence(
             invitation,
-            governance_for_study(db, study(db, invitation.study_id, invitation.organisation_id)),
+            governance,
         )
         grant_participant_consent(invitation, participant_row, now())
         audit(db, invitation.organisation_id, None, "participant.api_consent_accepted", "participant", participant_row.id, str(invitation.study_id))

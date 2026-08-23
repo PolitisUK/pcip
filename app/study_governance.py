@@ -129,6 +129,13 @@ def study_launch_readiness(governance: StudyGovernance | None) -> LaunchReadines
     if not governance.deletion_handling_defined:
         missing.append("deletion handling")
     missing.extend(missing_document_references(governance))
+    if (
+        governance.participation_consent_configured
+        and governance.participant_information_available
+        and governance.privacy_information_available
+        and not governance.current_consent_bundle_id
+    ):
+        missing.append("immutable study-specific consent document versions")
     if not governance.features_assessed:
         missing.append("enabled participant features")
     if governance.special_category_data == "not_assessed":

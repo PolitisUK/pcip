@@ -209,6 +209,7 @@ class ConsentAcceptanceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     consent: Literal[True]
+    document_hashes: dict[Literal["participant_information", "privacy_notice", "consent_text"], str] = Field(default_factory=dict)
 
 
 class ConsentAcceptanceResponse(BaseModel):
@@ -222,15 +223,19 @@ class LegalDocumentReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     document_type: Literal["participant_information", "privacy_notice", "consent_text"]
+    title: str
     version: str
     reference: str
     effective_date: str
+    body: str
+    content_sha256: str
 
 
 class StudyLegalDocumentsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     study_id: int
+    bundle_id: int | None
     documents: list[LegalDocumentReference]
 
 

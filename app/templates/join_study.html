@@ -10,8 +10,22 @@
 		<h1>{{ study.title }}</h1>
 		<p>Hello {{ participant.name }}. You have been invited to take part in this study.</p>
 		<p>{{ study.description }}</p>
+		{% if documents %}
+		<section class="legal-document" aria-labelledby="study-documents-title">
+			<h2 id="study-documents-title">Study-specific information and consent</h2>
+			<p>These are the exact versions bound to this invitation. Citizen Centric’s public Legal Centre provides supplementary platform information; it does not replace these study documents.</p>
+			{% for document in documents %}
+			<article id="study-document-{{ document.document_type }}" class="legal-document__section">
+				<h3>{{ document.title }}</h3>
+				<p><strong>Version {{ document.version }}</strong> · {{ document.effective_date }} · {{ document.reference }}</p>
+				<div class="document-body">{{ document.body }}</div>
+			</article>
+			{% endfor %}
+		</section>
+		{% endif %}
 		<form method="post" action="/join-study" class="stack">
 			<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+			{% for document in documents %}<label class="control-row"><input type="checkbox" name="reviewed_{{ document.document_type }}" value="true" required> I have read {{ document.title|lower }} (version {{ document.version }}).</label>{% endfor %}
 			<label class="control-row"><input type="checkbox" name="consent" value="true" required> I have read the study information and consent to participate.</label>
 			<button>Join study</button>
 		</form>

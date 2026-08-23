@@ -1,0 +1,13 @@
+{
+  "legal_pack": {
+    "version": "1.1",
+    "effective_date": "2026-08-18",
+    "operator": "Politis Ltd"
+  },
+  "documents": [
+    {"id":"privacy","title":"Citizen Centric Platform Privacy Notice","public_route":"/privacy","implementation":"app/legal_sources/canonical/platform_privacy_notice_v1_1.md","source_filename":"Citizen_Centric_Platform_Privacy_Notice_v1.1.docx","source_sha256":"0a3ea7a300ae1d1e79ecacfc96f04f4097ebd4e09ac81534fcf7b8bb490ed909"},
+    {"id":"data-rights","title":"Citizen Centric Data Rights Policy","public_route":"/data-rights","implementation":"app/legal_sources/canonical/data_rights_policy_v1_1.md","source_filename":"Citizen_Centric_Data_Rights_Policy_v1.1.docx","source_sha256":"a13b1de066db80c4f9aa3c02b0767426950194b677050f04609ad1e792325d6a"},
+    {"id":"accessibility","title":"Citizen Centric Accessibility Policy","public_route":"/accessibility","implementation":"app/legal_sources/canonical/accessibility_policy_v1_1.md","source_filename":"Citizen_Centric_Accessibility_Policy_v1.1.docx","source_sha256":"ac3774ef017d2f67a73f082d8dcb4ff68081084513843dd01bccac4f02e0e84d"},
+    {"id":"consent","title":"Citizen Centric Consent Notice","public_route":"/consent","implementation":"app/legal_sources/canonical/consent_notice_v1_1.md","source_filename":"Citizen_Centric_Consent_Notice_v1.1.docx","source_sha256":"2f5d9817619708fa3f8f188603c53522746105acb06ec505bb5f7dc88f27440d"}
+  ]
+}
