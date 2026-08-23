@@ -115,7 +115,7 @@ export class AuthController {
         return;
       }
 
-      if (session.participant.consent_status !== "granted") {
+      if (session.next_action === "consent_required") {
         this.setState({
           status: "consent_required",
           participantDisplayName: session.participant.display_name,
@@ -127,7 +127,6 @@ export class AuthController {
       this.setState({
         status: "authenticated",
         participantDisplayName: session.participant.display_name,
-        participantId: session.participant.participant_id,
         studyScope: session.study_scope,
       });
     } catch (error) {
@@ -205,7 +204,7 @@ export class AuthController {
 
       this.lastInvitationUrl = null;
 
-      if (response.next_action === "consent_required" || response.participant.consent_status !== "granted") {
+      if (response.next_action === "consent_required") {
         this.setState({
           status: "consent_required",
           participantDisplayName: response.participant.display_name,
@@ -217,7 +216,6 @@ export class AuthController {
       this.setState({
         status: "authenticated",
         participantDisplayName: response.participant.display_name,
-        participantId: response.participant.participant_id,
         studyScope: [response.invitation.study_id],
       });
       return true;
@@ -301,7 +299,6 @@ async function saveSessionFromValidatedContext(accessToken: string, session: Par
   const material: SessionMaterial = {
     accessToken,
     expiresAt: session.session.expires_at,
-    participantId: session.participant.participant_id,
     participantDisplayName: session.participant.display_name,
     consentStatus: session.participant.consent_status,
     studyScope: session.study_scope,
@@ -313,7 +310,6 @@ async function saveSessionFromExchange(response: SessionExchangeResponse): Promi
   const material: SessionMaterial = {
     accessToken: response.session.access_token,
     expiresAt: response.session.expires_at,
-    participantId: response.participant.participant_id,
     participantDisplayName: response.participant.display_name,
     consentStatus: response.participant.consent_status,
     studyScope: [response.invitation.study_id],

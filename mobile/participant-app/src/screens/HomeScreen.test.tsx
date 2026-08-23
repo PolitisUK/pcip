@@ -101,10 +101,17 @@ const session: ParticipantSessionResponse = {
     revocable: true,
   },
   participant: {
-    participant_id: 7,
     display_name: "Alex",
     consent_status: "granted",
   },
+  invitation: {
+    study_id: 11,
+    invitation_status: "accepted",
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    accepted_at: new Date().toISOString(),
+    requires_study_documents: false,
+  },
+  next_action: "portal",
   study_scope: [11],
 };
 
@@ -1195,7 +1202,7 @@ describe("HomeScreen", () => {
     await waitFor(() => {
       expect(mockedRequestParticipantDeletion).toHaveBeenCalledWith(
         "token",
-        expect.objectContaining({ study_id: 11, mode_preference: "auto" }),
+        expect.objectContaining({ study_id: 11, mode_preference: "delete", scope: "study", confirmed: true }),
         expect.objectContaining({ idempotencyKey: expect.any(String) }),
       );
     });
@@ -1206,7 +1213,7 @@ describe("HomeScreen", () => {
     await waitFor(() => {
       expect(mockedRequestParticipantWithdrawal).toHaveBeenCalledWith(
         "token",
-        expect.objectContaining({ study_id: 11, scope: "study" }),
+        expect.objectContaining({ study_id: 11, scope: "study", confirmed: true }),
         expect.objectContaining({ idempotencyKey: expect.any(String) }),
       );
       expect(onSessionExpired).toHaveBeenCalledTimes(1);

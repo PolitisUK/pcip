@@ -78,10 +78,11 @@ describe("AuthController", () => {
     mockedGetCurrentSession.mockResolvedValue({
       session: { expires_at: new Date(Date.now() + 60_000).toISOString(), revocable: true },
       participant: {
-        participant_id: 99,
         display_name: "Alex",
         consent_status: "granted",
       },
+      invitation: { study_id: 15, invitation_status: "accepted", expires_at: new Date(Date.now() + 60_000).toISOString(), accepted_at: new Date().toISOString(), requires_study_documents: false },
+      next_action: "portal",
       study_scope: [15],
     });
 
@@ -91,7 +92,6 @@ describe("AuthController", () => {
     expect(controller.getState()).toEqual({
       status: "authenticated",
       participantDisplayName: "Alex",
-      participantId: 99,
       studyScope: [15],
     });
     expect(mockedSaveSessionMaterial).toHaveBeenCalled();
@@ -122,15 +122,15 @@ describe("AuthController", () => {
         revocable: true,
       },
       participant: {
-        participant_id: 12,
         display_name: "Pat",
-        consent_status: "pending",
+        consent_status: "granted",
       },
       invitation: {
         study_id: 22,
         invitation_status: "valid",
         expires_at: new Date(Date.now() + 60_000).toISOString(),
         accepted_at: null,
+        requires_study_documents: true,
       },
       next_action: "consent_required",
     });
@@ -211,7 +211,6 @@ describe("AuthController", () => {
         revocable: true,
       },
       participant: {
-        participant_id: 12,
         display_name: "Pat",
         consent_status: "granted",
       },
@@ -220,6 +219,7 @@ describe("AuthController", () => {
         invitation_status: "valid",
         expires_at: new Date(Date.now() + 60_000).toISOString(),
         accepted_at: null,
+        requires_study_documents: false,
       },
       next_action: "portal",
     });
@@ -251,7 +251,6 @@ describe("AuthController", () => {
           revocable: true,
         },
         participant: {
-          participant_id: 9,
           display_name: "Casey",
           consent_status: "granted",
         },
@@ -260,6 +259,7 @@ describe("AuthController", () => {
           invitation_status: "valid",
           expires_at: new Date(Date.now() + 60_000).toISOString(),
           accepted_at: null,
+          requires_study_documents: false,
         },
         next_action: "portal",
       }), 20))
@@ -284,7 +284,9 @@ describe("AuthController", () => {
 
     const restore = deferredPromise<{
       session: { expires_at: string; revocable: true };
-      participant: { participant_id: number; display_name: string; consent_status: "granted" };
+      participant: { display_name: string; consent_status: "granted" };
+      invitation: { study_id: number; invitation_status: "valid" | "accepted"; expires_at: string; accepted_at: string | null; requires_study_documents: boolean };
+      next_action: "consent_required" | "portal";
       study_scope: number[];
     }>();
     mockedGetCurrentSession.mockImplementation(() => restore.promise);
@@ -296,7 +298,6 @@ describe("AuthController", () => {
         revocable: true,
       },
       participant: {
-        participant_id: 55,
         display_name: "Fresh",
         consent_status: "granted",
       },
@@ -305,6 +306,7 @@ describe("AuthController", () => {
         invitation_status: "valid",
         expires_at: new Date(Date.now() + 60_000).toISOString(),
         accepted_at: null,
+        requires_study_documents: false,
       },
       next_action: "portal",
     });
@@ -316,10 +318,11 @@ describe("AuthController", () => {
     restore.resolve({
       session: { expires_at: new Date(Date.now() + 60_000).toISOString(), revocable: true },
       participant: {
-        participant_id: 1,
         display_name: "Old",
         consent_status: "granted",
       },
+      invitation: { study_id: 1, invitation_status: "accepted", expires_at: new Date(Date.now() + 60_000).toISOString(), accepted_at: new Date().toISOString(), requires_study_documents: false },
+      next_action: "portal",
       study_scope: [1],
     });
     await restorePromise;
@@ -327,7 +330,6 @@ describe("AuthController", () => {
     expect(controller.getState()).toEqual({
       status: "authenticated",
       participantDisplayName: "Fresh",
-      participantId: 55,
       studyScope: [8],
     });
   });
@@ -347,7 +349,6 @@ describe("AuthController", () => {
           revocable: true,
         },
         participant: {
-          participant_id: 21,
           display_name: "Jordan",
           consent_status: "granted",
         },
@@ -356,6 +357,7 @@ describe("AuthController", () => {
           invitation_status: "valid",
           expires_at: new Date(Date.now() + 60_000).toISOString(),
           accepted_at: null,
+          requires_study_documents: false,
         },
         next_action: "portal",
       });
@@ -370,7 +372,6 @@ describe("AuthController", () => {
     expect(controller.getState()).toEqual({
       status: "authenticated",
       participantDisplayName: "Jordan",
-      participantId: 21,
       studyScope: [31],
     });
   });
@@ -392,8 +393,8 @@ describe("AuthController", () => {
   it("ignores stale exchange completion after sign-out", async () => {
     const exchange = deferredPromise<{
       session: { access_token: string; token_type: "Bearer"; expires_at: string; revocable: true };
-      participant: { participant_id: number; display_name: string; consent_status: "granted" };
-      invitation: { study_id: number; invitation_status: "valid"; expires_at: string; accepted_at: null };
+      participant: { display_name: string; consent_status: "granted" };
+      invitation: { study_id: number; invitation_status: "valid"; expires_at: string; accepted_at: null; requires_study_documents: boolean };
       next_action: "portal";
     }>();
     mockedExchange.mockImplementation(() => exchange.promise);
@@ -411,7 +412,6 @@ describe("AuthController", () => {
         revocable: true,
       },
       participant: {
-        participant_id: 10,
         display_name: "Late",
         consent_status: "granted",
       },
@@ -420,6 +420,7 @@ describe("AuthController", () => {
         invitation_status: "valid",
         expires_at: new Date(Date.now() + 60_000).toISOString(),
         accepted_at: null,
+        requires_study_documents: false,
       },
       next_action: "portal",
     });
