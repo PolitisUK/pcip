@@ -703,7 +703,7 @@ def _controller_governance_payload(version: str = '1.0') -> dict[str, str]:
 
 
 def test_participant_api_exposes_scoped_document_references_and_snapshots_consent_evidence():
-    from app.models import ParticipantInvitation
+    from app.models import OutboxEmail, ParticipantInvitation
 
     with client:
         auth()
@@ -768,6 +768,81 @@ def test_participant_api_exposes_scoped_document_references_and_snapshots_consen
             assert invitation is not None
             assert invitation.participant_information_reference == 'PI-1.0'
             assert invitation.privacy_notice_version == '1.0'
+
+        second_study = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={'title': 'Independent consent study', 'code': unique_value('BCS2').upper(), 'description': '', 'methodology': 'diary', 'status_value': 'draft'},
+            follow_redirects=False,
+        )
+        second_study_id = int(second_study.headers['location'].rsplit('/', 1)[-1])
+        assert post_with_csrf(f'/studies/{second_study_id}/governance', data=_controller_governance_payload('2.0'), follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{second_study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{second_study_id}/invite/{participant_id}', follow_redirects=False).status_code == 303
+        with SessionLocal() as db:
+            second_email = db.scalar(select(OutboxEmail).where(OutboxEmail.participant_id == participant_id, OutboxEmail.study_id == second_study_id).order_by(OutboxEmail.id.desc()))
+            assert second_email is not None
+            second_token = second_email.body.split('token=')[1].strip()
+        second_exchange = _exchange_participant_api_session(second_token)
+        assert second_exchange.status_code == 200
+        assert second_exchange.json()['participant']['consent_status'] == 'granted'
+        assert second_exchange.json()['next_action'] == 'consent_required'
+        second_headers = {'Authorization': f"Bearer {second_exchange.json()['session']['access_token']}", 'Content-Type': 'application/json'}
+        second_session = client.get('/api/v1/participant/session', headers=second_headers)
+        assert second_session.json()['next_action'] == 'consent_required'
+        assert second_session.json()['invitation']['study_id'] == second_study_id
+        second_documents = client.get('/api/v1/participant/legal-documents', headers=second_headers).json()['documents']
+        assert {document['version'] for document in second_documents} == {'2.0'}
+        assert client.post('/api/v1/participant/consent', json={'consent': True, 'document_hashes': {item['document_type']: item['content_sha256'] for item in second_documents}}, headers=second_headers).status_code == 200
+        with SessionLocal() as db:
+            first = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id))
+            second = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == second_study_id))
+            assert first is not None and first.accepted_at is not None and first.consent_bundle_id
+            assert second is not None and second.accepted_at is not None and second.consent_bundle_id
+            assert first.consent_bundle_id != second.consent_bundle_id
+
+
+def test_incomplete_governance_invalidates_current_bundle_without_changing_historical_invitations():
+    from app.models import ParticipantInvitation, StudyGovernance
+
+    with client:
+        auth()
+        project = post_with_csrf('/projects', data={'title': 'Bundle invalidation project', 'code': unique_value('BIP').upper(), 'description': '', 'status_value': 'draft'}, follow_redirects=False)
+        project_id = int(project.headers['location'].rsplit('/', 1)[-1])
+        created = post_with_csrf(f'/projects/{project_id}/studies', data={'title': 'Bundle invalidation study', 'code': unique_value('BIS').upper(), 'description': '', 'methodology': 'diary', 'status_value': 'draft'}, follow_redirects=False)
+        study_id = int(created.headers['location'].rsplit('/', 1)[-1])
+        assert post_with_csrf(f'/studies/{study_id}/governance', data=_controller_governance_payload('1.0'), follow_redirects=False).status_code == 303
+
+    token, participant_id, _ = _create_participant_invitation_for_api('bundle-invalidation', study_id=study_id)
+    with client:
+        exchange = _exchange_participant_api_session(token)
+        headers = {'Authorization': f"Bearer {exchange.json()['session']['access_token']}", 'Content-Type': 'application/json'}
+        documents = client.get('/api/v1/participant/legal-documents', headers=headers).json()['documents']
+        assert client.post('/api/v1/participant/consent', json={'consent': True, 'document_hashes': {item['document_type']: item['content_sha256'] for item in documents}}, headers=headers).status_code == 200
+        with SessionLocal() as db:
+            invitation_a = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id))
+            assert invitation_a is not None and invitation_a.consent_bundle_id
+            bundle_v1 = invitation_a.consent_bundle_id
+
+        incomplete = _controller_governance_payload('2.0')
+        incomplete['privacy_notice_effective_date'] = ''
+        assert post_with_csrf(f'/studies/{study_id}/governance', data=incomplete, follow_redirects=False).status_code == 303
+        with SessionLocal() as db:
+            governance = db.scalar(select(StudyGovernance).where(StudyGovernance.study_id == study_id))
+            historical = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id))
+            assert governance is not None and governance.current_consent_bundle_id is None
+            assert historical is not None and historical.consent_bundle_id == bundle_v1 and historical.accepted_at is not None
+
+        blocked = post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
+        assert blocked.status_code == 400
+        assert 'consent documents' in blocked.text.lower()
+
+        assert post_with_csrf(f'/studies/{study_id}/governance', data=_controller_governance_payload('2.0'), follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False).status_code == 303
+        with SessionLocal() as db:
+            invitation_b = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id).order_by(ParticipantInvitation.id.desc()))
+            historical = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id).order_by(ParticipantInvitation.id.asc()))
+            assert invitation_b is not None and invitation_b.consent_bundle_id and invitation_b.consent_bundle_id != bundle_v1
+            assert historical is not None and historical.consent_bundle_id == bundle_v1 and historical.accepted_at is not None
 
 
 def test_first_project_wizard_creates_project_and_study():

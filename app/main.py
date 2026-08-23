@@ -2561,6 +2561,10 @@ def update_study_governance(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+    elif not has_document_metadata:
+        # An incomplete edit cannot leave a superseded bundle marked current.
+        # Existing invitations keep their own immutable bundle references.
+        governance.current_consent_bundle_id = None
     audit(db, u.organisation_id, u.id, "study.governance_updated", "study", s.id, s.title)
     db.commit()
     return RedirectResponse(f"/studies/{s.id}#governance", 303)
@@ -4042,6 +4046,7 @@ def participant_api_session_exchange(
             invitation_status=invitation_status,
             expires_at=invitation.expires_at,
             accepted_at=invitation.accepted_at,
+            requires_study_documents=invitation.consent_bundle_id is not None,
         ),
         next_action=next_action,
     )
@@ -4064,6 +4069,14 @@ def participant_api_session(
             display_name=participant_row.name,
             consent_status=participant_row.consent_status,
         ),
+        invitation=InvitationContext(
+            study_id=invitation.study_id,
+            invitation_status="accepted" if invitation.accepted_at else "valid",
+            expires_at=invitation.expires_at,
+            accepted_at=invitation.accepted_at,
+            requires_study_documents=invitation.consent_bundle_id is not None,
+        ),
+        next_action="portal" if invitation.accepted_at else "consent_required",
         study_scope=[invitation.study_id],
     )
 

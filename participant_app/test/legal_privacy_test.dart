@@ -57,7 +57,7 @@ void main() {
             'content_sha256': 'synthetic-hash',
             'body': 'Exact study-specific participant information.',
           },
-        ], onAccept: (_) async {})),
+        ], documentsRequired: false, documentsLoading: false, documentsError: null, onRetry: () async {}, onAccept: (_) async {})),
       );
 
       expect(find.text('Read Participant information (version 7.2)'), findsOneWidget);
@@ -87,4 +87,56 @@ void main() {
       expect(find.text('Delete my Citizen Centric account'), findsOneWidget);
     },
   );
+
+  test('invitation workflow state takes precedence over participant-wide consent', () {
+    final session = <String, dynamic>{
+      'participant': {'consent_status': 'granted'},
+      'next_action': 'consent_required',
+      'invitation': {'accepted_at': null, 'requires_study_documents': true},
+    };
+
+    expect(invitationRequiresConsent(session), isTrue);
+    expect(invitationRequiresStudyDocuments(session), isTrue);
+  });
+
+  testWidgets('bound document load failure is recoverable and cannot submit consent', (tester) async {
+    var loaded = false;
+    Map<String, String>? acceptedHashes;
+    const documents = [
+      {'document_type': 'participant_information', 'title': 'Study B information', 'version': 'B1', 'reference': 'B-PI', 'effective_date': '18 August 2026', 'content_sha256': 'hash-information', 'body': 'Study B information.'},
+      {'document_type': 'privacy_notice', 'title': 'Study B privacy', 'version': 'B1', 'reference': 'B-PN', 'effective_date': '18 August 2026', 'content_sha256': 'hash-privacy', 'body': 'Study B privacy.'},
+      {'document_type': 'consent_text', 'title': 'Study B consent', 'version': 'B1', 'reference': 'B-CT', 'effective_date': '18 August 2026', 'content_sha256': 'hash-consent', 'body': 'Study B consent.'},
+    ];
+
+    await tester.pumpWidget(StatefulBuilder(builder: (context, setState) => MaterialApp(home: Consent(
+      error: null,
+      documents: loaded ? documents : const [],
+      documentsRequired: true,
+      documentsLoading: false,
+      documentsError: loaded ? null : 'We could not load this study’s consent documents. Your consent has not been submitted.',
+      onRetry: () async => setState(() => loaded = true),
+      onAccept: (hashes) async => acceptedHashes = hashes,
+    ))));
+
+    expect(find.text('Try again'), findsOneWidget);
+    await tester.tap(find.text('I understand and agree to take part.'));
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    expect(find.text('Read Study B information (version B1)'), findsOneWidget);
+    for (final label in ['Read Study B information (version B1)', 'Read Study B privacy (version B1)', 'Read Study B consent (version B1)']) {
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(find.text('I understand and agree to take part.'));
+    await tester.tap(find.text('Accept and continue'));
+    await tester.pump();
+    expect(acceptedHashes, {
+      'participant_information': 'hash-information',
+      'privacy_notice': 'hash-privacy',
+      'consent_text': 'hash-consent',
+    });
+  });
 }
