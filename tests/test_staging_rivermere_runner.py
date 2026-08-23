@@ -52,6 +52,9 @@ def test_production_rivermere_runner_preserves_release_and_cleanup_gates():
     assert "/api/v1/rivermere/verification" in promotion
     assert "for attempt in {1..90}" in promotion
     assert "for final_check in {1..3}" in promotion
+    assert "response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 \"https://$host/health/ready\" || true)" not in promotion
+    assert promotion.count("if response=$(curl --fail") == 5
+    assert promotion.count('response=""') == 5
     assert "echo \"$RIVERMERE_DEMO_OWNER_EMAIL\"" not in promotion
     assert "echo \"$RIVERMERE_DEMO_OWNER_USER_ID\"" not in promotion
     assert "RIVERMERE_DEMO_OWNER_EMAIL" not in entrypoint
