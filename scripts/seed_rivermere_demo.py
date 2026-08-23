@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import sys
+import traceback
 from pathlib import Path
 
 from app.config import settings, validate_runtime_settings
@@ -16,12 +19,29 @@ from app.demo_data.rivermere import (
     resolve_configured_production_owner,
     replace_superseded_rivermere_demo,
     seed_rivermere,
+    update_rivermere_import_status,
     verify_rivermere,
 )
 from app.storage import build_storage
 
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(message)s", force=True)
+logger = logging.getLogger(__name__)
+current_phase = "not_started"
+
+
+def milestone(phase: str, **extra) -> None:
+    global current_phase
+    current_phase = phase
+    logger.info(json.dumps({"event": "rivermere_importer", "phase": phase, **extra}, sort_keys=True))
+
+
+def sanitised_traceback_frames(exc: BaseException) -> list[str]:
+    """Return stack locations only; exception messages can contain runtime secrets."""
+    return [frame.name for frame in traceback.extract_tb(exc.__traceback__)[-8:]]
+
 
 def main() -> int:
+    milestone("process_started")
     parser = argparse.ArgumentParser(description="Seed or remove the fictional Rivermere local-development dataset.")
     parser.add_argument("--environment", required=True, help="Must exactly match the configured application environment.")
     parser.add_argument("--organisation-slug", required=True, help="The designated fictional/demo organisation slug.")
@@ -91,6 +111,9 @@ def main() -> int:
         parser.error("--confirm-production-demo is required for production; no records were changed")
 
     validate_runtime_settings(settings)
+    milestone("environment_safeguard_passed")
+    if args.grant_configured_production_owner_access:
+        update_rivermere_import_status("running", "environment_safeguard_passed")
     repo_root = Path(__file__).resolve().parents[1]
     database_path, evidence_path = assert_safe_demo_target(
         database_url=settings.database_url, environment=settings.environment,
@@ -135,6 +158,8 @@ def main() -> int:
                 demo_owner_email=(settings.rivermere_demo_owner_email if args.grant_configured_production_owner_access else None),
             ).as_dict()
             if args.grant_configured_production_owner_access:
+                update_rivermere_import_status("committed", "database_commit_completed")
+                milestone("verification_started")
                 owner = _configured_production_owner(db)
                 verification = verify_rivermere(
                     db,
@@ -143,7 +168,10 @@ def main() -> int:
                 )
                 if not verification["valid"]:
                     raise RuntimeError("Rivermere verification failed; no production completion record was written.")
+                milestone("verification_completed")
                 record_rivermere_verification(db, organisation_slug=args.organisation_slug)
+                update_rivermere_import_status("verified", "durable_verification_record_written")
+                milestone("durable_verification_record_written")
                 result["verification_completed"] = True
             if replacement:
                 result["superseded_v1_removed"] = replacement
@@ -165,4 +193,16 @@ def _configured_production_owner(db):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        update_rivermere_import_status("failed", current_phase, error_category=exc.__class__.__name__)
+        logger.error(json.dumps({
+            "event": "rivermere_importer_failed",
+            "phase": current_phase,
+            "error_category": exc.__class__.__name__,
+            "seed_transaction_committed": current_phase in {"database_commit_completed", "verification_started", "verification_completed", "durable_verification_record_written"},
+            "rollback_completed": current_phase not in {"database_commit_completed", "verification_started", "verification_completed", "durable_verification_record_written"},
+            "traceback_frames": sanitised_traceback_frames(exc),
+        }, sort_keys=True))
+        raise

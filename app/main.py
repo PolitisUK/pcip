@@ -27,6 +27,7 @@ from .models import (
     Activity,
     ActivityResponse,
     AuditEvent,
+    DemoImportStatus,
     ConsentStatus,
     EvidenceConfidenceAssessment,
     EvidenceFile,
@@ -1550,11 +1551,17 @@ def readiness():
 
 def _rivermere_completion_payload(db: Session) -> dict[str, object]:
     completed_at = rivermere_verification_completed_at(db)
+    status = db.get(DemoImportStatus, "rivermere")
     return {
         "dataset": "rivermere",
         "content_version": RIVERMERE_CONTENT_VERSION,
         "verified": completed_at is not None,
         "verified_at": completed_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if completed_at else None,
+        "import_status": status.status if status else "not_started",
+        "current_phase": status.phase if status else "not_started",
+        "error_category": status.error_category if status else None,
+        "started_at": status.started_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if status and status.started_at else None,
+        "committed_at": status.committed_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if status and status.committed_at else None,
     }
 
 

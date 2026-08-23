@@ -23,12 +23,14 @@ from app.demo_data.rivermere import (
     rivermere_verification_completed_at,
     rivermere_datasets,
     seed_rivermere,
+    update_rivermere_import_status,
     verify_rivermere,
 )
 from app.models import (
     Activity,
     ActivityResponse,
     AuditEvent,
+    DemoImportStatus,
     EvidenceFile,
     Organisation,
     OrganisationMembership,
@@ -519,6 +521,33 @@ def test_completion_record_is_written_only_after_full_verification_without_owner
         assert event.entity_id == "rivermere"
         assert event.detail == "fictional_dataset=rivermere content_version=1.1.0 verification=successful"
         assert "@" not in event.detail
+
+
+def test_import_status_transitions_are_non_sensitive_and_durable(rivermere_database, monkeypatch):
+    factory, _storage = rivermere_database
+    import app.db
+
+    monkeypatch.setattr(app.db, "SessionLocal", factory)
+    update_rivermere_import_status("running", "environment_safeguard_passed")
+    update_rivermere_import_status("committed", "database_commit_completed")
+    update_rivermere_import_status("verified", "durable_verification_record_written")
+    with factory() as db:
+        status = db.get(DemoImportStatus, "rivermere")
+        assert status.status == "verified"
+        assert status.phase == "durable_verification_record_written"
+        assert status.started_at and status.committed_at and status.verified_at
+        assert status.error_category is None
+
+
+def test_import_failure_traceback_contains_no_exception_message():
+    from scripts.seed_rivermere_demo import sanitised_traceback_frames
+
+    try:
+        raise RuntimeError("private-owner@example.invalid")
+    except RuntimeError as exc:
+        frames = sanitised_traceback_frames(exc)
+    assert frames
+    assert "private-owner@example.invalid" not in json.dumps(frames)
 
 
 def test_inconsistent_existing_dataset_fails_closed_without_automatic_repair(rivermere_database):

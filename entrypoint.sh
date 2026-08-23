@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+export PYTHONUNBUFFERED=1
 
 if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
   # A release must never report healthy after an incomplete schema upgrade.
@@ -12,12 +13,12 @@ if [ "${RUN_RIVERMERE_DEMO_SEED:-false}" = "true" ]; then
     echo "RUN_RIVERMERE_DEMO_SEED is restricted to the staging environment." >&2
     exit 1
   fi
-  PYTHONPATH=. python scripts/seed_rivermere_demo.py \
+  PYTHONPATH=. python -u scripts/seed_rivermere_demo.py \
     --environment staging \
     --organisation-slug rivermere-town-council \
     --confirm-nonlocal-demo \
     --create-staging-demo-organisation
-  PYTHONPATH=. python scripts/seed_rivermere_demo.py \
+  PYTHONPATH=. python -u scripts/seed_rivermere_demo.py \
     --environment staging \
     --organisation-slug rivermere-town-council \
     --verify
@@ -28,14 +29,14 @@ if [ "${RUN_RIVERMERE_PRODUCTION_DEMO_SEED:-false}" = "true" ]; then
     echo "RUN_RIVERMERE_PRODUCTION_DEMO_SEED is restricted to the production environment." >&2
     exit 1
   fi
-  PYTHONPATH=. python scripts/seed_rivermere_demo.py \
+  PYTHONPATH=. python -u scripts/seed_rivermere_demo.py \
     --environment production \
     --organisation-slug rivermere-town-council \
     --confirm-nonlocal-demo \
     --confirm-production-demo \
     --create-production-demo-organisation \
     --grant-configured-production-owner-access
-  PYTHONPATH=. python scripts/seed_rivermere_demo.py \
+  PYTHONPATH=. python -u scripts/seed_rivermere_demo.py \
     --environment production \
     --organisation-slug rivermere-town-council \
     --verify \
