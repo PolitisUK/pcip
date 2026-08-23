@@ -376,12 +376,14 @@ describe("AuthController", () => {
     });
   });
 
-  it("clears local credentials even if logout revocation fails", async () => {
+  it("clears local credentials when the server has already revoked the session", async () => {
     mockedLoadSessionMaterial.mockResolvedValue({
       accessToken: "token-123",
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     });
-    mockedRevokeCurrentSession.mockRejectedValue(new Error("server unavailable"));
+    mockedRevokeCurrentSession.mockRejectedValue(
+      new ApiRequestError({ status: 401, message: "Unauthorized" }),
+    );
 
     const { controller } = createControllerWithStates();
     await controller.signOut();

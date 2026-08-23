@@ -7910,6 +7910,80 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         assert request_row.participant_id is None
 
 
+def test_participant_api_account_deletion_rejects_cross_tenant_study_without_revoking_access():
+    from app.models import Organisation, Participant, ParticipantInvitation, Project, Study, StudyEnrolment, User
+
+    context = _prepare_participant_api_activity_response_context('api-privacy-cross-tenant')
+
+    with SessionLocal() as db:
+        current_study = db.get(Study, context['study_id'])
+        assert current_study is not None
+        owner = db.scalar(
+            select(User).where(User.organisation_id == current_study.organisation_id).order_by(User.id.asc())
+        )
+        assert owner is not None
+        other_org = Organisation(
+            name=unique_value('Deletion isolation tenant'),
+            slug=unique_value('deletion-isolation').lower(),
+        )
+        db.add(other_org)
+        db.flush()
+        other_project = Project(
+            organisation_id=other_org.id,
+            title='Other tenant project',
+            code=unique_value('DELETE-ISOLATION-PROJECT').upper(),
+            description='Must remain outside participant scope.',
+            status='active',
+            created_by_id=owner.id,
+        )
+        db.add(other_project)
+        db.flush()
+        other_study = Study(
+            organisation_id=other_org.id,
+            project_id=other_project.id,
+            title='Other tenant study',
+            code=unique_value('DELETE-ISOLATION-STUDY').upper(),
+            description='Must remain outside participant scope.',
+            methodology='diary',
+            status='recruiting',
+            created_by_id=owner.id,
+        )
+        db.add(other_study)
+        db.commit()
+        other_study_id = other_study.id
+
+    with client:
+        response = client.post(
+            '/api/v1/participant/privacy/deletion-requests',
+            json={
+                'mode_preference': 'delete',
+                'study_id': other_study_id,
+                'scope': 'account',
+                'confirmed': True,
+            },
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'deletion-cross-tenant-1234',
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 403
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
+        invitation = db.get(ParticipantInvitation, context['invitation_id'])
+        assert invitation is not None and invitation.revoked_at is None
+        enrolment = db.scalar(
+            select(StudyEnrolment).where(
+                StudyEnrolment.organisation_id == context['organisation_id'],
+                StudyEnrolment.study_id == context['study_id'],
+                StudyEnrolment.participant_id == context['participant_id'],
+            )
+        )
+        assert enrolment is not None and enrolment.status != 'withdrawn'
+
+
 def test_participant_api_privacy_deletion_storage_failure_is_retryable_and_does_not_delete_other_participants(monkeypatch):
     from app.models import ActivityResponse, EvidenceFile, Participant, ParticipantPrivacyRequest
     import app.main as main_module
