@@ -1,12 +1,24 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:participant_app/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Api get _api =>
     Api(Uri.parse('https://citizencentric.co.uk'), 'synthetic-token');
+
+class _FailingSessionStore extends SessionStore {
+  _FailingSessionStore() : super(const FlutterSecureStorage());
+
+  @override
+  Future<(String, String)?> read() async =>
+      throw StateError('Keychain unavailable');
+
+  @override
+  Future<void> clear() async {}
+}
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -144,6 +156,94 @@ void main() {
       expect(calls, 1);
     },
   );
+
+  test('an already-submitted response remains protected without discarding pending media', () async {
+    final root = await Directory.systemTemp.createTemp('pcip-media-final-');
+    addTearDown(() => root.delete(recursive: true));
+    final source = File('${root.path}/photo.jpg');
+    await source.writeAsBytes([1, 2, 3], flush: true);
+    final pending = await MediaQueue.enqueue(
+      activityId: 27,
+      sourcePath: source.path,
+      filename: 'photo.jpg',
+      kind: 'photo',
+      supportDirectory: root,
+    );
+
+    final state = await MediaQueue.replay(
+      _api,
+      uploader: (_) async => throw const ApiError(
+        'This activity has already been submitted.',
+        retryable: false,
+        category: 'already_submitted',
+      ),
+    );
+
+    expect(state, SyncState.needsAttention);
+    expect(
+      (await MediaQueue.read()).single.idempotencyKey,
+      pending.idempotencyKey,
+    );
+    expect(
+      (await MediaQueue.read()).single.failureCategory,
+      'already_submitted',
+    );
+    expect(await File(pending.localPath).exists(), isTrue);
+  });
+
+  testWidgets(
+    'media-native activities do not use the generic submit-response screen',
+    (tester) async {
+      final photo = participantActivityPage(_api, {
+        'activity_id': 10,
+        'title': 'Street scene',
+        'activity_type': 'photo',
+      });
+      final voice = participantActivityPage(_api, {
+        'activity_id': 11,
+        'title': 'Voice diary',
+        'activity_type': 'audio',
+      });
+
+      expect(photo, isA<PhotoEvidence>());
+      expect(voice, isA<VoiceDiary>());
+
+      await tester.pumpWidget(MaterialApp(home: photo));
+      await tester.pumpAndSettle();
+      expect(find.text('Submit response'), findsNothing);
+      expect(find.text('Take a photo'), findsOneWidget);
+    },
+  );
+
+  testWidgets('submitted media activity does not offer another upload', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: participantActivityPage(_api, {
+          'activity_id': 12,
+          'title': 'Submitted photo',
+          'activity_type': 'photo',
+          'response': {'status': 'submitted'},
+        }),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Submitted activities cannot be changed.'),
+      findsOneWidget,
+    );
+    expect(find.text('Take a photo'), findsNothing);
+  });
+
+  testWidgets('secure-storage recovery returns to the join screen', (
+    tester,
+  ) async {
+    await tester.pumpWidget(ParticipantApp(store: _FailingSessionStore()));
+    await tester.pumpAndSettle();
+    expect(find.text('Join your study'), findsOneWidget);
+    expect(find.bySemanticsLabel('Loading your secure session'), findsNothing);
+  });
 
   testWidgets(
     'confirmed participant message appears immediately and retry does not change its key',

@@ -30,9 +30,10 @@ abstract class ParticipantApi {
 }
 
 class ApiError implements Exception {
-  const ApiError(this.message, {this.retryable = true});
+  const ApiError(this.message, {this.retryable = true, this.category});
   final String message;
   final bool retryable;
+  final String? category;
 }
 
 const _allowLocalQaHttp = bool.fromEnvironment('PCIP_LOCAL_QA');
@@ -258,6 +259,13 @@ class Api implements ParticipantApi {
           );
     final x = await http.Response.fromStream(await r.send());
     if (x.statusCode == 401) throw const ApiError('Your session has ended.');
+    if (x.statusCode == 409) {
+      throw const ApiError(
+        'This activity has already been submitted.',
+        retryable: false,
+        category: 'already_submitted',
+      );
+    }
     if (x.statusCode == 400 || x.statusCode == 415) {
       throw const ApiError(
         'This file was rejected by the security checks. Choose a different file.',
@@ -503,15 +511,20 @@ class _ParticipantAppState extends State<ParticipantApp> {
   }
 
   Future<void> restore() async {
-    final saved = await widget.store.read();
-    if (saved != null) {
-      try {
+    try {
+      final saved = await widget.store.read();
+      if (saved != null) {
         api = make(saved.$1, saved.$2);
         await refreshSession();
-      } catch (_) {
-        await widget.store.clear();
-        api = null;
       }
+    } catch (_) {
+      try {
+        await widget.store.clear();
+      } catch (_) {
+        // A device keychain failure must not trap a participant on a spinner.
+      }
+      api = null;
+      session = null;
     }
     if (mounted) setState(() => busy = false);
   }
@@ -1502,7 +1515,7 @@ class MediaQueue {
         if (await local.exists()) await local.delete();
       } on ApiError catch (error) {
         if (!error.retryable) {
-          retained.add(item.blocked('security_rejected'));
+          retained.add(item.blocked(error.category ?? 'security_rejected'));
           state = SyncState.needsAttention;
         } else if (error.message == 'Your session has ended.') {
           retained.add(item);
@@ -1524,6 +1537,36 @@ class MediaQueue {
       retained.map((item) => jsonEncode(item.toJson())).toList(),
     );
     return state;
+  }
+}
+
+bool activityIsSubmitted(Map<String, dynamic> activity) {
+  final response = activity['response'];
+  return response is Map && response['status'] == 'submitted';
+}
+
+Widget participantActivityPage(Api api, Map<String, dynamic> item) {
+  final activityId = item['activity_id'] as int;
+  final submitted = activityIsSubmitted(item);
+  switch (item['activity_type']) {
+    case 'photo':
+      return PhotoEvidence(
+        api: api,
+        activityId: activityId,
+        title: item['title']?.toString(),
+        prompt: item['prompt']?.toString(),
+        submitted: submitted,
+      );
+    case 'audio':
+      return VoiceDiary(
+        api: api,
+        activityId: activityId,
+        title: item['title']?.toString(),
+        prompt: item['prompt']?.toString(),
+        submitted: submitted,
+      );
+    default:
+      return TextActivity(api: api, item: item);
   }
 }
 
@@ -1623,15 +1666,18 @@ class _ActivitiesState extends State<Activities> with WidgetsBindingObserver {
                   title: Text(r['title'] ?? 'Activity'),
                   subtitle: Text(r['availability']?['status'] ?? 'Available'),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.push(
-                    c,
-                    MaterialPageRoute(
-                      builder: (_) => TextActivity(
-                        api: widget.api,
-                        item: Map<String, dynamic>.from(r),
+                  onTap: () async {
+                    await Navigator.push(
+                      c,
+                      MaterialPageRoute(
+                        builder: (_) => participantActivityPage(
+                          widget.api,
+                          Map<String, dynamic>.from(r),
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                    if (mounted) setState(() => load = widget.api.activities());
+                  },
                 ),
               ),
             ],
@@ -1653,11 +1699,13 @@ class TextActivity extends StatefulWidget {
 class _TextActivityState extends State<TextActivity> {
   final text = TextEditingController();
   bool working = false;
+  late bool submitted;
   String status = '';
   String get key => 'draft_${widget.item['activity_id']}';
   @override
   void initState() {
     super.initState();
+    submitted = activityIsSubmitted(widget.item);
     restore();
   }
 
@@ -1679,6 +1727,7 @@ class _TextActivityState extends State<TextActivity> {
         );
         await p.remove(key);
         status = 'Submitted successfully.';
+        submitted = true;
       } else {
         await widget.api.draft(
           widget.item['activity_id'] as int,
@@ -1703,47 +1752,49 @@ class _TextActivityState extends State<TextActivity> {
   Widget build(BuildContext c) => Scaffold(
     appBar: AppBar(
       title: Text(widget.item['title'] ?? 'Activity'),
-      actions: [
-        IconButton(
-          tooltip: 'Add photo',
-          icon: const Icon(Icons.add_a_photo),
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => PhotoEvidence(
-                api: widget.api,
-                activityId: widget.item['activity_id'] as int,
+      actions: submitted
+          ? null
+          : [
+              IconButton(
+                tooltip: 'Add photo',
+                icon: const Icon(Icons.add_a_photo),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PhotoEvidence(
+                      api: widget.api,
+                      activityId: widget.item['activity_id'] as int,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
-        IconButton(
-          tooltip: 'Add document',
-          icon: const Icon(Icons.attach_file),
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => DocumentEvidence(
-                api: widget.api,
-                activityId: widget.item['activity_id'] as int,
+              IconButton(
+                tooltip: 'Add document',
+                icon: const Icon(Icons.attach_file),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DocumentEvidence(
+                      api: widget.api,
+                      activityId: widget.item['activity_id'] as int,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
-        IconButton(
-          tooltip: 'Record voice diary',
-          icon: const Icon(Icons.mic),
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => VoiceDiary(
-                api: widget.api,
-                activityId: widget.item['activity_id'] as int,
+              IconButton(
+                tooltip: 'Record voice diary',
+                icon: const Icon(Icons.mic),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => VoiceDiary(
+                      api: widget.api,
+                      activityId: widget.item['activity_id'] as int,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
-      ],
+            ],
     ),
     body: Padding(
       padding: const EdgeInsets.all(20),
@@ -1753,15 +1804,22 @@ class _TextActivityState extends State<TextActivity> {
           Text(widget.item['prompt'] ?? 'Share your response.'),
           const SizedBox(height: 12),
           Expanded(
-            child: TextField(
-              controller: text,
-              maxLines: null,
-              expands: true,
-              decoration: const InputDecoration(
-                labelText: 'Your response',
-                border: OutlineInputBorder(),
-              ),
-            ),
+            child: submitted
+                ? const Center(
+                    child: Text(
+                      'This activity has already been submitted. You can view it in Submission history.',
+                      textAlign: TextAlign.center,
+                    ),
+                  )
+                : TextField(
+                    controller: text,
+                    maxLines: null,
+                    expands: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Your response',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
           ),
           if (status.isNotEmpty)
             Semantics(
@@ -1772,13 +1830,13 @@ class _TextActivityState extends State<TextActivity> {
               ),
             ),
           OutlinedButton(
-            onPressed: working ? null : () => save(false),
+            onPressed: working || submitted ? null : () => save(false),
             child: const Text('Save draft'),
           ),
           SizedBox(
             height: 48,
             child: FilledButton(
-              onPressed: working ? null : () => save(true),
+              onPressed: working || submitted ? null : () => save(true),
               child: Text(working ? 'Saving…' : 'Submit response'),
             ),
           ),
@@ -2399,9 +2457,19 @@ class _ComposeState extends State<Compose> {
 }
 
 class PhotoEvidence extends StatefulWidget {
-  const PhotoEvidence({super.key, required this.api, required this.activityId});
+  const PhotoEvidence({
+    super.key,
+    required this.api,
+    required this.activityId,
+    this.title,
+    this.prompt,
+    this.submitted = false,
+  });
   final Api api;
   final int activityId;
+  final String? title;
+  final String? prompt;
+  final bool submitted;
   @override
   State<PhotoEvidence> createState() => _PhotoEvidenceState();
 }
@@ -2424,12 +2492,20 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
       setState(() {
         pending = item;
         photo = XFile(item.localPath, name: item.filename);
-        status = 'Saved on this device — waiting to upload.';
+        status = widget.submitted
+            ? 'This activity has already been submitted. This saved photo cannot be attached.'
+            : 'Saved on this device — waiting to upload.';
       });
+    } else if (widget.submitted && mounted) {
+      setState(() => status = 'This activity has already been submitted.');
     }
   }
 
   Future<void> choose(ImageSource source) async {
+    if (widget.submitted) {
+      setState(() => status = 'This activity has already been submitted.');
+      return;
+    }
     try {
       final selected = await picker.pickImage(source: source, imageQuality: 90);
       if (selected != null) {
@@ -2457,6 +2533,10 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
 
   Future<void> upload() async {
     if (pending == null) return;
+    if (widget.submitted) {
+      setState(() => status = 'This activity has already been submitted.');
+      return;
+    }
     setState(() => uploading = true);
     final result = await MediaQueue.replay(
       widget.api,
@@ -2476,7 +2556,9 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
           : 'Photo uploaded and linked. Its security check is in progress.';
     } else {
       pending = remaining;
-      status = remaining.failureCategory == 'security_rejected'
+      status = remaining.failureCategory == 'already_submitted'
+          ? 'This activity has already been submitted. This photo was not uploaded.'
+          : remaining.failureCategory == 'security_rejected'
           ? 'This photo was rejected by the security checks. Remove it and choose a different photo.'
           : result == SyncState.needsAttention
           ? 'Saved on this device. Sign in again before it can upload.'
@@ -2498,14 +2580,16 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
 
   @override
   Widget build(BuildContext c) => Scaffold(
-    appBar: AppBar(title: const Text('Add photo evidence')),
+    appBar: AppBar(title: Text(widget.title ?? 'Add photo evidence')),
     body: Padding(
       padding: const EdgeInsets.all(20),
       child: ListView(
         children: [
-          const Text('Choose a photo to attach to this activity.'),
+          Text(widget.prompt ?? 'Choose a photo to attach to this activity.'),
           const SizedBox(height: 16),
-          if (photo == null) ...[
+          if (widget.submitted && photo == null) ...[
+            const Text('Submitted activities cannot be changed.'),
+          ] else if (photo == null) ...[
             SizedBox(
               height: 48,
               child: FilledButton.icon(
@@ -2541,7 +2625,9 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
                   child: const Text('Remove photo'),
                 ),
                 TextButton(
-                  onPressed: () => choose(ImageSource.camera),
+                  onPressed: widget.submitted
+                      ? null
+                      : () => choose(ImageSource.camera),
                   child: const Text('Retake'),
                 ),
               ],
@@ -2549,7 +2635,7 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
             SizedBox(
               height: 48,
               child: FilledButton(
-                onPressed: uploading ? null : upload,
+                onPressed: uploading || widget.submitted ? null : upload,
                 child: Text(uploading ? 'Uploading…' : 'Upload photo'),
               ),
             ),
@@ -2748,9 +2834,19 @@ class _DocumentEvidenceState extends State<DocumentEvidence> {
 }
 
 class VoiceDiary extends StatefulWidget {
-  const VoiceDiary({super.key, required this.api, required this.activityId});
+  const VoiceDiary({
+    super.key,
+    required this.api,
+    required this.activityId,
+    this.title,
+    this.prompt,
+    this.submitted = false,
+  });
   final Api api;
   final int activityId;
+  final String? title;
+  final String? prompt;
+  final bool submitted;
   @override
   State<VoiceDiary> createState() => _VoiceDiaryState();
 }
@@ -2772,12 +2868,20 @@ class _VoiceDiaryState extends State<VoiceDiary> {
       setState(() {
         pending = item;
         path = item.localPath;
-        status = 'Saved on this device — waiting to upload.';
+        status = widget.submitted
+            ? 'This activity has already been submitted. This saved recording cannot be attached.'
+            : 'Saved on this device — waiting to upload.';
       });
+    } else if (widget.submitted && mounted) {
+      setState(() => status = 'This activity has already been submitted.');
     }
   }
 
   Future<void> toggle() async {
+    if (widget.submitted) {
+      setState(() => status = 'This activity has already been submitted.');
+      return;
+    }
     if (recording) {
       final recordedPath = await recorder.stop();
       if (recordedPath != null) {
@@ -2816,6 +2920,10 @@ class _VoiceDiaryState extends State<VoiceDiary> {
 
   Future<void> upload() async {
     if (pending == null) return;
+    if (widget.submitted) {
+      setState(() => status = 'This activity has already been submitted.');
+      return;
+    }
     setState(() => uploading = true);
     final result = await MediaQueue.replay(
       widget.api,
@@ -2828,7 +2936,9 @@ class _VoiceDiaryState extends State<VoiceDiary> {
       status = 'Voice diary uploaded and linked. Its security status is synchronised.';
     } else {
       pending = remaining;
-      status = remaining.failureCategory == 'security_rejected'
+      status = remaining.failureCategory == 'already_submitted'
+          ? 'This activity has already been submitted. This recording was not uploaded.'
+          : remaining.failureCategory == 'security_rejected'
           ? 'This recording was rejected by the security checks. Delete it and record a new voice diary.'
           : result == SyncState.needsAttention
           ? 'Saved on this device. Sign in again before it can upload.'
@@ -2856,19 +2966,20 @@ class _VoiceDiaryState extends State<VoiceDiary> {
 
   @override
   Widget build(BuildContext c) => Scaffold(
-    appBar: AppBar(title: const Text('Voice diary')),
+    appBar: AppBar(title: Text(widget.title ?? 'Voice diary')),
     body: Padding(
       padding: const EdgeInsets.all(20),
       child: ListView(
         children: [
-          const Text(
-            'Record your thoughts, then listen back before you upload.',
+          Text(
+            widget.prompt ??
+                'Record your thoughts, then listen back before you upload.',
           ),
           const SizedBox(height: 16),
           SizedBox(
             height: 56,
             child: FilledButton.icon(
-              onPressed: toggle,
+              onPressed: widget.submitted ? null : toggle,
               icon: Icon(recording ? Icons.stop : Icons.mic),
               label: Text(recording ? 'Stop recording' : 'Start recording'),
             ),
@@ -2886,7 +2997,7 @@ class _VoiceDiaryState extends State<VoiceDiary> {
             SizedBox(
               height: 48,
               child: FilledButton(
-                onPressed: uploading ? null : upload,
+                onPressed: uploading || widget.submitted ? null : upload,
                 child: Text(uploading ? 'Uploading…' : 'Upload voice diary'),
               ),
             ),

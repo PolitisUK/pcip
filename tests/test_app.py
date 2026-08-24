@@ -183,10 +183,28 @@ def test_login_uses_transparent_citizen_centric_wordmark():
     for template_name in public_templates:
         template = Path('app/templates', template_name).read_text()
         assert '/static/citizen-centric-logo.png' in template
-        assert 'alt="Citizen Centric by Politis"' in template
+        if template_name == '_public_footer.html':
+            assert 'role="img" aria-label="Citizen Centric by Politis"' in template
+        else:
+            assert 'alt="Citizen Centric by Politis"' in template
 
     dockerfile = Path('Dockerfile').read_text()
     assert 'mobile/participant-app/assets/citizen-centric-logo.png' not in dockerfile
+
+
+def test_public_footer_uses_transparent_wordmark_without_filter_or_low_contrast_overrides():
+    css = Path('app/static/app.css').read_text()
+    footer = Path('app/templates/_public_footer.html').read_text()
+
+    assert 'brand-logo--on-blue' not in footer
+    assert 'role="img" aria-label="Citizen Centric by Politis"' in footer
+    assert 'brightness(0) invert(1)' not in css
+    assert '.public-nav a,\n.public-footer a' not in css
+    assert '.public-footer-brand p {\n  max-width: 390px;\n  margin: 22px 0 0;\n  color: #e5efff;' in css
+    assert '.public-footer-group h2 {\n  margin: 0 0 6px;\n  color: #fff;' in css
+    assert '.public-footer-bottom small {\n  color: #e5efff;' in css
+    assert css.index('.public-footer a {') > css.index('.public-footer {')
+    assert '-webkit-mask: url("/static/citizen-centric-logo.png") center / contain no-repeat;' in css
 
 
 def test_public_homepage_is_available_without_authentication_and_keeps_workspace_data_private():
@@ -7689,6 +7707,74 @@ def test_participant_api_media_activity_upload_completes_response(
         activity_row = db.get(Activity, context["activity_id"])
         activity_row.activity_type = "long_text"
         db.commit()
+
+@pytest.mark.parametrize("activity_type", ["photo", "audio"])
+def test_participant_api_media_activity_cannot_be_finalised_before_evidence_upload(
+    activity_type, monkeypatch
+):
+    from io import BytesIO
+
+    import app.main as main_module
+    from app.models import Activity, ActivityResponse, EvidenceFile
+
+    context = _prepare_participant_api_activity_response_context(
+        f"api-{activity_type}-requires-evidence"
+    )
+    with SessionLocal() as db:
+        activity_row = db.get(Activity, context["activity_id"])
+        assert activity_row is not None
+        activity_row.activity_type = activity_type
+        db.commit()
+
+    with client:
+        premature_submit = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={"answer": "", "choices": []},
+            headers={"Authorization": f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert premature_submit.status_code == 400
+        assert premature_submit.json() == {
+            "detail": "Upload the required evidence before submitting this activity."
+        }
+
+    with SessionLocal() as db:
+        assert db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == context["activity_id"],
+                ActivityResponse.participant_id == context["participant_id"],
+            )
+        ) is None
+
+    monkeypatch.setattr(main_module, "scan_file", lambda _path: ("clean", "Clean"))
+    filename = "field-photo.jpg" if activity_type == "photo" else "voice-diary.m4a"
+    content_type = "image/jpeg" if activity_type == "photo" else "audio/mp4"
+    with client:
+        uploaded = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/evidence-uploads",
+            data={"activity_id": str(context["activity_id"])},
+            files={"file": (filename, BytesIO(b"media"), content_type)},
+            headers={
+                "Authorization": f"Bearer {context['api_token']}",
+                "Idempotency-Key": f"{activity_type}-requires-evidence-key",
+            },
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 201
+        evidence_id = uploaded.json()["evidence"]["evidence_id"]
+
+    with SessionLocal() as db:
+        evidence_row = db.get(EvidenceFile, evidence_id)
+        assert evidence_row is not None
+        response_row = db.get(ActivityResponse, evidence_row.response_id)
+        assert response_row is not None
+        assert response_row.status == "submitted"
+        assert json.loads(response_row.value_json)["evidence_id"] == evidence_id
+        activity_row = db.get(Activity, context["activity_id"])
+        assert activity_row is not None
+        activity_row.activity_type = "long_text"
+        db.commit()
+
 
 def test_participant_api_evidence_upload_rejects_mismatched_form_activity_id():
     from io import BytesIO
