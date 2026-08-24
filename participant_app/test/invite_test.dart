@@ -4,7 +4,7 @@ import 'package:participant_app/main.dart';
 
 void main() {
   testWidgets(
-    'onboarding uses invitation code only and retains approved branding',
+    'onboarding uses the post-consent one-time app code and transparent branding',
     (tester) async {
       String? submitted;
 
@@ -15,7 +15,11 @@ void main() {
       );
 
       expect(find.text('Join your study'), findsOneWidget);
-      expect(find.text('Invitation code'), findsOneWidget);
+      expect(find.text('One-time app code'), findsOneWidget);
+      expect(
+        find.textContaining('After reviewing and consenting'),
+        findsOneWidget,
+      );
       expect(find.text('Secure service address'), findsNothing);
       expect(find.textContaining('service address'), findsNothing);
       expect(find.byType(TextField), findsOneWidget);
@@ -24,36 +28,33 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.enterText(
-        find.byType(TextField),
-        'synthetic-invitation-token',
-      );
-      await tester.tap(find.text('Continue'));
+      await tester.enterText(find.byType(TextField), 'CC-1234-5678-90AB-CDEF');
+      await tester.tap(find.text('Continue securely'));
       await tester.pump();
 
-      expect(submitted, 'synthetic-invitation-token');
+      expect(submitted, 'CC-1234-5678-90AB-CDEF');
     },
   );
 
   testWidgets(
-    'invitation failures use an accessible participant-facing message',
+    'app-code failures use an accessible participant-facing message',
     (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Invite(
-            error: 'This invitation is invalid or has expired.',
+            error: 'This app code is invalid, expired or already used.',
             onJoin: _ignore,
           ),
         ),
       );
 
       expect(
-        find.text('This invitation is invalid or has expired.'),
+        find.text('This app code is invalid, expired or already used.'),
         findsOneWidget,
       );
       expect(
         tester.getSemantics(
-          find.text('This invitation is invalid or has expired.'),
+          find.text('This app code is invalid, expired or already used.'),
         ),
         matchesSemantics(isLiveRegion: true),
       );

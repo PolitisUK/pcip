@@ -26,6 +26,14 @@
         <a href="#messages">Messages</a>
         <a href="#privacy">Privacy and account</a>
       </nav>
+      <section class="notice section" aria-labelledby="participant-app-title">
+        <h2 id="participant-app-title">Continue in the participant app</h2>
+        <p>Request a one-time code, then enter it in the Citizen Centric participant app. The code expires after 30 minutes.</p>
+        <form method="post" action="/participant-portal/app-access-code">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="secondary" type="submit">Get a one-time participant app code</button>
+        </form>
+      </section>
     </section>
 
     <section class="section" id="activities">

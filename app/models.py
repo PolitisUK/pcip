@@ -373,6 +373,15 @@ class ActivityResponse(Base):
 
 class EvidenceFile(Base):
     __tablename__ = "evidence_files"
+    __table_args__ = (
+        UniqueConstraint(
+            "organisation_id",
+            "participant_id",
+            "activity_id",
+            "upload_key_hash",
+            name="uq_evidence_participant_upload_key",
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
     study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
@@ -388,12 +397,22 @@ class EvidenceFile(Base):
     scan_detail: Mapped[str] = mapped_column(Text, default="")
     storage_provider: Mapped[str] = mapped_column(String(30), default="local")
     blob_uri: Mapped[str] = mapped_column(Text, default="")
+    upload_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     scan_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class ParticipantMessage(Base):
     __tablename__ = "participant_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "organisation_id",
+            "participant_id",
+            "study_id",
+            "idempotency_key_hash",
+            name="uq_participant_message_client_key",
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
     study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
@@ -401,6 +420,7 @@ class ParticipantMessage(Base):
     sender_type: Mapped[str] = mapped_column(String(30))
     sender_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     body: Mapped[str] = mapped_column(Text)
+    idempotency_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     internal_note: Mapped[bool] = mapped_column(Boolean, default=False)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -430,6 +450,25 @@ class ParticipantInvitation(Base):
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     invited_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ParticipantAppAccessCode(Base):
+    """One-time bridge from web consent to the participant app.
+
+    Only a digest is stored. The raw code is displayed once in the authenticated
+    participant portal and is never persisted or written to audit detail.
+    """
+
+    __tablename__ = "participant_app_access_codes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    participant_invitation_id: Mapped[int] = mapped_column(
+        ForeignKey("participant_invitations.id"), index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

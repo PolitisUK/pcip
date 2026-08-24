@@ -43,13 +43,16 @@ void main() {
     );
   });
 
-  test('an invitation code is required before a session exchange', () {
-    expect(invitationCodeError(''), 'Enter your invitation code to continue.');
+  test('a one-time app code is required before a session exchange', () {
+    expect(
+      invitationCodeError(''),
+      'Enter your one-time app code to continue.',
+    );
     expect(
       invitationCodeError('  '),
-      'Enter your invitation code to continue.',
+      'Enter your one-time app code to continue.',
     );
-    expect(invitationCodeError('synthetic-invitation-token'), isNull);
+    expect(invitationCodeError('CC-1234-5678-90AB-CDEF'), isNull);
   });
 
   test('participant timestamps are readable and fail safely', () {

@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 from pathlib import Path
 from tempfile import gettempdir
 from uuid import uuid4
@@ -32,6 +33,12 @@ from app.main import (
 from app.config import validate_runtime_settings
 
 client = TestClient(app)
+
+
+def test_research_workspace_reads_participant_api_answer_payloads():
+    from app.research_workspace import response_body
+
+    assert response_body('{"answer":"  Full app diary entry  ","choices":[]}') == 'Full app diary entry'
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -177,6 +184,9 @@ def test_login_uses_transparent_citizen_centric_wordmark():
         template = Path('app/templates', template_name).read_text()
         assert '/static/citizen-centric-logo.png' in template
         assert 'alt="Citizen Centric by Politis"' in template
+
+    dockerfile = Path('Dockerfile').read_text()
+    assert 'mobile/participant-app/assets/citizen-centric-logo.png' not in dockerfile
 
 
 def test_public_homepage_is_available_without_authentication_and_keeps_workspace_data_private():
@@ -983,10 +993,25 @@ def test_participant_api_profile_consent_and_submission_history_contracts():
         assert updated.status_code == 200
         assert updated.json()['communication_preference'] == 'none'
 
+        activities = client.get('/api/v1/participant/activities', headers={'Authorization': f'Bearer {api_token}'})
+        activity = activities.json()['data'][0]
+        submitted = client.post(
+            f"/api/v1/participant/activities/{activity['activity_id']}/submit",
+            json={'answer': 'A participant-visible history answer', 'choices': []},
+            headers={**headers, 'Idempotency-Key': 'history-content-submit'},
+        )
+        assert submitted.status_code == 200
+
         history = client.get('/api/v1/participant/submissions', headers={'Authorization': f'Bearer {api_token}'})
         assert history.status_code == 200
         assert history.json()['study_id'] == study_id
         assert history.json()['pagination']['limit'] == 50
+        history_item = history.json()['data'][0]
+        assert history_item['answer'] == 'A participant-visible history answer'
+        assert history_item['activity_prompt'] == activity['prompt']
+        assert history_item['study_title']
+        assert history_item['project_title']
+        assert history_item['evidence'] == []
 
 
 def test_participant_api_portal_summary_cookie_only_session_does_not_authenticate_mobile_api():
@@ -6087,6 +6112,66 @@ def test_participant_api_auth_increment_preserves_html_join_study_and_portal_flo
         assert portal.status_code == 200
 
 
+def test_web_consent_issues_hashed_one_time_app_code_without_exposing_it_in_audit(caplog):
+    from app.models import AuditEvent, ParticipantAppAccessCode
+    from app.security import token_hash
+
+    token, _participant_id, _study_id = _create_participant_invitation_for_api('app-access-code')
+    with client:
+        assert client.get(f'/join-study?token={token}', follow_redirects=False).status_code == 303
+        assert post_with_csrf('/join-study', data={'consent': 'true'}, follow_redirects=False).status_code == 303
+        code_page = post_with_csrf('/participant-portal/app-access-code', follow_redirects=False)
+        assert code_page.status_code == 200
+        match = re.search(r'CC-(?:[0-9A-F]{4}-){3}[0-9A-F]{4}', code_page.text)
+        assert match is not None
+        raw_code = match.group(0)
+
+        exchanged = _exchange_participant_api_session(raw_code)
+        assert exchanged.status_code == 200
+        assert exchanged.json()['next_action'] == 'portal'
+        replay = _exchange_participant_api_session(raw_code)
+        assert replay.status_code == 400
+        assert raw_code not in replay.text
+
+    with SessionLocal() as db:
+        row = db.scalar(select(ParticipantAppAccessCode).order_by(ParticipantAppAccessCode.id.desc()))
+        assert row is not None
+        assert row.code_hash == token_hash(re.sub(r'[\s-]+', '', raw_code).upper())
+        assert raw_code not in row.code_hash
+        assert row.redeemed_at is not None
+        audit_text = ' '.join(
+            f'{item.action} {item.detail}'
+            for item in db.scalars(select(AuditEvent)).all()
+        )
+        assert raw_code not in audit_text
+    assert raw_code not in caplog.text
+
+
+def test_access_logging_redacts_raw_invitation_tokens():
+    from app.main import SensitiveAccessLogFilter
+
+    record = logging.LogRecord(
+        name="uvicorn.access",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg='%s - "%s %s HTTP/%s" %d',
+        args=(
+            "127.0.0.1:12345",
+            "GET",
+            "/join-study?token=raw-token-must-not-appear&safe=value",
+            "1.1",
+            303,
+        ),
+        exc_info=None,
+    )
+
+    assert SensitiveAccessLogFilter().filter(record) is True
+    rendered = record.getMessage()
+    assert "raw-token-must-not-appear" not in rendered
+    assert "token=[REDACTED]&safe=value" in rendered
+
+
 def test_participant_api_studies_requires_valid_bearer_and_returns_www_authenticate_header():
     token, _participant_id, _study_id = _create_participant_invitation_for_api('api-studies-auth')
 
@@ -7471,7 +7556,10 @@ def test_participant_api_evidence_upload_and_status_support_activity_response_re
             f"/api/v1/participant/activities/{context['activity_id']}/evidence-uploads",
             data={'activity_id': str(context['activity_id'])},
             files={'file': ('evidence.txt', BytesIO(b'ordinary evidence'), 'text/plain')},
-            headers={'Authorization': f"Bearer {context['api_token']}"},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'evidence-upload-stable-key',
+            },
             follow_redirects=False,
         )
         assert upload.status_code == 201
@@ -7483,10 +7571,29 @@ def test_participant_api_evidence_upload_and_status_support_activity_response_re
         assert upload_body['evidence']['size_bytes'] == len(b'ordinary evidence')
         assert upload_body['evidence']['scan_status'] in {'pending', 'clean', 'infected', 'scan_failed'}
         evidence_id = upload_body['evidence']['evidence_id']
+        replay = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/evidence-uploads",
+            data={'activity_id': str(context['activity_id'])},
+            files={'file': ('evidence.txt', BytesIO(b'ordinary evidence'), 'text/plain')},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'evidence-upload-stable-key',
+            },
+            follow_redirects=False,
+        )
+        assert replay.status_code == 201
+        assert replay.json()['evidence']['evidence_id'] == evidence_id
 
     with SessionLocal() as db:
         evidence_row = db.get(EvidenceFile, evidence_id)
         assert evidence_row is not None
+        assert evidence_row.response_id is not None
+        assert db.scalar(
+            select(func.count(EvidenceFile.id)).where(
+                EvidenceFile.participant_id == context['participant_id'],
+                EvidenceFile.activity_id == context['activity_id'],
+            )
+        ) == 1
         evidence_row.scan_detail = 'Internal scanner diagnostic must not reach a participant.'
         db.commit()
 
@@ -7520,6 +7627,68 @@ def test_participant_api_evidence_upload_and_status_support_activity_response_re
         assert detail.status_code == 200
         assert detail.json()['response']['value']['evidence_id'] == evidence_id
 
+
+@pytest.mark.parametrize(
+    ("activity_type", "filename", "content_type", "payload"),
+    [
+        ("photo", "field-photo.jpg", "image/jpeg", b"synthetic-photo"),
+        ("audio", "voice-diary.m4a", "audio/mp4", b"synthetic-audio"),
+    ],
+)
+def test_participant_api_media_activity_upload_completes_response(
+    activity_type,
+    filename,
+    content_type,
+    payload,
+    monkeypatch,
+):
+    from io import BytesIO
+
+    import app.main as main_module
+    from app.models import Activity, ActivityResponse, EvidenceFile
+
+    context = _prepare_participant_api_activity_response_context(
+        f"api-{activity_type}-completion"
+    )
+    with SessionLocal() as db:
+        activity_row = db.get(Activity, context["activity_id"])
+        assert activity_row is not None
+        activity_row.activity_type = activity_type
+        db.commit()
+    monkeypatch.setattr(main_module, "scan_file", lambda _path: ("clean", "Clean"))
+
+    with client:
+        upload = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/evidence-uploads",
+            data={"activity_id": str(context["activity_id"])},
+            files={"file": (filename, BytesIO(payload), content_type)},
+            headers={
+                "Authorization": f"Bearer {context['api_token']}",
+                "Idempotency-Key": f"{activity_type}-completion-key",
+            },
+            follow_redirects=False,
+        )
+        assert upload.status_code == 201
+        evidence_id = upload.json()["evidence"]["evidence_id"]
+
+        history = client.get(
+            "/api/v1/participant/submissions",
+            headers={"Authorization": f"Bearer {context['api_token']}"},
+        )
+        assert history.status_code == 200
+        history_item = history.json()["data"][0]
+        assert history_item["status"] == "submitted"
+        assert history_item["evidence"][0]["evidence_id"] == evidence_id
+
+    with SessionLocal() as db:
+        evidence_row = db.get(EvidenceFile, evidence_id)
+        response_row = db.get(ActivityResponse, evidence_row.response_id)
+        assert response_row.status == "submitted"
+        assert response_row.submitted_at is not None
+        assert json.loads(response_row.value_json)["evidence_id"] == evidence_id
+        activity_row = db.get(Activity, context["activity_id"])
+        activity_row.activity_type = "long_text"
+        db.commit()
 
 def test_participant_api_evidence_upload_rejects_mismatched_form_activity_id():
     from io import BytesIO
@@ -7783,7 +7952,19 @@ def test_participant_api_messages_list_and_create_excludes_internal_notes():
             },
             follow_redirects=False,
         )
-        assert duplicate.status_code == 409
+        assert duplicate.status_code == 201
+        assert duplicate.json()['message']['message_id'] == created.json()['message']['message_id']
+
+        mismatched_duplicate = client.post(
+            '/api/v1/participant/messages',
+            json={'body': 'different message using the same key'},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'msg-create-1234',
+            },
+            follow_redirects=False,
+        )
+        assert mismatched_duplicate.status_code == 409
 
 
 def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_only():
@@ -7844,7 +8025,8 @@ def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_on
 
 
 def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_only_minimised_lifecycle_evidence():
-    from app.models import ActivityResponse, EvidenceFile, OutboxEmail, Participant, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment
+    from app.models import ActivityResponse, EvidenceFile, OutboxEmail, Participant, ParticipantAppAccessCode, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment
+    from app.security import token_hash
 
     context = _prepare_participant_api_activity_response_context('api-privacy-deletion')
 
@@ -7857,6 +8039,7 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         db.add(response_row); db.flush()
         db.add(ParticipantMessage(organisation_id=context['organisation_id'], study_id=context['study_id'], participant_id=context['participant_id'], sender_type='participant', body='remove me'))
         db.add(EvidenceFile(organisation_id=context['organisation_id'], study_id=context['study_id'], activity_id=context['activity_id'], participant_id=context['participant_id'], response_id=response_row.id, original_name='remove.txt', stored_name='delete-test.txt', content_type='text/plain'))
+        db.add(ParticipantAppAccessCode(organisation_id=context['organisation_id'], participant_invitation_id=context['invitation_id'], code_hash=token_hash('account-deletion-code'), expires_at=now() + timedelta(minutes=30)))
         # Legacy rows have no verified participant link and must not be deleted
         # by recipient matching, even where their content might be sensitive.
         db.add(OutboxEmail(organisation_id=context['organisation_id'], recipient='legacy@example.org', subject='Legacy', body='unlinked legacy email'))
@@ -7901,6 +8084,7 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         assert db.scalar(select(ParticipantMessage).where(ParticipantMessage.participant_id == context['participant_id'])) is None
         assert db.scalar(select(StudyEnrolment).where(StudyEnrolment.participant_id == context['participant_id'])) is None
         assert db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(ParticipantAppAccessCode).where(ParticipantAppAccessCode.participant_invitation_id == context['invitation_id'])) is None
         assert db.scalar(select(PublicAuthSession).where(PublicAuthSession.participant_invitation_id == context['invitation_id'])) is None
         assert db.scalar(select(OutboxEmail).where(OutboxEmail.participant_id == context['participant_id'])) is None
         assert db.scalar(select(OutboxEmail).where(OutboxEmail.recipient == 'legacy@example.org')) is not None

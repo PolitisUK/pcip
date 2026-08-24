@@ -1,8 +1,9 @@
 # Citizen Centric participant app
 
-The participant app uses the PCIP participant API only. Its invitation flow
-accepts an invitation token; participants are never asked to enter a service
-address, email address, or password.
+The participant app uses the PCIP participant API only. After reviewing and
+accepting the study-specific consent documents on the web, a participant asks
+the portal for a short-lived, single-use app access code. Participants are
+never asked to enter a service address, email address, or password.
 
 ## API configuration
 

@@ -29,8 +29,9 @@ Demo login:
 2. Enrol them in a study.
 3. Send an invitation from the study page.
 4. In local mode, open the invitation link from **Email outbox**.
-5. Accept consent and enter the participant portal.
-6. Save drafts, submit responses, upload evidence and send messages.
+5. Review the study's bound legal documents, accept consent and enter the participant portal.
+6. Request the short-lived one-time code shown in the portal and use it to join the participant app.
+7. Save drafts, submit responses, upload evidence and send messages.
 
 ## Email
 

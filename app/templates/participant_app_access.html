@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block public %}
+<div class="login-wrap participant-app-access-wrap">
+  <main class="login-card" id="main-content" tabindex="-1">
+    <div class="brand public-brand">
+      <img class="brand-logo brand-logo--wordmark" src="/static/citizen-centric-logo.png" alt="Citizen Centric by Politis">
+    </div>
+    <p class="eyebrow">Consent complete</p>
+    <h1>Continue in the participant app</h1>
+    <p>You have joined <strong>{{ study.title }}</strong>. Open the Citizen Centric participant app and enter this one-time code within 30 minutes.</p>
+    <div class="app-access-code" role="status" aria-label="One-time participant app access code">{{ app_code }}</div>
+    <p class="muted">This code works once. Do not share it. If it expires, return to your participant portal and request another.</p>
+    <a class="btn secondary" href="/participant-portal">Return to your participant portal</a>
+  </main>
+</div>
+{% endblock %}
