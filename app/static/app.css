@@ -1065,16 +1065,14 @@ button.is-loading::after,
   gap: 22px;
 }
 
-.public-nav a,
-.public-footer a {
+.public-nav a {
   color: var(--text-muted);
   font-size: var(--type-sm);
   font-weight: 700;
   text-decoration: none;
 }
 
-.public-nav a:hover,
-.public-footer a:hover {
+.public-nav a:hover {
   color: var(--brand-900);
 }
 
@@ -1746,18 +1744,6 @@ button.is-loading::after,
   padding: 54px 0 26px;
 }
 
-.brand-logo--on-blue {
-  filter: brightness(0) invert(1);
-}
-
-.public-footer a,
-.public-footer-group h2,
-.public-footer-brand p,
-.public-footer-bottom small,
-.public-footer .footer-placeholder {
-  color: #fff;
-}
-
 .public-footer a:hover {
   color: #fff;
   text-decoration: underline;
@@ -1773,7 +1759,7 @@ button.is-loading::after,
 .public-footer-brand p {
   max-width: 390px;
   margin: 22px 0 0;
-  color: var(--text-muted);
+  color: #e5efff;
 }
 
 .public-footer-group {
@@ -1784,7 +1770,7 @@ button.is-loading::after,
 
 .public-footer-group h2 {
   margin: 0 0 6px;
-  color: var(--text);
+  color: #fff;
   font-size: var(--type-sm);
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -1795,7 +1781,7 @@ button.is-loading::after,
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-muted);
+  color: #e5efff;
   font-size: var(--type-sm);
 }
 
@@ -1809,12 +1795,37 @@ button.is-loading::after,
 }
 
 .public-footer-bottom small {
-  color: var(--text-muted);
+  color: #e5efff;
+}
+
+.public-footer a {
+  color: #fff;
+  font-size: var(--type-sm);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.public-footer .footer-wordmark {
+  display: block;
+  width: min(280px, 100%);
 }
 
 .public-footer .brand-logo--wordmark {
-  width: min(280px, 100%);
+  width: 100%;
   height: auto;
+}
+
+@supports ((-webkit-mask-image: url("/static/citizen-centric-logo.png")) or (mask-image: url("/static/citizen-centric-logo.png"))) {
+  .public-footer .footer-wordmark {
+    aspect-ratio: 900 / 204;
+    background: #fff;
+    -webkit-mask: url("/static/citizen-centric-logo.png") center / contain no-repeat;
+    mask: url("/static/citizen-centric-logo.png") center / contain no-repeat;
+  }
+
+  .public-footer .footer-wordmark img {
+    visibility: hidden;
+  }
 }
 
 .text-link {
