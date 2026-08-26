@@ -11,13 +11,15 @@ def resolve_activity_response(
     db: Session,
     activity_id: int,
     participant_id: int,
+    client_entry_key_hash: str | None = None,
 ) -> ActivityResponse | None:
-    return db.scalar(
-        select(ActivityResponse).where(
-            ActivityResponse.activity_id == activity_id,
-            ActivityResponse.participant_id == participant_id,
-        )
+    statement = select(ActivityResponse).where(
+        ActivityResponse.activity_id == activity_id,
+        ActivityResponse.participant_id == participant_id,
     )
+    if client_entry_key_hash:
+        statement = statement.where(ActivityResponse.client_entry_key_hash == client_entry_key_hash)
+    return db.scalar(statement.order_by(ActivityResponse.id.desc()))
 
 
 def resolve_or_create_activity_response(
@@ -26,8 +28,16 @@ def resolve_or_create_activity_response(
     study_id: int,
     activity_id: int,
     participant_id: int,
+    *,
+    repeatable: bool = False,
+    client_entry_key_hash: str | None = None,
 ) -> ActivityResponse:
-    response = resolve_activity_response(db, activity_id, participant_id)
+    # A repeatable activity creates a new immutable response context for each
+    # entry.  The same client key resolves to that exact context on retry.
+    response = resolve_activity_response(
+        db, activity_id, participant_id,
+        client_entry_key_hash if repeatable else None,
+    ) if (not repeatable or client_entry_key_hash) else None
     if response:
         return response
     response = ActivityResponse(
@@ -35,6 +45,8 @@ def resolve_or_create_activity_response(
         study_id=study_id,
         activity_id=activity_id,
         participant_id=participant_id,
+        repeatable=repeatable,
+        client_entry_key_hash=client_entry_key_hash,
     )
     db.add(response)
     db.flush()

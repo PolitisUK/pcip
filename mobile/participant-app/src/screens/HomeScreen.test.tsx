@@ -182,7 +182,6 @@ describe("HomeScreen", () => {
         content_type: "text/plain",
         size_bytes: 16,
         scan_status: "clean",
-        scan_detail: "ok",
         created_at: "2030-01-01T10:01:00Z",
       },
     });
@@ -194,7 +193,6 @@ describe("HomeScreen", () => {
         content_type: "text/plain",
         size_bytes: 16,
         scan_status: "clean",
-        scan_detail: "ok",
         created_at: "2030-01-01T10:01:00Z",
       },
       downloadable: true,
@@ -1037,7 +1035,6 @@ describe("HomeScreen", () => {
           content_type: "text/plain",
           size_bytes: 10,
           scan_status: "clean",
-          scan_detail: "ok",
           created_at: "2030-01-01T10:01:00Z",
         },
       })
@@ -1049,7 +1046,6 @@ describe("HomeScreen", () => {
           content_type: "text/plain",
           size_bytes: 12,
           scan_status: "clean",
-          scan_detail: "ok",
           created_at: "2030-01-01T10:02:00Z",
         },
       });

@@ -4,6 +4,7 @@ from typing import get_args
 import yaml
 
 from app.participant_api.schemas import (
+    ActivitySummary,
     BearerSession,
     InvitationContext,
     ParticipantSummary,
@@ -82,3 +83,11 @@ def test_submission_history_contract_matches_backend_response_models():
     contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
     schema = contract["paths"]["/api/v1/participant/submissions"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert schema == {"$ref": "#/components/schemas/SubmissionHistoryResponse"}
+
+
+def test_activity_contract_includes_repeatable_entry_semantics():
+    activity = _contract_schema("ActivitySummary")
+    assert set(activity["properties"]) == set(ActivitySummary.model_fields)
+    assert activity["properties"]["allow_multiple_entries"]["type"] == "boolean"
+    assert activity["properties"]["submitted_entry_count"]["type"] == "integer"
+    assert activity["properties"]["submitted_entry_count"]["minimum"] == 0

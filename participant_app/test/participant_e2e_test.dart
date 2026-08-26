@@ -236,6 +236,25 @@ void main() {
     expect(find.text('Take a photo'), findsNothing);
   });
 
+  testWidgets('repeatable media activity remains available after an earlier entry', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: participantActivityPage(_api, {
+          'activity_id': 13,
+          'title': 'Repeatable photo diary',
+          'activity_type': 'photo',
+          'allow_multiple_entries': true,
+          'response': {'status': 'submitted'},
+        }),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Take a photo'), findsOneWidget);
+    expect(find.text('Submitted activities cannot be changed.'), findsNothing);
+  });
+
   testWidgets('secure-storage recovery returns to the join screen', (
     tester,
   ) async {

@@ -520,6 +520,95 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/participant/evidence/{evidence_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download the participant's own evidence after a clean malware scan. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    evidence_id: components["parameters"]["EvidenceId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Evidence file bytes. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                /** @description Redirect to a short-lived private storage download URL. */
+                303: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/participant/submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the participant's response history with its study context and evidence. */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: components["parameters"]["PageLimit"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Submission history. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SubmissionHistoryResponse"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/participant/messages": {
         parameters: {
             query?: never;
@@ -732,7 +821,7 @@ export interface components {
             app_version?: string;
         };
         SessionExchangeRequest: {
-            /** @description Invitation token accepted only at exchange. */
+            /** @description One-time post-consent app access code, or a legacy invitation token, accepted only at exchange. */
             invitation_token: string;
             device_hint?: components["schemas"]["DeviceHint"];
         };
@@ -830,6 +919,10 @@ export interface components {
             /** @description Participant-safe response options for choice-based activities only. */
             options?: string[];
             required: boolean;
+            /** @description When true, each participant may create additional immutable entries over time. */
+            allow_multiple_entries?: boolean;
+            /** @description Number of submitted entries visible to the current participant. */
+            submitted_entry_count?: number;
             position: number;
             availability: components["schemas"]["ActivityAvailability"];
             response?: components["schemas"]["ActivityResponseSummary"];
@@ -908,7 +1001,6 @@ export interface components {
             content_type: string;
             size_bytes: number;
             scan_status: components["schemas"]["EvidenceScanStatus"];
-            scan_detail?: string | null;
             /** Format: date-time */
             created_at: string;
         };
@@ -919,6 +1011,37 @@ export interface components {
             evidence: components["schemas"]["EvidenceMetadata"];
             /** @description True only when scan_status equals clean. */
             downloadable: boolean;
+        };
+        SubmissionEvidenceItem: {
+            evidence_id: number;
+            original_name: string;
+            content_type: string;
+            scan_status: components["schemas"]["EvidenceScanStatus"];
+            downloadable: boolean;
+            /** Format: date-time */
+            created_at: string;
+        };
+        SubmissionHistoryItem: {
+            response_id: number;
+            activity_id: number;
+            activity_title: string;
+            activity_prompt: string | null;
+            study_title: string;
+            project_title: string;
+            answer: string | null;
+            choices: string[];
+            evidence: components["schemas"]["SubmissionEvidenceItem"][];
+            /** @enum {string} */
+            status: "draft" | "submitted";
+            /** Format: date-time */
+            submitted_at: string | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SubmissionHistoryResponse: {
+            study_id: number;
+            data: components["schemas"]["SubmissionHistoryItem"][];
+            pagination: components["schemas"]["Pagination"];
         };
         ParticipantMessage: {
             message_id: number;

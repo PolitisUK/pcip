@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -294,6 +295,15 @@ class StudyMethodologyConfiguration(Base):
     primary_methodology_id: Mapped[str] = mapped_column(String(30), default="")
     methodology_variant: Mapped[str] = mapped_column(String(80), default="")
     secondary_methodologies_json: Mapped[str] = mapped_column(Text, default="[]")
+    # The protocol-builder selections are deliberately stored separately from
+    # the controlled-methodology identifiers above.  This retains historical
+    # provenance while avoiding a false equivalence between approach, data
+    # generation, analysis and theoretical orientation.
+    research_approaches_json: Mapped[str] = mapped_column(Text, default="[]")
+    evidence_methods_json: Mapped[str] = mapped_column(Text, default="[]")
+    analysis_approaches_json: Mapped[str] = mapped_column(Text, default="[]")
+    theoretical_orientations_json: Mapped[str] = mapped_column(Text, default="[]")
+    legacy_methodology_json: Mapped[str] = mapped_column(Text, default="[]")
     research_questions: Mapped[str] = mapped_column(Text, default="")
     protocol_reference: Mapped[str] = mapped_column(String(500), default="")
     protocol_version: Mapped[str] = mapped_column(String(80), default="")
@@ -352,6 +362,7 @@ class Activity(Base):
     options_json: Mapped[str] = mapped_column(Text, default="[]")
     position: Mapped[int] = mapped_column(Integer, default=1)
     required: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_multiple_entries: Mapped[bool] = mapped_column(Boolean, default=False)
     release_offset_days: Mapped[int] = mapped_column(Integer, default=0)
     due_offset_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -359,7 +370,17 @@ class Activity(Base):
 
 class ActivityResponse(Base):
     __tablename__ = "activity_responses"
-    __table_args__ = (UniqueConstraint("activity_id", "participant_id"),)
+    __table_args__ = (
+        UniqueConstraint("activity_id", "participant_id", "client_entry_key_hash", name="uq_activity_response_entry_key"),
+        Index(
+            "uq_activity_response_single_entry",
+            "activity_id",
+            "participant_id",
+            unique=True,
+            postgresql_where=text("repeatable = false"),
+            sqlite_where=text("repeatable = 0"),
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
     study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
@@ -367,6 +388,10 @@ class ActivityResponse(Base):
     participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id"), index=True)
     value_json: Mapped[str] = mapped_column(Text, default="{}")
     status: Mapped[str] = mapped_column(String(30), default="draft")
+    repeatable: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Hash only: raw participant idempotency keys never enter the database or
+    # audit trail.  Null remains valid for legacy single-response records.
+    client_entry_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

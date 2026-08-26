@@ -1171,6 +1171,38 @@ def researcher_methodology_categories() -> list[dict[str, str]]:
     ]
 
 
+def protocol_builder_options() -> dict[str, list[dict[str, str]]]:
+    """The ordinary researcher UI: four non-competing protocol layers."""
+    return {
+        "research_approaches": [
+            {"id": "ethnography", "label": "Ethnography"}, {"id": "case_study", "label": "Case study"},
+            {"id": "grounded_theory", "label": "Grounded theory"}, {"id": "phenomenological", "label": "Phenomenological / experiential research"},
+            {"id": "narrative_inquiry", "label": "Narrative inquiry"}, {"id": "participatory_action", "label": "Participatory / action research"},
+            {"id": "mixed_methods", "label": "Mixed methods"}, {"id": "other_not_sure", "label": "Other / not sure"},
+        ],
+        "evidence_methods": [
+            {"id": "interviews", "label": "Interviews"}, {"id": "focus_groups", "label": "Focus groups"},
+            {"id": "observation", "label": "Observation / participant observation"}, {"id": "diaries", "label": "Participant diaries / repeated entries"},
+            {"id": "photos", "label": "Photos / photovoice"}, {"id": "audio", "label": "Audio / voice notes"},
+            {"id": "documents", "label": "Documents / archival material"}, {"id": "files", "label": "Participant-submitted files"}, {"id": "other", "label": "Other"},
+        ],
+        "analysis_approaches": [
+            {"id": "reflexive_thematic", "label": "Reflexive thematic analysis"}, {"id": "codebook_thematic", "label": "Codebook / coding-reliability thematic analysis"}, {"id": "content_analysis", "label": "Qualitative content analysis"}, {"id": "framework_analysis", "label": "Framework analysis"}, {"id": "narrative_analysis", "label": "Narrative analysis"}, {"id": "discourse_analysis", "label": "Discourse analysis"}, {"id": "conversation_analysis", "label": "Conversation analysis"}, {"id": "grounded_theory_analysis", "label": "Grounded-theory analysis"}, {"id": "other", "label": "Other"}, {"id": "not_yet_decided", "label": "Not yet decided"},
+        ],
+        "theoretical_orientations": [
+            {"id": "critical", "label": "Critical"}, {"id": "feminist", "label": "Feminist"}, {"id": "intersectional", "label": "Intersectional"}, {"id": "critical_race", "label": "Critical race"}, {"id": "decolonising", "label": "Decolonising / Indigenous"}, {"id": "poststructural", "label": "Poststructural"}, {"id": "postqualitative", "label": "Postqualitative"}, {"id": "new_materialist", "label": "New materialist"}, {"id": "other_advanced", "label": "Other advanced orientation"},
+        ],
+    }
+
+
+def _protocol_values(values: list[str], section: str) -> list[str]:
+    allowed = {item["id"] for item in protocol_builder_options()[section]}
+    selected = sorted(set(values))
+    if not set(selected).issubset(allowed):
+        raise HTTPException(400, "Invalid protocol-builder selection.")
+    return selected
+
+
 def _workspace_entry_statement(user: User, study_ids: list[int]):
     return (
         select(ActivityResponse, Participant, Activity)
@@ -2471,7 +2503,7 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
     methodology_record = None
     if methodology_configuration and methodology_configuration.primary_methodology_id:
         methodology_record = next((item for item in library_records() if item["methodology_id"] == methodology_configuration.primary_methodology_id), None)
-    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_documents={document.document_type: document for document in current_bundle_documents(db, governance)},governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,methodology_options=methodology_options(),methodology_categories=researcher_methodology_categories(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
+    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_documents={document.document_type: document for document in current_bundle_documents(db, governance)},governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,methodology_options=methodology_options(),methodology_categories=researcher_methodology_categories(),protocol_builder_options=protocol_builder_options(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
 
 @app.post("/studies/{study_id}/governance")
 def update_study_governance(
@@ -2603,9 +2635,13 @@ def update_study_governance(
 @app.post("/studies/{study_id}/methodology-configuration")
 def update_methodology_configuration(
     study_id: int,
-    primary_methodology_id: str = Form(...),
+    primary_methodology_id: str = Form(""),
     methodology_variant: str = Form(""),
     secondary_methodology_values: list[str] = Form([], alias="secondary_methodologies"),
+    research_approach_values: list[str] = Form([], alias="research_approaches"),
+    evidence_method_values: list[str] = Form([], alias="evidence_methods"),
+    analysis_approach_values: list[str] = Form([], alias="analysis_approaches"),
+    theoretical_orientation_values: list[str] = Form([], alias="theoretical_orientations"),
     research_questions: str = Form(""),
     protocol_reference: str = Form(""),
     protocol_version: str = Form(""),
@@ -2621,6 +2657,10 @@ def update_methodology_configuration(
 ):
     s = study(db, study_id, u.organisation_id)
     require_study_permission(db, u, s, edit=True)
+    research_approaches = _protocol_values(research_approach_values, "research_approaches")
+    evidence_methods = _protocol_values(evidence_method_values, "evidence_methods")
+    analysis_approaches = _protocol_values(analysis_approach_values, "analysis_approaches")
+    theoretical_orientations = _protocol_values(theoretical_orientation_values, "theoretical_orientations")
     try:
         issues = validate_configuration(
             primary_methodology_id=primary_methodology_id,
@@ -2634,13 +2674,13 @@ def update_methodology_configuration(
             ai_enabled=ai_enabled,
             allowed_ai_tasks=allowed_ai_task_values,
             researcher_confirmation=researcher_confirmation,
-        )
+        ) if primary_methodology_id else ([] if not ai_enabled and not allowed_ai_task_values else ["Select an approved primary methodology before enabling AI support."])
     except MethodologyGateViolation as exc:
         raise HTTPException(400, str(exc)) from exc
     if issues:
         raise HTTPException(400, " ".join(issues))
-    record = next(item for item in library_records() if item["methodology_id"] == primary_methodology_id)
-    allowed = set(record["allowed_ai_tasks"])
+    record = next((item for item in library_records() if item["methodology_id"] == primary_methodology_id), None)
+    allowed = set(record["allowed_ai_tasks"]) if record else set()
     requested = set(allowed_ai_task_values)
     if not requested.issubset(allowed):
         raise HTTPException(400, "METHODOLOGICAL REVIEW REQUIRED: unsupported AI task requested.")
@@ -2651,6 +2691,13 @@ def update_methodology_configuration(
     configuration.primary_methodology_id = primary_methodology_id
     configuration.methodology_variant = methodology_variant.strip()
     configuration.secondary_methodologies_json = json.dumps(sorted(set(secondary_methodology_values)))
+    configuration.research_approaches_json = json.dumps(research_approaches)
+    configuration.evidence_methods_json = json.dumps(evidence_methods)
+    configuration.analysis_approaches_json = json.dumps(analysis_approaches)
+    configuration.theoretical_orientations_json = json.dumps(theoretical_orientations)
+    # Existing controlled values retain their original semantics and are shown
+    # as legacy/advanced choices rather than being guessed into new categories.
+    configuration.legacy_methodology_json = json.dumps(sorted(set(secondary_methodology_values)))
     configuration.research_questions = research_questions.strip()
     configuration.protocol_reference = document_reference(protocol_reference, "Protocol reference")
     configuration.protocol_version = protocol_version.strip()
@@ -2663,7 +2710,7 @@ def update_methodology_configuration(
     configuration.researcher_notes = researcher_notes.strip()
     configuration.researcher_confirmed_by_id = u.id
     configuration.researcher_confirmed_at = datetime.now(timezone.utc)
-    audit(db, u.organisation_id, u.id, "study.methodology_configuration_confirmed", "study", s.id, primary_methodology_id)
+    audit(db, u.organisation_id, u.id, "study.methodology_configuration_confirmed", "study", s.id, primary_methodology_id or "protocol-builder")
     db.commit()
     return RedirectResponse(f"/studies/{s.id}#methodology", 303)
 @app.post("/studies/{study_id}/research-analysis/{suggestion_id}/review")
@@ -2966,7 +3013,7 @@ def study_status(study_id:int,status_value:str=Form(...),u=Depends(roles("owner"
     if status_value == "live": require_study_launch_ready(db, s)
     s.status=status_value; db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/studies/{study_id}/activities")
-def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form("long_text"),options:str=Form(""),required:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form("long_text"),options:str=Form(""),required:bool=Form(False),allow_multiple_entries:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
     if activity_type not in ACTIVITY_TYPES or release_offset_days<0: raise HTTPException(400,"Invalid activity configuration.")
     try: due=int(due_offset_days) if due_offset_days.strip() else None
@@ -2975,9 +3022,9 @@ def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activit
     opts=[x.strip() for x in options.splitlines() if x.strip()]
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts)<2: raise HTTPException(400,"Choice and ranking activities require at least two options.")
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts) != len(set(opts)): raise HTTPException(400,"Activity options must be unique.")
-    pos=(db.scalar(select(func.max(Activity.position)).where(Activity.study_id==s.id)) or 0)+1; a=Activity(organisation_id=u.organisation_id,study_id=s.id,title=nonblank(title,"Activity title"),prompt=prompt.strip(),activity_type=activity_type,options_json=json.dumps(opts),position=pos,required=required,release_offset_days=release_offset_days,due_offset_days=due); db.add(a); db.flush(); audit(db,u.organisation_id,u.id,"activity.created","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
+    pos=(db.scalar(select(func.max(Activity.position)).where(Activity.study_id==s.id)) or 0)+1; a=Activity(organisation_id=u.organisation_id,study_id=s.id,title=nonblank(title,"Activity title"),prompt=prompt.strip(),activity_type=activity_type,options_json=json.dumps(opts),position=pos,required=required,allow_multiple_entries=allow_multiple_entries,release_offset_days=release_offset_days,due_offset_days=due); db.add(a); db.flush(); audit(db,u.organisation_id,u.id,"activity.created","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/activities/{activity_id}/edit")
-def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form(...),options:str=Form(""),required:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form(...),options:str=Form(""),required:bool=Form(False),allow_multiple_entries:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.organisation_id==u.organisation_id));
     if not a: raise HTTPException(404)
     require_study_permission(db,u,study(db,a.study_id,u.organisation_id),edit=True)
@@ -2988,7 +3035,7 @@ def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activi
     if due is not None and due<release_offset_days: raise HTTPException(400,"Invalid dates.")
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts)<2: raise HTTPException(400,"At least two options required.")
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts) != len(set(opts)): raise HTTPException(400,"Activity options must be unique.")
-    a.title=nonblank(title,"Activity title"); a.prompt=prompt.strip(); a.activity_type=activity_type; a.options_json=json.dumps(opts); a.required=required; a.release_offset_days=release_offset_days; a.due_offset_days=due; audit(db,u.organisation_id,u.id,"activity.updated","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{a.study_id}",303)
+    a.title=nonblank(title,"Activity title"); a.prompt=prompt.strip(); a.activity_type=activity_type; a.options_json=json.dumps(opts); a.required=required; a.allow_multiple_entries=allow_multiple_entries; a.release_offset_days=release_offset_days; a.due_offset_days=due; audit(db,u.organisation_id,u.id,"activity.updated","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{a.study_id}",303)
 @app.post("/activities/{activity_id}/delete")
 def delete_activity(activity_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.organisation_id==u.organisation_id));
@@ -4477,12 +4524,15 @@ def participant_api_activities(
             )
         )
     )
-    response_by_activity_id = {row.activity_id: row for row in response_rows}
+    responses_by_activity_id: dict[int, list[ActivityResponse]] = {}
+    for response_row in response_rows:
+        responses_by_activity_id.setdefault(response_row.activity_id, []).append(response_row)
 
     data: list[ActivitySummary] = []
     for activity_row in activities:
         window = activity_window(study_row, activity_row, now())
-        response_row = response_by_activity_id.get(activity_row.id)
+        activity_responses = responses_by_activity_id.get(activity_row.id, [])
+        response_row = max(activity_responses, key=lambda row: row.updated_at) if activity_responses else None
         response_summary = (
             ActivityResponseSummary(
                 status=response_row.status,
@@ -4493,6 +4543,8 @@ def participant_api_activities(
             else None
         )
         item = _participant_activity_summary(activity_row, window)
+        item.allow_multiple_entries = activity_row.allow_multiple_entries
+        item.submitted_entry_count = sum(row.status == "submitted" for row in activity_responses)
         if response_summary:
             item.response = response_summary
         data.append(item)
@@ -4581,6 +4633,7 @@ def _participant_activity_summary(activity_row: Activity, window: dict[str, obje
         prompt=activity_row.prompt or None,
         activity_type=activity_row.activity_type,
         required=bool(activity_row.required),
+        allow_multiple_entries=bool(activity_row.allow_multiple_entries),
         position=activity_row.position,
         availability=ActivityAvailability(
             status=str(window.get("status") or "open"),
@@ -4930,12 +4983,18 @@ def participant_api_activity_response_draft(
     _content_type_ok: None = Depends(_require_json_content_type),
     db: Session = Depends(get_db),
 ):
-    del idempotency_key
     invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
+    entry_key_hash = token_hash(idempotency_key) if idempotency_key else None
     value = _participant_response_value_from_payload(payload, activity_row, "draft")
 
     existing = db.scalar(
         select(ActivityResponse).where(
+            ActivityResponse.organisation_id == invitation.organisation_id,
+            ActivityResponse.study_id == invitation.study_id,
+            ActivityResponse.activity_id == activity_row.id,
+            ActivityResponse.participant_id == participant_row.id,
+        ).where(ActivityResponse.client_entry_key_hash == entry_key_hash)
+        if activity_row.allow_multiple_entries and entry_key_hash else select(ActivityResponse).where(
             ActivityResponse.organisation_id == invitation.organisation_id,
             ActivityResponse.study_id == invitation.study_id,
             ActivityResponse.activity_id == activity_row.id,
@@ -4965,6 +5024,8 @@ def participant_api_activity_response_draft(
             study_id=invitation.study_id,
             activity_id=activity_row.id,
             participant_id=participant_row.id,
+            repeatable=activity_row.allow_multiple_entries,
+            client_entry_key_hash=entry_key_hash,
         )
         if existing:
             if not _update_activity_response_if_not_submitted(db, response_row.id, value, "draft"):
@@ -5007,8 +5068,8 @@ def participant_api_activity_response_submit(
     _content_type_ok: None = Depends(_require_json_content_type),
     db: Session = Depends(get_db),
 ):
-    del idempotency_key
     invitation, participant_row, _study_row, activity_row = _resolve_participant_api_activity_scope(request, db, activity_id)
+    entry_key_hash = token_hash(idempotency_key) if idempotency_key else None
     value = _participant_response_value_from_payload(payload, activity_row, "submit")
     has_answer = bool((payload.answer or "").strip())
     has_choices = bool(value.get("choices"))
@@ -5031,14 +5092,19 @@ def participant_api_activity_response_submit(
         if not evidence_ok:
             raise HTTPException(400, "Evidence reference is invalid for this activity.")
 
-    existing = db.scalar(
-        select(ActivityResponse).where(
-            ActivityResponse.organisation_id == invitation.organisation_id,
-            ActivityResponse.study_id == invitation.study_id,
-            ActivityResponse.activity_id == activity_row.id,
-            ActivityResponse.participant_id == participant_row.id,
+    try:
+        existing = resolve_or_create_activity_response(
+            db,
+            organisation_id=invitation.organisation_id,
+            study_id=invitation.study_id,
+            activity_id=activity_row.id,
+            participant_id=participant_row.id,
+            repeatable=activity_row.allow_multiple_entries,
+            client_entry_key_hash=entry_key_hash,
         )
-    )
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Activity response state conflict.")
     if existing and existing.status == "submitted":
         existing_value = json.loads(existing.value_json or "{}")
         if existing_value != value:
@@ -5052,19 +5118,10 @@ def participant_api_activity_response_submit(
         )
 
     try:
-        response_row = existing or resolve_or_create_activity_response(
-            db,
-            organisation_id=invitation.organisation_id,
-            study_id=invitation.study_id,
-            activity_id=activity_row.id,
-            participant_id=participant_row.id,
-        )
-        if existing:
-            if not _update_activity_response_if_not_submitted(db, response_row.id, value, "submit"):
-                raise HTTPException(409, "Activity response has already been submitted.")
-            db.refresh(response_row)
-        else:
-            apply_response_action(response_row, value, "submit", now())
+        response_row = existing
+        if not _update_activity_response_if_not_submitted(db, response_row.id, value, "submit"):
+            raise HTTPException(409, "Activity response has already been submitted.")
+        db.refresh(response_row)
         audit(
             db,
             invitation.organisation_id,
@@ -5133,6 +5190,13 @@ def participant_api_activity_evidence_upload(
             ActivityResponse.study_id == invitation.study_id,
             ActivityResponse.activity_id == activity_row.id,
             ActivityResponse.participant_id == participant_row.id,
+        ).where(
+            ActivityResponse.client_entry_key_hash == upload_key_hash
+        ) if activity_row.allow_multiple_entries and upload_key_hash else select(ActivityResponse).where(
+            ActivityResponse.organisation_id == invitation.organisation_id,
+            ActivityResponse.study_id == invitation.study_id,
+            ActivityResponse.activity_id == activity_row.id,
+            ActivityResponse.participant_id == participant_row.id,
         )
     )
     if existing_response and existing_response.status == "submitted":
@@ -5167,6 +5231,8 @@ def participant_api_activity_evidence_upload(
             study_id=invitation.study_id,
             activity_id=activity_row.id,
             participant_id=participant_row.id,
+            repeatable=activity_row.allow_multiple_entries,
+            client_entry_key_hash=upload_key_hash,
         )
         db.flush()
         evidence_row = build_evidence_file(

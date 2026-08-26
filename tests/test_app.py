@@ -8456,3 +8456,62 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
     with client:
         client.cookies.clear()
         assert client.get(f"/projects/{project_id}/workspace", follow_redirects=False).status_code == 303
+
+
+def test_repeatable_activity_keeps_distinct_entries_and_reuses_only_the_same_key():
+    from app.models import Activity, ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('repeatable-entries')
+    with SessionLocal() as db:
+        activity = db.get(Activity, context['activity_id'])
+        assert activity is not None
+        activity.allow_multiple_entries = True
+        db.commit()
+
+    headers = {'Authorization': f"Bearer {context['api_token']}", 'Idempotency-Key': 'repeatable-entry-one'}
+    with client:
+        first = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'first diary entry', 'choices': []}, headers=headers,
+        )
+        assert first.status_code == 200
+        retry = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'first diary entry', 'choices': []}, headers=headers,
+        )
+        assert retry.status_code == 200
+        assert retry.json()['response_id'] == first.json()['response_id']
+        second = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'second diary entry', 'choices': []},
+            headers={'Authorization': f"Bearer {context['api_token']}", 'Idempotency-Key': 'repeatable-entry-two'},
+        )
+        assert second.status_code == 200
+        assert second.json()['response_id'] != first.json()['response_id']
+        activities = client.get('/api/v1/participant/activities', headers={'Authorization': f"Bearer {context['api_token']}"})
+        item = next(row for row in activities.json()['data'] if row['activity_id'] == context['activity_id'])
+        assert item['allow_multiple_entries'] is True
+        assert item['submitted_entry_count'] == 2
+
+    with SessionLocal() as db:
+        rows = list(db.scalars(select(ActivityResponse).where(
+            ActivityResponse.activity_id == context['activity_id'],
+            ActivityResponse.participant_id == context['participant_id'],
+        ).order_by(ActivityResponse.id)))
+        assert len(rows) == 2
+        assert all(row.status == 'submitted' for row in rows)
+        assert [json.loads(row.value_json)['answer'] for row in rows] == ['first diary entry', 'second diary entry']
+
+
+def test_study_protocol_builder_separates_method_layers_and_exposes_repeatable_control():
+    with client:
+        auth()
+        page = client.get('/studies/1')
+        assert page.status_code == 200
+        assert 'Research approach' in page.text
+        assert 'Evidence collection' in page.text
+        assert 'Analysis' in page.text
+        assert 'Advanced / theoretical orientation (optional)' in page.text
+        assert 'Not yet decided' in page.text
+        assert 'name="allow_multiple_entries"' in page.text
+        assert 'Allow multiple participant entries' in page.text
