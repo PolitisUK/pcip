@@ -1005,7 +1005,8 @@ class _HomeState extends State<Home> {
         final study = Map<String, dynamic>.from(data['study'] as Map);
         final activities = data['activities'] as List? ?? const [];
         final outstanding = activities.where((item) {
-          final response = (item as Map)['response'];
+          if ((item as Map)['allow_multiple_entries'] == true) return true;
+          final response = item['response'];
           return response is! Map || response['status'] != 'submitted';
         }).length;
         final messages = data['messages'] as List? ?? const [];
@@ -1541,6 +1542,7 @@ class MediaQueue {
 }
 
 bool activityIsSubmitted(Map<String, dynamic> activity) {
+  if (activity['allow_multiple_entries'] == true) return false;
   final response = activity['response'];
   return response is Map && response['status'] == 'submitted';
 }
@@ -1664,7 +1666,12 @@ class _ActivitiesState extends State<Activities> with WidgetsBindingObserver {
               ...rows.map(
                 (r) => ListTile(
                   title: Text(r['title'] ?? 'Activity'),
-                  subtitle: Text(r['availability']?['status'] ?? 'Available'),
+                  subtitle: Text(
+                    r['allow_multiple_entries'] == true &&
+                            (r['submitted_entry_count'] as num? ?? 0) > 0
+                        ? 'Add new entry · ${(r['submitted_entry_count'] as num).toInt()} saved'
+                        : r['availability']?['status'] ?? 'Available',
+                  ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () async {
                     await Navigator.push(
@@ -1700,12 +1707,15 @@ class _TextActivityState extends State<TextActivity> {
   final text = TextEditingController();
   bool working = false;
   late bool submitted;
+  late String entryKey;
   String status = '';
   String get key => 'draft_${widget.item['activity_id']}';
+  bool get repeatable => widget.item['allow_multiple_entries'] == true;
   @override
   void initState() {
     super.initState();
     submitted = activityIsSubmitted(widget.item);
+    entryKey = const Uuid().v4();
     restore();
   }
 
@@ -1715,7 +1725,7 @@ class _TextActivityState extends State<TextActivity> {
 
   Future<void> save(bool submit) async {
     setState(() => working = true);
-    final id = const Uuid().v4();
+    final id = entryKey;
     final p = await SharedPreferences.getInstance();
     await p.setString(key, text.text);
     try {
@@ -1726,8 +1736,14 @@ class _TextActivityState extends State<TextActivity> {
           id,
         );
         await p.remove(key);
-        status = 'Submitted successfully.';
-        submitted = true;
+        status = repeatable
+            ? 'Entry added. You can add another when ready.'
+            : 'Submitted successfully.';
+        submitted = !repeatable;
+        if (repeatable) {
+          text.clear();
+          entryKey = const Uuid().v4();
+        }
       } else {
         await widget.api.draft(
           widget.item['activity_id'] as int,
@@ -1837,7 +1853,7 @@ class _TextActivityState extends State<TextActivity> {
             height: 48,
             child: FilledButton(
               onPressed: working || submitted ? null : () => save(true),
-              child: Text(working ? 'Saving…' : 'Submit response'),
+              child: Text(working ? 'Saving…' : repeatable ? 'Add entry' : 'Submit response'),
             ),
           ),
         ],

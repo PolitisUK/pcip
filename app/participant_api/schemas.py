@@ -100,6 +100,8 @@ class ActivitySummary(BaseModel):
     activity_type: str
     options: list[str] | None = None
     required: bool
+    allow_multiple_entries: bool = False
+    submitted_entry_count: int = 0
     position: int
     availability: ActivityAvailability
     response: ActivityResponseSummary | None = None

@@ -959,6 +959,13 @@ components:
             type: string
         required:
           type: boolean
+        allow_multiple_entries:
+          type: boolean
+          description: When true, each participant may create additional immutable entries over time.
+        submitted_entry_count:
+          type: integer
+          minimum: 0
+          description: Number of submitted entries visible to the current participant.
         position:
           type: integer
           minimum: 1

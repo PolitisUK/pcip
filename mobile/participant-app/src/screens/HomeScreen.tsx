@@ -368,7 +368,7 @@ export function HomeScreen({ participantDisplayName, onSignOut, onSessionExpired
             progressRatio: nextStatus === "clean" ? 1 : current.editor.evidence.progressRatio,
             evidenceId: metadata.evidence_id,
             scanStatus: normalized,
-            scanDetail: metadata.scan_detail || null,
+            scanDetail: null,
           },
           message: normalized === "clean"
             ? { tone: "success", text: "Evidence scan is clean and ready to attach." }
