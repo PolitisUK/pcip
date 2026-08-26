@@ -11,6 +11,8 @@ def confirmed_configuration(**overrides):
     values = {
         "primary_methodology_id": "M11",
         "methodology_variant": "framework_method",
+        "research_design": "not_specified",
+        "analysis_approaches_json": '["framework_analysis"]',
         "library_version": "1.0.0",
         "protocol_version": "protocol-v2",
         "ai_enabled": True,
@@ -32,10 +34,33 @@ def test_published_library_has_stable_source_provenance_and_method_profiles():
     assert {"knowledge", "claims", "disagreements"} == set(structured_companions())
 
 
-@pytest.mark.parametrize("methodology_id,task", [("M08", "coding_reliability"), ("M13", "candidate_code_suggestions"), ("M15", "frequency_claim"), ("M20", "governance_decision")])
-def test_method_specific_gates_do_not_universalise_incompatible_operations(methodology_id, task):
+@pytest.mark.parametrize(
+    ("methodology_id", "task", "research_design", "analysis_approaches_json"),
+    [
+        ("M08", "coding_reliability", "not_specified", '["reflexive_thematic"]'),
+        ("M13", "candidate_code_suggestions", "not_specified", '["conversation_analysis"]'),
+        ("M15", "frequency_claim", "phenomenological", "[]"),
+        ("M20", "governance_decision", "participatory_action", "[]"),
+    ],
+)
+def test_method_specific_gates_do_not_universalise_incompatible_operations(methodology_id, task, research_design, analysis_approaches_json):
     with pytest.raises(MethodologyGateViolation):
-        study_grounding(confirmed_configuration(primary_methodology_id=methodology_id, allowed_ai_tasks_json=f'["{task}"]'), task)
+        study_grounding(confirmed_configuration(
+            primary_methodology_id=methodology_id,
+            research_design=research_design,
+            analysis_approaches_json=analysis_approaches_json,
+            allowed_ai_tasks_json=f'["{task}"]',
+        ), task)
+
+
+def test_legacy_controlled_id_cannot_ground_ai_without_current_canonical_mapping():
+    with pytest.raises(MethodologyGateViolation, match="current study design"):
+        study_grounding(confirmed_configuration(
+            primary_methodology_id="M08",
+            research_design="not_specified",
+            analysis_approaches_json="[]",
+            allowed_ai_tasks_json='["retrieval"]',
+        ), "retrieval")
 
 
 def test_configuration_requires_researcher_confirmation_and_protocol():

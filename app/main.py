@@ -103,6 +103,7 @@ from .study_consent import (
 )
 from .methodology import (
     MethodologyGateViolation,
+    controlled_methodology_for_canonical,
     library_records,
     methodology_library,
     source_metadata,
@@ -1206,19 +1207,71 @@ def _protocol_value(value: str, section: str) -> str:
 
 
 def controlled_methodology_for_design(design: str, analysis: list[str]) -> str:
-    """Derive a safe internal AI guard only where the canonical choice is clear."""
-    by_design = {
-        "ethnography": "M03", "grounded_theory": "M09", "phenomenological": "M15",
-        "narrative_inquiry": "M12", "participatory_action": "M20", "mixed_methods": "M21",
-        "case_study": "M06",
+    """Derive a controlled AI guard only from an unambiguous current choice.
+
+    The researcher-facing design and analysis dimensions deliberately do not
+    expose controlled-library identifiers.  This table is the audited bridge
+    between them; its values must match the published knowledge-base records.
+    Multiple analysis approaches are not silently collapsed into one method.
+    """
+    return controlled_methodology_for_canonical(design, analysis)
+
+
+def has_canonical_methodology_values(configuration: StudyMethodologyConfiguration) -> bool:
+    """Whether a configuration has already been saved through the canonical UI."""
+    return any((
+        configuration.research_philosophy not in {"", "not_specified"},
+        configuration.research_design not in {"", "not_specified"},
+        bool(configuration.secondary_design),
+        configuration.evidence_methods_json not in {"", "[]"},
+        configuration.analysis_approaches_json not in {"", "[]"},
+        configuration.theoretical_orientations_json not in {"", "[]"},
+    ))
+
+
+def preserve_legacy_methodology_metadata(configuration: StudyMethodologyConfiguration) -> None:
+    """Snapshot pre-0021 controlled fields before replacing current grounding.
+
+    Those fields may contain labels from an older importer that are not current
+    controlled-library identifiers.  Keeping a lossless source record prevents
+    historical provenance from becoming a hidden, revalidated form input.
+    """
+    if has_canonical_methodology_values(configuration):
+        return
+    historical = {
+        "primary_methodology_id": configuration.primary_methodology_id,
+        "methodology_variant": configuration.methodology_variant,
+        "secondary_methodologies_json": configuration.secondary_methodologies_json,
+        "legacy_methodology_json": configuration.legacy_methodology_json,
     }
-    if design in by_design:
-        return by_design[design]
-    if analysis == ["reflexive_thematic"]:
-        return "M08"
-    if analysis == ["framework_analysis"]:
-        return "M10"
-    return ""
+    if not any(value not in {"", "[]"} for value in historical.values()):
+        return
+    configuration.legacy_methodology_json = json.dumps(
+        {"pre_0021_controlled_methodology": historical},
+        sort_keys=True,
+    )
+
+
+def study_consent_display(enrolment: StudyEnrolment, participant_row: Participant, invitation: ParticipantInvitation | None) -> dict[str, object]:
+    """Return a current, study-scoped consent state without erasing history."""
+    accepted_at = invitation.accepted_at if invitation else None
+    historical_acceptance = accepted_at.strftime("%d %b %Y") if accepted_at else ""
+    withdrawn = (
+        enrolment.status == "withdrawn"
+        or participant_row.status == ParticipantStatus.withdrawn.value
+        or participant_row.consent_status == ConsentStatus.withdrawn.value
+    )
+    if withdrawn:
+        return {"label": "Withdrawn", "invitation_label": "Withdrawn", "style": "withdrawn", "historical_acceptance": historical_acceptance}
+    if invitation is None:
+        return {"label": "Awaiting study consent", "invitation_label": "Not sent", "style": "pending", "historical_acceptance": ""}
+    if invitation.revoked_at:
+        return {"label": "Revoked", "invitation_label": "Revoked", "style": "withdrawn", "historical_acceptance": historical_acceptance}
+    if not unexpired(invitation.expires_at):
+        return {"label": "Expired", "invitation_label": "Expired", "style": "pending", "historical_acceptance": historical_acceptance}
+    if accepted_at:
+        return {"label": "Consented for this study", "invitation_label": "Accepted", "style": "active", "historical_acceptance": ""}
+    return {"label": "Awaiting study consent", "invitation_label": "Pending", "style": "pending", "historical_acceptance": ""}
 
 
 def study_design_summaries(db: Session, organisation_id: int, study_ids: list[int]) -> dict[int, str]:
@@ -2544,10 +2597,19 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
     confidence_assessments=db.scalars(select(EvidenceConfidenceAssessment).where(EvidenceConfidenceAssessment.organisation_id==u.organisation_id,EvidenceConfidenceAssessment.study_id==s.id).order_by(EvidenceConfidenceAssessment.created_at.desc()).limit(20)).all() if settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled else []
     governance = governance_for_study(db, s)
     methodology_configuration = methodology_configuration_for_study(db, s)
+    participant_consent_states = {
+        enrolment.participant_id: study_consent_display(
+            enrolment,
+            ps[enrolment.participant_id],
+            latest.get(enrolment.participant_id),
+        )
+        for enrolment in ens
+        if enrolment.participant_id in ps
+    }
     methodology_record = None
     if methodology_configuration and methodology_configuration.primary_methodology_id:
         methodology_record = next((item for item in library_records() if item["methodology_id"] == methodology_configuration.primary_methodology_id), None)
-    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_documents={document.document_type: document for document in current_bundle_documents(db, governance)},governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,protocol_builder_options=protocol_builder_options(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
+    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,participant_consent_states=participant_consent_states,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_documents={document.document_type: document for document in current_bundle_documents(db, governance)},governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,protocol_builder_options=protocol_builder_options(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
 
 @app.post("/studies/{study_id}/governance")
 def update_study_governance(
@@ -2679,9 +2741,6 @@ def update_study_governance(
 @app.post("/studies/{study_id}/methodology-configuration")
 def update_methodology_configuration(
     study_id: int,
-    primary_methodology_id: str = Form(""),
-    methodology_variant: str = Form(""),
-    secondary_methodology_values: list[str] = Form([], alias="secondary_methodologies"),
     research_philosophy: str = Form("not_specified"),
     research_design: str = Form("not_specified"),
     secondary_design: str = Form(""),
@@ -2712,23 +2771,17 @@ def update_methodology_configuration(
     analysis_approaches = _protocol_values(analysis_approach_values, "analysis_approaches")
     theoretical_orientations = _protocol_values(theoretical_orientation_values, "theoretical_orientations")
     configuration = methodology_configuration_for_study(db, s)
-    # New ordinary UI never asks researchers to reclassify through controlled
-    # identifiers. Preserve an existing controlled record; otherwise derive one
-    # only from an unambiguous canonical design/analysis combination.
+    # Current controlled grounding is derived exclusively from the canonical
+    # form values.  Historical controlled values are preserved separately and
+    # cannot keep AI permissions alive after a researcher changes the design.
     derived_methodology_id = controlled_methodology_for_design(research_design, analysis_approaches)
-    existing_methodology_id = configuration.primary_methodology_id if configuration else ""
-    effective_methodology_id = derived_methodology_id or existing_methodology_id or primary_methodology_id
-    effective_variant = methodology_variant.strip() or (configuration.methodology_variant if configuration else "")
-    effective_secondary = secondary_methodology_values or (
-        json.loads(configuration.secondary_methodologies_json or "[]") if configuration else []
-    )
-    if ai_enabled and not effective_methodology_id:
+    if ai_enabled and not derived_methodology_id:
         raise HTTPException(400, "AI support needs a clear study design or analysis mapping. Choose a more specific design or analysis before enabling it.")
     try:
         issues = validate_configuration(
-            primary_methodology_id=effective_methodology_id,
-            methodology_variant=effective_variant,
-            secondary_methodologies=effective_secondary,
+            primary_methodology_id=derived_methodology_id,
+            methodology_variant="",
+            secondary_methodologies=[],
             research_questions=research_questions.strip(),
             protocol_reference=document_reference(protocol_reference, "Protocol reference"),
             protocol_version=protocol_version.strip(),
@@ -2737,12 +2790,12 @@ def update_methodology_configuration(
             ai_enabled=ai_enabled,
             allowed_ai_tasks=allowed_ai_task_values,
             researcher_confirmation=researcher_confirmation,
-        ) if effective_methodology_id else ([] if not ai_enabled and not allowed_ai_task_values else ["Choose a more specific design or analysis before enabling AI support."])
+        ) if derived_methodology_id else ([] if not ai_enabled and not allowed_ai_task_values else ["Choose a more specific design or analysis before enabling AI support."])
     except MethodologyGateViolation as exc:
         raise HTTPException(400, str(exc)) from exc
     if issues:
         raise HTTPException(400, " ".join(issues))
-    record = next((item for item in library_records() if item["methodology_id"] == effective_methodology_id), None)
+    record = next((item for item in library_records() if item["methodology_id"] == derived_methodology_id), None)
     allowed = set(record["allowed_ai_tasks"]) if record else set()
     requested = set(allowed_ai_task_values)
     if not requested.issubset(allowed):
@@ -2750,9 +2803,11 @@ def update_methodology_configuration(
     if configuration is None:
         configuration = StudyMethodologyConfiguration(organisation_id=s.organisation_id, study_id=s.id)
         db.add(configuration)
-    configuration.primary_methodology_id = effective_methodology_id
-    configuration.methodology_variant = effective_variant
-    configuration.secondary_methodologies_json = json.dumps(sorted(set(effective_secondary)))
+    else:
+        preserve_legacy_methodology_metadata(configuration)
+    configuration.primary_methodology_id = derived_methodology_id
+    configuration.methodology_variant = ""
+    configuration.secondary_methodologies_json = "[]"
     configuration.research_philosophy = research_philosophy
     configuration.research_design = research_design
     configuration.secondary_design = secondary_design
@@ -2761,8 +2816,6 @@ def update_methodology_configuration(
     configuration.theoretical_orientations_json = json.dumps(theoretical_orientations)
     # Existing pre-0021 controlled and approach values retain their original
     # semantics. They are not guessed into the new canonical dimensions.
-    if not configuration.legacy_methodology_json:
-        configuration.legacy_methodology_json = json.dumps(sorted(set(effective_secondary)))
     configuration.research_questions = research_questions.strip()
     configuration.protocol_reference = document_reference(protocol_reference, "Protocol reference")
     configuration.protocol_version = protocol_version.strip()
@@ -2775,7 +2828,7 @@ def update_methodology_configuration(
     configuration.researcher_notes = researcher_notes.strip()
     configuration.researcher_confirmed_by_id = u.id
     configuration.researcher_confirmed_at = datetime.now(timezone.utc)
-    audit(db, u.organisation_id, u.id, "study.methodology_configuration_confirmed", "study", s.id, effective_methodology_id or "protocol-builder")
+    audit(db, u.organisation_id, u.id, "study.methodology_configuration_confirmed", "study", s.id, derived_methodology_id or "protocol-builder")
     db.commit()
     return RedirectResponse(f"/studies/{s.id}?section=design#design", 303)
 @app.post("/studies/{study_id}/research-analysis/{suggestion_id}/review")
