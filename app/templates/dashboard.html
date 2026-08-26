@@ -12,7 +12,7 @@
 		<p class="muted">Track live studies, participants and invitations without losing sight of the next setup step.</p>
 	</div>
 	<div class="hero-actions">
-		<a class="btn" href="/onboarding/first-project">Create first project</a>
+		<a class="btn" href="{% if onboarding.has_project %}/projects{% else %}/onboarding/first-project{% endif %}">{% if onboarding.has_project %}New project{% else %}Create your first project{% endif %}</a>
 		<a class="btn secondary" href="/projects">Open projects</a>
 	</div>
 </section>
@@ -44,7 +44,7 @@
 		<div class="summary-note">Submitted activities received so far</div>
 	</div>
 	<div class="card summary-card">
-		<div class="summary-label">Open privacy actions</div>
+		<div class="summary-label">Active participants</div>
 		<div class="summary-value">{{ metrics.active }}</div>
 		<div class="summary-note">Active participants in the current workspace</div>
 	</div>
@@ -59,9 +59,9 @@
 			</div>
 		</div>
 		<div class="action-list">
-			<a class="action-item" href="/onboarding/first-project">
-				<strong>Start your first project</strong>
-				<span>Set up a project and its first study in one guided flow.</span>
+			<a class="action-item" href="{% if onboarding.has_project %}/projects{% else %}/onboarding/first-project{% endif %}">
+				<strong>{% if onboarding.has_project %}New project{% else %}Create your first project{% endif %}</strong>
+				<span>{% if onboarding.has_project %}Add a concise project record for new work.{% else %}Set up a project and its first study in one guided flow.{% endif %}</span>
 			</a>
 			<a class="action-item" href="/studies">
 				<strong>Review live studies</strong>
@@ -75,8 +75,8 @@
 		{% if onboarding.can_seed %}
 		<form method="post" action="/pilot/sample-data" class="inline section dashboard-seed">
 			<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-			<button class="secondary" data-confirm="Generate pilot sample data for this organisation?">Add sample pilot data</button>
-			<span class="muted">Safe to run multiple times.</span>
+			<button class="secondary" data-confirm="Generate training/demo data for this organisation?">Add training / demo data</button>
+			<span class="muted">Clearly marked, safe to run multiple times.</span>
 		</form>
 		{% endif %}
 	</div>
@@ -120,13 +120,13 @@
 	</div>
 	{% if studies %}
 	<table class="table">
-		<thead><tr><th>Study</th><th>Project</th><th>Method</th><th>Status</th></tr></thead>
+		<thead><tr><th>Study</th><th>Project</th><th>Design summary</th><th>Status</th></tr></thead>
 		<tbody>
 			{% for s in studies %}
 			<tr>
 				<td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td>
 				<td>{{ project_map[s.project_id].title }}</td>
-				<td>{{ s.methodology|replace('_',' ')|title }}</td>
+				<td>{{ study_design_summaries.get(s.id, 'Legacy methodology metadata') }}</td>
 				<td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td>
 			</tr>
 			{% endfor %}

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ study.title }}{% endblock %}
-{% block page_description %}<p class="page-description">Manage study settings, activities, access permissions, recruitment, and participant invitations.</p>{% endblock %}
+{% block page_description %}<p class="page-description">Set up this study, work with participants, and keep its governance and analysis record clear.</p>{% endblock %}
 {% block content %}
 <section class="card card--hero section-compact">
   <div class="section-head">
@@ -8,7 +8,7 @@
       <p class="muted"><a href="/projects/{{ project.id }}">{{ project.title }}</a> · {{ study.code }}</p>
       <p>{{ study.description or 'No study description supplied.' }}</p>
       <span class="badge {{ study.status }}">{{ study.status|title }}</span>
-      <span class="badge">{{ study.methodology|replace('_',' ')|title }}</span>
+      {% if methodology_configuration and methodology_configuration.research_design %}<span class="badge">Design: {{ methodology_configuration.research_design|replace('_',' ')|title }}</span>{% endif %}
     </div>
   </div>
 
@@ -19,8 +19,8 @@
       <form method="post" action="/studies/{{ study.id }}/edit" class="stack">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="row">
+          <input type="hidden" name="methodology" value="{{ study.methodology }}">
           <div class="field"><label>Title</label><input name="title" value="{{ study.title }}" required></div>
-          <div class="field"><label>Method</label><select name="methodology">{% for m in ['diary','walk_along','interview','focus_group','co_design','mixed_method'] %}<option value="{{ m }}" {% if m==study.methodology %}selected{% endif %}>{{ m|replace('_',' ')|title }}</option>{% endfor %}</select></div>
           <div class="field"><label>Status</label><select name="status_value">{% for x in ['draft','recruiting','live','paused','closed'] %}<option {% if x==study.status %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></div>
         </div>
         <div class="field"><label>Description</label><textarea name="description">{{ study.description }}</textarea></div>
@@ -32,34 +32,36 @@
   {% endif %}
 </section>
 
-<section class="card card--data section" id="methodology">
+<nav class="study-nav" aria-label="Study navigation">
+  <a href="#overview">Overview</a><a href="#design">Design</a><a href="#activities">Activities</a><a href="#participants">Participants</a><a href="#governance">Governance</a><a href="#analysis">Analysis</a>
+</nav>
+
+<section class="card card--data section" id="design">
   <div class="section-head">
-    <div><h2>Methodology and analysis configuration</h2><p class="muted">Start with a clear primary approach. Detailed classifications remain available only when they are genuinely needed for the study protocol.</p></div>
+    <div><h2>Design</h2><p class="muted">Record the five decisions that describe the study. The controlled methodology library is derived internally for safeguards; it is not another form to complete.</p></div>
   </div>
   {% if methodology_configuration and methodology_configuration.researcher_confirmed_at %}
   <p class="success" role="status">Confirmed by a researcher. Human review remains required for every AI-assisted output.</p>
   {% else %}
   <p class="notice neutral">A researcher-confirmed methodology configuration is required before a study can launch or use AI research support.</p>
   {% endif %}
-  {% if methodology_record %}<p class="notice neutral"><strong>Current approach:</strong> {{ methodology_record.name }}. Methodological and AI safeguards are applied to this study configuration.</p>{% endif %}
-  <details class="compact-details"><summary>Choose an approach</summary><div class="approach-list">{% for item in methodology_categories %}<p><strong>{{ item.label }}</strong> — {{ item.description }}</p>{% endfor %}</div></details>
+  {% if methodology_record %}<p class="notice neutral"><strong>Internal safeguard mapping:</strong> {{ methodology_record.name }}. This is derived from the study design where clear, and keeps AI boundaries auditable.</p>{% endif %}
   {% if can_edit %}
   <details class="section compact-details" {% if not methodology_configuration %}open{% endif %}>
     <summary>Configure methodology</summary>
     <div class="context-help-body">
       <form method="post" action="/studies/{{ study.id }}/methodology-configuration" class="stack">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <fieldset class="field"><legend>Research approach</legend><p class="muted">What overall approach best describes this study?</p>{% for item in protocol_builder_options.research_approaches %}<label class="control-row"><input type="checkbox" name="research_approaches" value="{{ item.id }}" {% if methodology_configuration and item.id in methodology_configuration.research_approaches_json %}checked{% endif %}> {{ item.label }}</label>{% endfor %}</fieldset>
-        <fieldset class="field"><legend>Evidence collection</legend><p class="muted">How will evidence be generated or collected?</p>{% for item in protocol_builder_options.evidence_methods %}<label class="control-row"><input type="checkbox" name="evidence_methods" value="{{ item.id }}" {% if methodology_configuration and item.id in methodology_configuration.evidence_methods_json %}checked{% endif %}> {{ item.label }}</label>{% endfor %}</fieldset>
+        <fieldset class="field"><legend>Research philosophy / paradigm</legend><p class="muted">What broad perspective guides how knowledge is understood and produced in this study? This is optional: choose “Not specified / not sure” if it is not explicit.</p>{% for item in protocol_builder_options.research_philosophies %}<label class="control-row" title="{{ item.description }}"><input type="radio" name="research_philosophy" value="{{ item.id }}" {% if not methodology_configuration and item.id == 'not_specified' or methodology_configuration and item.id == methodology_configuration.research_philosophy %}checked{% endif %}> {{ item.label }} <small class="muted">{{ item.description }}</small></label>{% endfor %}</fieldset>
+        <fieldset class="field"><legend>Research design / methodology</legend><p class="muted">What overall design best describes this study? Choose one primary design; add a secondary design only when it is genuinely needed.</p><div class="row"><div class="field"><label for="research-design">Primary design</label><select id="research-design" name="research_design">{% for item in protocol_builder_options.research_designs %}<option value="{{ item.id }}" {% if methodology_configuration and item.id == methodology_configuration.research_design %}selected{% endif %}>{{ item.label }}</option>{% endfor %}</select></div><div class="field"><label for="secondary-design">Secondary design (optional)</label><select id="secondary-design" name="secondary_design"><option value="">None</option>{% for item in protocol_builder_options.research_designs %}<option value="{{ item.id }}" {% if methodology_configuration and item.id == methodology_configuration.secondary_design %}selected{% endif %}>{{ item.label }}</option>{% endfor %}</select></div></div></fieldset>
+        <fieldset class="field"><legend>Evidence / data collection</legend><p class="muted">How will information be gathered?</p>{% for item in protocol_builder_options.evidence_methods %}<label class="control-row"><input type="checkbox" name="evidence_methods" value="{{ item.id }}" {% if methodology_configuration and item.id in methodology_configuration.evidence_methods_json %}checked{% endif %}> {{ item.label }}</label>{% endfor %}</fieldset>
         <fieldset class="field"><legend>Analysis</legend><p class="muted">How do you expect to analyse the material? “Not yet decided” is a valid protocol state.</p>{% for item in protocol_builder_options.analysis_approaches %}<label class="control-row"><input type="checkbox" name="analysis_approaches" value="{{ item.id }}" {% if methodology_configuration and item.id in methodology_configuration.analysis_approaches_json %}checked{% endif %}> {{ item.label }}</label>{% endfor %}</fieldset>
-        <details class="compact-details"><summary>Advanced / theoretical orientation (optional)</summary><div class="context-help-body">{% for item in protocol_builder_options.theoretical_orientations %}<label class="control-row"><input type="checkbox" name="theoretical_orientations" value="{{ item.id }}" {% if methodology_configuration and item.id in methodology_configuration.theoretical_orientations_json %}checked{% endif %}> {{ item.label }}</label>{% endfor %}</div></details>
-        <details class="compact-details"><summary>Controlled methodology and AI safeguards (advanced)</summary><div class="context-help-body"><div class="row"><div class="field"><label for="primary-methodology">Controlled primary methodology</label><select id="primary-methodology" name="primary_methodology_id"><option value="">Not selected — no AI method-specific support</option>{% for item in methodology_options %}<option value="{{ item.id }}" {% if methodology_configuration and methodology_configuration.primary_methodology_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select><small class="muted">Optional unless you enable methodology-specific AI support. Existing values remain available here without being reclassified.</small></div><div class="field"><label for="methodology-variant">Variant or emphasis</label><input id="methodology-variant" name="methodology_variant" value="{{ methodology_configuration.methodology_variant if methodology_configuration else '' }}" placeholder="Optional approved variant"></div></div></div></details>
-        <details class="compact-details"><summary>Advanced methodology options</summary><div class="context-help-body"><p>Additional and specialist approaches can be recorded where justified by the protocol. This preserves existing metadata without making a large taxonomy the normal workflow.</p><div class="field"><label>Additional approaches</label>{% for item in methodology_options %}<label class="control-row"><input type="checkbox" name="secondary_methodologies" value="{{ item.id }}" {% if methodology_configuration and item.id in methodology_configuration.secondary_methodologies_json %}checked{% endif %}> {{ item.name }}</label>{% endfor %}</div></div></details>
+        <details class="compact-details"><summary>Add a theoretical or specialist framework, if relevant</summary><div class="context-help-body">{% for item in protocol_builder_options.theoretical_orientations %}<label class="control-row"><input type="checkbox" name="theoretical_orientations" value="{{ item.id }}" {% if methodology_configuration and item.id in methodology_configuration.theoretical_orientations_json %}checked{% endif %}> {{ item.label }}</label>{% endfor %}</div></details>
         <div class="field"><label>Research questions</label><textarea name="research_questions" required>{{ methodology_configuration.research_questions if methodology_configuration else '' }}</textarea></div>
         <div class="row"><div class="field"><label>Protocol or analysis-plan reference</label><input name="protocol_reference" required value="{{ methodology_configuration.protocol_reference if methodology_configuration else '' }}"></div><div class="field"><label>Protocol version</label><input name="protocol_version" required value="{{ methodology_configuration.protocol_version if methodology_configuration else '' }}"></div></div>
         <div class="field"><label>Sampling approach</label><textarea name="sampling_approach" required>{{ methodology_configuration.sampling_approach if methodology_configuration else '' }}</textarea></div>
         <div class="field"><label>Data-collection plan</label><textarea name="data_collection_plan" required>{{ methodology_configuration.data_collection_plan if methodology_configuration else '' }}</textarea></div>
-        <fieldset class="field"><legend>Researcher AI support</legend><label class="control-row"><input type="checkbox" name="ai_enabled" value="true" {% if methodology_configuration and methodology_configuration.ai_enabled %}checked{% endif %}> AI research support is approved for this study</label><p class="muted">Only choose tasks that the selected methodology permits. All output is a machine-assisted suggestion requiring a named human decision.</p>{% for task, label in [('retrieval','Retrieve relevant authorised evidence'),('negative_case_retrieval','Retrieve possible negative or contradictory cases'),('candidate_code_suggestions','Suggest candidate codes'),('stable_codebook_application','Apply an approved stable codebook'),('matrix_organisation','Organise a framework matrix'),('chronology_organisation','Organise narrative chronology')] %}<label class="control-row"><input type="checkbox" name="allowed_ai_tasks" value="{{ task }}" {% if methodology_configuration and task in methodology_configuration.allowed_ai_tasks_json %}checked{% endif %}> {{ label }}</label>{% endfor %}</fieldset>
+        <fieldset class="field"><legend>AI support</legend><label class="control-row"><input type="checkbox" name="ai_enabled" value="true" {% if methodology_configuration and methodology_configuration.ai_enabled %}checked{% endif %}> Allow AI-assisted research functions for this study</label><p class="muted">AI output is always a machine-assisted suggestion requiring researcher review and judgement. Available tasks are checked against the internal mapping from this study’s design and analysis.</p><div data-ai-tasks {% if not methodology_configuration or not methodology_configuration.ai_enabled %}hidden{% endif %}>{% for task, label in [('retrieval','Retrieve authorised evidence'),('negative_case_retrieval','Retrieve possible contradictory cases'),('candidate_code_suggestions','Suggest candidate codes'),('stable_codebook_application','Apply an approved codebook'),('matrix_organisation','Organise a framework matrix'),('chronology_organisation','Organise narrative chronology')] %}<label class="control-row"><input type="checkbox" name="allowed_ai_tasks" value="{{ task }}" {% if methodology_configuration and task in methodology_configuration.allowed_ai_tasks_json %}checked{% endif %}> {{ label }}</label>{% endfor %}</div></fieldset>
         <div class="field"><label>Researcher notes</label><textarea name="researcher_notes">{{ methodology_configuration.researcher_notes if methodology_configuration else '' }}</textarea></div>
         <label class="control-row"><input type="checkbox" name="researcher_confirmation" value="true" required> I confirm this method, variant, protocol and permitted AI tasks are appropriate for this study.</label>
         <button>Confirm methodology configuration</button>
@@ -67,7 +69,7 @@
     </div>
   </details>
   {% endif %}
-  <details class="compact-details"><summary>Methodology and provenance</summary><p class="muted">Controlled methodological references support governance and AI safeguards. Their internal library records are not part of the ordinary researcher interface.</p></details>
+  {% if methodology_configuration and (methodology_configuration.legacy_methodology_json != '[]' or methodology_configuration.research_approaches_json != '[]') %}<details class="compact-details"><summary>Legacy methodology metadata</summary><p class="muted">This study contains classifications recorded using an earlier methodology structure. They are preserved as historical provenance and are not reinterpreted by this form.</p><p>{{ methodology_configuration.legacy_methodology_json }} {{ methodology_configuration.research_approaches_json }}</p></details>{% endif %}
 </section>
 
 <section class="card card--data section" id="governance">
@@ -90,7 +92,7 @@
     <div class="context-help-body">
       <form method="post" action="/studies/{{ study.id }}/governance" class="stack">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div class="row">
+        <h3>Responsibility</h3><div class="row">
           <div class="field"><label>Data controller</label><input name="controller_name" value="{{ governance.controller_name if governance else '' }}" required></div>
           <div class="field"><label>Controller privacy contact</label><input type="email" name="controller_privacy_contact" value="{{ governance.controller_privacy_contact if governance else '' }}" required></div>
           <div class="field"><label>Sponsor (if applicable)</label><input name="sponsor_name" value="{{ governance.sponsor_name if governance else '' }}"></div>
@@ -99,12 +101,13 @@
           <div class="field"><label>Research contact</label><input name="research_contact" value="{{ governance.research_contact if governance else '' }}" required></div>
           <div class="field"><label>Participant population</label><input name="participant_population" value="{{ governance.participant_population if governance else '' }}" required></div>
         </div>
-        <div class="field"><label>Personal data categories</label><textarea name="data_categories" required>{{ governance.data_categories if governance else '' }}</textarea></div>
+        <h3>Participants &amp; data</h3><div class="field"><label>Personal data categories</label><textarea name="data_categories" required>{{ governance.data_categories if governance else '' }}</textarea></div>
         <div class="row">
-          <div class="field"><label>Special-category data assessment</label><select name="special_category_data">{% for value in governance_special_category_states %}<option value="{{ value }}" {% if governance and governance.special_category_data == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Special-category data assessment</label><select name="special_category_data" data-special-category>{% for value in governance_special_category_states %}<option value="{{ value }}" {% if governance and governance.special_category_data == value %}selected{% endif %}>{{ value|replace('_', ' ')|title }}</option>{% endfor %}</select></div>
           <div class="field"><label>Article 6 lawful basis</label><input name="article_6_lawful_basis" value="{{ governance.article_6_lawful_basis if governance else '' }}" required></div>
-          <div class="field"><label>Article 9 condition, if applicable</label><input name="article_9_condition" value="{{ governance.article_9_condition if governance else '' }}"></div>
+          <div class="field" data-article-nine {% if not governance or governance.special_category_data != 'yes' %}hidden{% endif %}><label>Article 9 condition</label><input name="article_9_condition" value="{{ governance.article_9_condition if governance else '' }}"></div>
         </div>
+        <h3>Legal / privacy decisions</h3>
         <div class="field"><label>Controller-approved retention approach</label><textarea name="retention_description" required>{{ governance.retention_description if governance else '' }}</textarea><small class="muted">State the study-specific approach. Do not rely on an unapproved platform default.</small></div>
         <div class="field"><label>Withdrawal/deletion retention exception position</label><textarea name="deletion_retention_exception" required>{{ governance.deletion_retention_exception if governance else '' }}</textarea><small class="muted">State “None” or identify only a specific lawful retention or research exemption, its category and period. This is a controller decision.</small></div>
         <div class="field"><label>Security considerations</label><textarea name="security_considerations" required>{{ governance.security_considerations if governance else '' }}</textarea></div>
@@ -115,7 +118,7 @@
           <label class="control-row"><input type="checkbox" name="withdrawal_process_defined" value="true" {% if governance and governance.withdrawal_process_defined %}checked{% endif %}> Withdrawal process is defined</label>
           <label class="control-row"><input type="checkbox" name="deletion_handling_defined" value="true" {% if governance and governance.deletion_handling_defined %}checked{% endif %}> Deletion-request handling is defined</label>
         </fieldset>
-        <fieldset class="field"><legend>Study-specific consent documents</legend>
+        <h3>Participant documents</h3><fieldset class="field"><legend>Study-specific consent documents</legend>
           <p class="muted">Bind the exact participant-facing versions for this study. These are stored as immutable versions and copied to each new invitation; the public Legal Centre is supplemental only. Do not enter internal storage paths.</p>
           <div class="row"><div class="field"><label>Participant information reference</label><input name="participant_information_reference" value="{{ governance.participant_information_reference if governance else '' }}"></div><div class="field"><label>Version</label><input name="participant_information_version" value="{{ governance.participant_information_version if governance else '' }}"></div><div class="field"><label>Effective date</label><input name="participant_information_effective_date" value="{{ governance.participant_information_effective_date if governance else '' }}"></div></div>
           <div class="field"><label>Participant information text</label><textarea name="participant_information_body" rows="8" placeholder="Paste the approved participant information exactly as participants must see it.">{{ governance_documents['participant_information'].body if governance_documents.get('participant_information') else '' }}</textarea></div>
@@ -124,7 +127,7 @@
           <div class="row"><div class="field"><label>Consent text reference</label><input name="consent_text_reference" value="{{ governance.consent_text_reference if governance else '' }}"></div><div class="field"><label>Version</label><input name="consent_text_version" value="{{ governance.consent_text_version if governance else '' }}"></div><div class="field"><label>Effective date</label><input name="consent_text_effective_date" value="{{ governance.consent_text_effective_date if governance else '' }}"></div></div>
           <div class="field"><label>Consent statement text</label><textarea name="consent_text_body" rows="8" placeholder="Paste the approved consent statement exactly as participants must see it.">{{ governance_documents['consent_text'].body if governance_documents.get('consent_text') else '' }}</textarea></div>
         </fieldset>
-        <fieldset class="field"><legend>Enabled participant features assessed</legend>
+        <h3>Assessments &amp; launch readiness</h3><fieldset class="field"><legend>Enabled participant features assessed</legend>
           <label class="control-row"><input type="checkbox" name="features_assessed" value="true" {% if governance and governance.features_assessed %}checked{% endif %}> I have assessed the enabled features for this study</label>
           {% set selected_features = governance.enabled_features_json if governance else '' %}
           {% for feature in governance_features %}<label class="control-row"><input type="checkbox" name="enabled_features" value="{{ feature }}" {% if feature in selected_features %}checked{% endif %}> {{ feature|replace('_', ' ')|title }}</label>{% endfor %}
@@ -145,7 +148,7 @@
 </section>
 
 {% if research_intelligence_enabled %}
-<section class="card card--data section" id="research-intelligence">
+<section class="card card--data section" id="analysis">
   <div class="section-head"><div><h2>Research Intelligence</h2><p class="muted">AI suggestions are provisional, cite their source, and require a researcher decision.</p></div><div class="inline"><a class="button secondary" href="/studies/{{ study.id }}/evidence-explorer">Evidence Explorer</a><a class="button secondary" href="/studies/{{ study.id }}/theme-explorer">Theme Explorer</a></div></div>
   {% if suggestions %}<table class="table"><thead><tr><th>Source response</th><th>AI suggestion</th><th>Status</th><th>Researcher decision</th></tr></thead><tbody>{% for item in suggestions %}<tr><td>#{{ item.source_response_id }}<br><small>{{ item.source_snapshot[:140] }}</small></td><td><strong>Provisional insight</strong><br>{{ item.provisional_insight }}<br><small>{{ item.suggested_codes_json }}</small></td><td><span class="badge">{{ item.status|replace('_',' ')|title }}</span></td><td>{% if item.status == 'awaiting_researcher_review' and can_edit %}<form method="post" action="/studies/{{ study.id }}/research-analysis/{{ item.id }}/review" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input name="note" placeholder="Reason required to reject"><button name="decision" value="accepted">Accept</button><button name="decision" value="rejected">Reject</button></form>{% else %}{{ item.reviewer_note or 'Awaiting researcher review' }}{% endif %}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="muted">No AI analysis has been requested for this study.</p>{% endif %}
 </section>
@@ -158,6 +161,11 @@
   {% if confidence_assessments %}<table class="table"><thead><tr><th>Focus</th><th>Strength</th><th>Support and limitations</th><th>Review</th></tr></thead><tbody>{% for item in confidence_assessments %}<tr><td>{{ item.focus }}<br><small>Sources: {{ item.supporting_response_ids_json }} · Contradictions: {{ item.contradicting_response_ids_json }}</small></td><td><span class="badge">{{ item.category|title }}</span><br><small>{{ item.status|replace('_',' ')|title }}</small></td><td>{{ item.explanation }}<br><small>{{ item.limitations_json }}</small></td><td>{% if item.status == 'awaiting_researcher_review' and can_edit %}<form method="post" action="/studies/{{ study.id }}/evidence-confidence/{{ item.id }}/review" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input name="note" placeholder="Reason required to reject"><button name="decision" value="accepted">Accept</button><button name="decision" value="rejected">Reject</button></form>{% else %}{{ item.reviewer_note or 'Awaiting researcher review' }}{% endif %}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="muted">No confidence assessments have been created.</p>{% endif %}
 </section>
 {% endif %}
+
+<section class="card card--data section" id="overview">
+  <div class="section-head"><div><h2>Overview</h2><p class="muted">The essential status and next actions for this study.</p></div></div>
+  <div class="summary-grid"><div class="card summary-card"><div class="summary-label">Participants</div><div class="summary-value">{{ enrolments|length }}</div></div><div class="card summary-card"><div class="summary-label">Activities</div><div class="summary-value">{{ activities|length }}</div></div><div class="card summary-card"><div class="summary-label">Recent entries</div><div class="summary-value">{{ response_counts.values()|sum }}</div></div><div class="card summary-card"><div class="summary-label">Study readiness</div><div class="summary-value">{{ governance_readiness.status|replace('_', ' ')|title }}</div></div></div>
+</section>
 
 <section class="card card--data section" id="team-access">
   <div class="section-head">
@@ -201,7 +209,7 @@
   {% endif %}
 </section>
 
-<section class="two-col section">
+<section class="two-col section" id="activities">
   {% if can_edit %}
   <div class="card card--action">
     <h2>Activity builder</h2>
@@ -210,11 +218,11 @@
       <div class="field"><label>Activity title</label><input name="title" required></div>
       <div class="field"><label>Participant prompt</label><textarea name="prompt" rows="3"></textarea></div>
       <div class="row">
-        <div class="field"><label>Response type</label><select name="activity_type">{% for t in activity_types %}<option value="{{ t }}">{{ t|replace('_',' ')|title }}</option>{% endfor %}</select></div>
-        <div class="field small"><label>Release day</label><input type="number" min="0" name="release_offset_days" value="0"></div>
-        <div class="field small"><label>Due day</label><input type="number" min="0" name="due_offset_days"></div>
+        <div class="field"><label>Response type</label><select name="activity_type" data-response-type>{% for t in activity_types %}<option value="{{ t }}">{{ t|replace('_',' ')|title }}</option>{% endfor %}</select></div>
+        <div class="field small"><label>Available from day</label><input type="number" min="0" name="release_offset_days" value="0"></div>
+        <div class="field small"><label>Due on day (optional)</label><input type="number" min="0" name="due_offset_days"></div>
       </div>
-      <div class="field"><label>Choice options (one per line)</label><textarea name="options" rows="3"></textarea></div>
+      <div class="field" data-choice-options hidden><label>Choice options (one per line)</label><textarea name="options" rows="3"></textarea></div>
       <label class="control-row"><input type="checkbox" name="required" value="true" checked> Required</label>
       <fieldset class="field"><legend>Entry behaviour</legend><label class="control-row"><input type="checkbox" name="allow_multiple_entries" value="true"> Allow multiple participant entries</label><small class="muted">Participants can submit this activity more than once, for example as a diary or longitudinal log.</small></fieldset>
       <button>Add activity</button>
@@ -226,7 +234,7 @@
     <h2>Activities</h2>
     {% for a in activities %}
     <details class="activity">
-      <summary><strong>{{ a.position }}. {{ a.title }}</strong> <span class="badge">{{ response_counts.get(a.id,0) }} submissions</span></summary>
+      <summary><strong>{{ a.position }}. {{ a.title }}</strong> <span class="badge">{{ response_counts.get(a.id,0) }} submissions</span>{% if a.allow_multiple_entries %} <span class="badge">Repeatable / diary</span>{% endif %}</summary>
       <p>{{ a.prompt }}</p>
       <p class="muted">{{ a.activity_type|replace('_',' ')|title }} · {{ 'Repeatable entries' if a.allow_multiple_entries else 'Single response' }} · release day {{ a.release_offset_days }}{% if a.due_offset_days is not none %} · due day {{ a.due_offset_days }}{% endif %}</p>
       {% if can_edit %}
@@ -235,11 +243,11 @@
         <div class="field"><label>Title</label><input name="title" value="{{ a.title }}"></div>
         <div class="field"><label>Prompt</label><textarea name="prompt">{{ a.prompt }}</textarea></div>
         <div class="row">
-          <div class="field"><label>Type</label><select name="activity_type">{% for t in activity_types %}<option value="{{ t }}" {% if t==a.activity_type %}selected{% endif %}>{{ t|replace('_',' ')|title }}</option>{% endfor %}</select></div>
-          <div class="field"><label>Release day</label><input type="number" name="release_offset_days" value="{{ a.release_offset_days }}"></div>
-          <div class="field"><label>Due day</label><input type="number" name="due_offset_days" value="{{ a.due_offset_days if a.due_offset_days is not none else '' }}"></div>
+          <div class="field"><label>Type</label><select name="activity_type" data-response-type>{% for t in activity_types %}<option value="{{ t }}" {% if t==a.activity_type %}selected{% endif %}>{{ t|replace('_',' ')|title }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Available from day</label><input type="number" name="release_offset_days" value="{{ a.release_offset_days }}"></div>
+          <div class="field"><label>Due on day (optional)</label><input type="number" name="due_offset_days" value="{{ a.due_offset_days if a.due_offset_days is not none else '' }}"></div>
         </div>
-        <div class="field"><label>Options</label><textarea name="options">{{ a.options_json|replace('[','')|replace(']','')|replace('"','')|replace(',','\n') }}</textarea></div>
+        <div class="field" data-choice-options {% if a.activity_type not in ['single_choice', 'multiple_choice', 'ranking'] %}hidden{% endif %}><label>Choice options</label><textarea name="options">{{ a.options_json|replace('[','')|replace(']','')|replace('"','')|replace(',','\n') }}</textarea></div>
         <label class="control-row"><input type="checkbox" name="required" value="true" {% if a.required %}checked{% endif %}> Required</label>
         <fieldset class="field"><legend>Entry behaviour</legend><label class="control-row"><input type="checkbox" name="allow_multiple_entries" value="true" {% if a.allow_multiple_entries %}checked{% endif %}> Allow multiple participant entries</label><small class="muted">Participants can submit this activity more than once, for example as a diary or longitudinal log.</small></fieldset>
         <div class="inline">
@@ -258,7 +266,7 @@
   </div>
 </section>
 
-<section class="two-col section">
+<section class="two-col section" id="participants">
   {% if can_edit %}
   <div class="card card--action">
     <h2>Enrol participant</h2>
@@ -280,17 +288,17 @@
   </div>
 </section>
 
-<section class="card card--data section">
+<section class="card card--data section" id="study-participants">
   <h2>Enrolled participants</h2>
   <table class="table">
-    <thead><tr><th>Participant</th><th>Consent</th><th>Invitation</th><th>Controls</th></tr></thead>
+    <thead><tr><th>Participant</th><th>Study consent</th><th>Invitation</th><th>Controls</th></tr></thead>
     <tbody>
       {% for e in enrolments %}
       {% set p=participants[e.participant_id] %}
       {% set i=latest_invites.get(p.id) %}
       <tr>
         <td><a href="/participants/{{ p.id }}"><strong>{{ p.name }}</strong></a><br><span class="muted">{{ p.reference }}</span></td>
-        <td><span class="badge {{ p.consent_status }}">{{ p.consent_status|title }}</span></td>
+        <td><span class="badge {% if i and i.accepted_at %}active{% else %}pending{% endif %}">{% if i and i.accepted_at %}Recorded for this study{% else %}Awaiting study consent{% endif %}</span></td>
         <td>{% if i and i.accepted_at %}Accepted{% elif i and i.revoked_at %}Revoked{% elif i %}Pending{% else %}Not sent{% endif %}</td>
         <td>
           {% if can_edit and p.email %}

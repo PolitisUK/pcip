@@ -105,7 +105,6 @@ from .methodology import (
     MethodologyGateViolation,
     library_records,
     methodology_library,
-    methodology_options,
     source_metadata,
     validate_configuration,
 )
@@ -1155,42 +1154,38 @@ def project_workspace_scope(db: Session, user: User, project_id: int) -> tuple[P
     return project_row, project_studies_for_user(db, user, project_row)
 
 
-def researcher_methodology_categories() -> list[dict[str, str]]:
-    """Plain-English defaults; controlled identifiers remain an advanced option."""
-    return [
-        {"id": "M03", "label": "Ethnographic & observational", "description": "Understand everyday settings, practices and interactions."},
-        {"id": "M08", "label": "Thematic analysis", "description": "Develop and interpret patterns across qualitative material."},
-        {"id": "M10", "label": "Content & framework analysis", "description": "Organise material with a transparent coding or matrix approach."},
-        {"id": "M12", "label": "Narrative & discourse", "description": "Examine stories, language and meaning-making."},
-        {"id": "M15", "label": "Experiential & interpretive", "description": "Explore lived experience and interpretation."},
-        {"id": "M20", "label": "Participatory & co-produced", "description": "Work with communities as active research partners."},
-        {"id": "M23", "label": "Critical & intersectional", "description": "Examine power, inequality and intersecting experiences."},
-        {"id": "M17", "label": "Documentary & archival", "description": "Study documents, records and historical material."},
-        {"id": "M21", "label": "Mixed & comparative", "description": "Compare cases or integrate complementary methods."},
-        {"id": "M01", "label": "Other / Advanced", "description": "Use the controlled advanced choices where needed."},
-    ]
-
-
 def protocol_builder_options() -> dict[str, list[dict[str, str]]]:
-    """The ordinary researcher UI: four non-competing protocol layers."""
+    """The ordinary researcher UI: five non-competing protocol dimensions."""
     return {
-        "research_approaches": [
+        "research_philosophies": [
+            {"id": "interpretivist_constructivist", "label": "Interpretivist / constructivist", "description": "Understanding how people interpret and construct meaning from their experiences."},
+            {"id": "positivist_postpositivist", "label": "Positivist / post-positivist", "description": "Testing and refining explanations using systematic observation and measurement."},
+            {"id": "pragmatist", "label": "Pragmatist", "description": "Choosing methods according to what best answers the practical research question."},
+            {"id": "critical_transformative", "label": "Critical / transformative", "description": "Examining power, inequality and possibilities for change."},
+            {"id": "realist_critical_realist", "label": "Realist / critical realist", "description": "Exploring the mechanisms and contexts that may shape what is observed."},
+            {"id": "other", "label": "Other", "description": "Use where a named perspective is important to the protocol."},
+            {"id": "not_specified", "label": "Not specified / not sure", "description": "Valid when the study does not use an explicit research philosophy."},
+        ],
+        "research_designs": [
             {"id": "ethnography", "label": "Ethnography"}, {"id": "case_study", "label": "Case study"},
             {"id": "grounded_theory", "label": "Grounded theory"}, {"id": "phenomenological", "label": "Phenomenological / experiential research"},
             {"id": "narrative_inquiry", "label": "Narrative inquiry"}, {"id": "participatory_action", "label": "Participatory / action research"},
-            {"id": "mixed_methods", "label": "Mixed methods"}, {"id": "other_not_sure", "label": "Other / not sure"},
+            {"id": "mixed_methods", "label": "Mixed-methods study"}, {"id": "evaluation", "label": "Evaluation"},
+            {"id": "survey_quantitative", "label": "Survey / quantitative study"}, {"id": "other", "label": "Other"},
+            {"id": "not_specified", "label": "Not specified / not sure"},
         ],
         "evidence_methods": [
             {"id": "interviews", "label": "Interviews"}, {"id": "focus_groups", "label": "Focus groups"},
-            {"id": "observation", "label": "Observation / participant observation"}, {"id": "diaries", "label": "Participant diaries / repeated entries"},
-            {"id": "photos", "label": "Photos / photovoice"}, {"id": "audio", "label": "Audio / voice notes"},
-            {"id": "documents", "label": "Documents / archival material"}, {"id": "files", "label": "Participant-submitted files"}, {"id": "other", "label": "Other"},
+            {"id": "observation", "label": "Observation"}, {"id": "diaries", "label": "Participant diaries / repeated entries"},
+            {"id": "questionnaires", "label": "Questionnaires / surveys"}, {"id": "photos", "label": "Photos / visual material"},
+            {"id": "audio", "label": "Audio / voice notes"}, {"id": "documents", "label": "Documents / archival material"},
+            {"id": "files", "label": "Participant-submitted files"}, {"id": "secondary_data", "label": "Existing / secondary data"}, {"id": "other", "label": "Other"},
         ],
         "analysis_approaches": [
-            {"id": "reflexive_thematic", "label": "Reflexive thematic analysis"}, {"id": "codebook_thematic", "label": "Codebook / coding-reliability thematic analysis"}, {"id": "content_analysis", "label": "Qualitative content analysis"}, {"id": "framework_analysis", "label": "Framework analysis"}, {"id": "narrative_analysis", "label": "Narrative analysis"}, {"id": "discourse_analysis", "label": "Discourse analysis"}, {"id": "conversation_analysis", "label": "Conversation analysis"}, {"id": "grounded_theory_analysis", "label": "Grounded-theory analysis"}, {"id": "other", "label": "Other"}, {"id": "not_yet_decided", "label": "Not yet decided"},
+            {"id": "reflexive_thematic", "label": "Reflexive thematic analysis"}, {"id": "codebook_thematic", "label": "Codebook / coding-reliability thematic analysis"}, {"id": "content_analysis", "label": "Qualitative content analysis"}, {"id": "framework_analysis", "label": "Framework analysis"}, {"id": "grounded_theory_analysis", "label": "Grounded-theory analysis"}, {"id": "ipa", "label": "Interpretative phenomenological analysis (IPA)"}, {"id": "narrative_analysis", "label": "Narrative analysis"}, {"id": "discourse_analysis", "label": "Discourse analysis"}, {"id": "critical_discourse_analysis", "label": "Critical discourse analysis"}, {"id": "conversation_analysis", "label": "Conversation analysis"}, {"id": "descriptive_statistics", "label": "Descriptive statistical analysis"}, {"id": "inferential_statistics", "label": "Inferential statistical analysis"}, {"id": "mixed_methods_integration", "label": "Mixed-methods integration"}, {"id": "other", "label": "Other"}, {"id": "not_yet_decided", "label": "Not yet decided"},
         ],
         "theoretical_orientations": [
-            {"id": "critical", "label": "Critical"}, {"id": "feminist", "label": "Feminist"}, {"id": "intersectional", "label": "Intersectional"}, {"id": "critical_race", "label": "Critical race"}, {"id": "decolonising", "label": "Decolonising / Indigenous"}, {"id": "poststructural", "label": "Poststructural"}, {"id": "postqualitative", "label": "Postqualitative"}, {"id": "new_materialist", "label": "New materialist"}, {"id": "other_advanced", "label": "Other advanced orientation"},
+            {"id": "feminist", "label": "Feminist"}, {"id": "intersectional", "label": "Intersectional"}, {"id": "critical_race", "label": "Critical race"}, {"id": "indigenous", "label": "Indigenous"}, {"id": "decolonising", "label": "Decolonising"}, {"id": "postcolonial", "label": "Postcolonial"}, {"id": "poststructural", "label": "Poststructural"}, {"id": "postqualitative", "label": "Postqualitative"}, {"id": "new_materialist", "label": "New materialist"}, {"id": "photovoice", "label": "Photovoice"}, {"id": "other", "label": "Other"},
         ],
     }
 
@@ -1201,6 +1196,55 @@ def _protocol_values(values: list[str], section: str) -> list[str]:
     if not set(selected).issubset(allowed):
         raise HTTPException(400, "Invalid protocol-builder selection.")
     return selected
+
+
+def _protocol_value(value: str, section: str) -> str:
+    allowed = {item["id"] for item in protocol_builder_options()[section]}
+    if value not in allowed:
+        raise HTTPException(400, "Invalid protocol-builder selection.")
+    return value
+
+
+def controlled_methodology_for_design(design: str, analysis: list[str]) -> str:
+    """Derive a safe internal AI guard only where the canonical choice is clear."""
+    by_design = {
+        "ethnography": "M03", "grounded_theory": "M09", "phenomenological": "M15",
+        "narrative_inquiry": "M12", "participatory_action": "M20", "mixed_methods": "M21",
+        "case_study": "M06",
+    }
+    if design in by_design:
+        return by_design[design]
+    if analysis == ["reflexive_thematic"]:
+        return "M08"
+    if analysis == ["framework_analysis"]:
+        return "M10"
+    return ""
+
+
+def study_design_summaries(db: Session, organisation_id: int, study_ids: list[int]) -> dict[int, str]:
+    """Present canonical design data without exposing the legacy Study.methodology field."""
+    if not study_ids:
+        return {}
+    labels = {
+        section: {item["id"]: item["label"] for item in values}
+        for section, values in protocol_builder_options().items()
+    }
+    rows = db.scalars(select(StudyMethodologyConfiguration).where(
+        StudyMethodologyConfiguration.organisation_id == organisation_id,
+        StudyMethodologyConfiguration.study_id.in_(study_ids),
+    )).all()
+    result = {}
+    for row in rows:
+        design = labels["research_designs"].get(row.research_design or "", "")
+        evidence = [labels["evidence_methods"].get(value, value) for value in json.loads(row.evidence_methods_json or "[]")]
+        analysis = [labels["analysis_approaches"].get(value, value) for value in json.loads(row.analysis_approaches_json or "[]")]
+        parts = ([f"Design: {design}"] if design and design != "Not specified / not sure" else [])
+        if evidence:
+            parts.append("Evidence: " + ", ".join(evidence))
+        if analysis:
+            parts.append("Analysis: " + ", ".join(analysis))
+        result[row.study_id] = " · ".join(parts) or "Legacy methodology metadata"
+    return result
 
 
 def _workspace_entry_statement(user: User, study_ids: list[int]):
@@ -2156,7 +2200,7 @@ def dashboard(request:Request,u=Depends(optional_current_user),db:Session=Depend
         "has_submission": metrics["submissions"] > 0,
         "can_seed": u.role in {"owner", "admin"},
     }
-    return render(request,"dashboard.html",user=u,metrics=metrics,studies=studies,project_map=pmap,onboarding=onboarding,recent_events=recent_events)
+    return render(request,"dashboard.html",user=u,metrics=metrics,studies=studies,project_map=pmap,onboarding=onboarding,recent_events=recent_events,study_design_summaries=study_design_summaries(db, o, [row.id for row in studies]))
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -2349,7 +2393,7 @@ def project_detail(project_id:int,request:Request,u=Depends(current_user),db:Ses
     if u.role not in {"owner","admin","observer"}:
         studies_stmt=studies_stmt.where(Study.id.in_(study_scope_for_user(u)))
     studies=db.scalars(studies_stmt.order_by(Study.updated_at.desc())).all()
-    return render(request,"project_detail.html",user=u,project=p,studies=studies,statuses=[x.value for x in StudyStatus],can_edit=permission=="manage")
+    return render(request,"project_detail.html",user=u,project=p,studies=studies,statuses=[x.value for x in StudyStatus],can_edit=permission=="manage",study_design_summaries=study_design_summaries(db, u.organisation_id, [row.id for row in studies]))
 
 
 def _workspace_context(project_row: Project, studies: list[Study]) -> dict:
@@ -2468,7 +2512,7 @@ def studies_page(request:Request,u=Depends(current_user),db:Session=Depends(get_
     project_ids = {s.project_id for s in rows}
     projects={p.id:p for p in db.scalars(select(Project).where(Project.organisation_id==u.organisation_id, Project.id.in_(project_ids))).all()} if project_ids else {}
     counts=dict(db.execute(select(StudyEnrolment.study_id,func.count()).where(StudyEnrolment.organisation_id==u.organisation_id, StudyEnrolment.study_id.in_(study_ids)).group_by(StudyEnrolment.study_id)).all()) if study_ids else {}
-    return render(request,"studies.html",user=u,studies=rows,projects=projects,enrolment_counts=counts)
+    return render(request,"studies.html",user=u,studies=rows,projects=projects,enrolment_counts=counts,study_design_summaries=study_design_summaries(db, u.organisation_id, study_ids))
 @app.post("/projects/{project_id}/studies")
 def create_study(project_id:int,title:str=Form(...),code:str=Form(...),description:str=Form(""),methodology:str=Form("diary"),status_value:str=Form("draft"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); require_project_permission(db,u,p,edit=True); enum_value(status_value,StudyStatus,"study status")
@@ -2503,7 +2547,7 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
     methodology_record = None
     if methodology_configuration and methodology_configuration.primary_methodology_id:
         methodology_record = next((item for item in library_records() if item["methodology_id"] == methodology_configuration.primary_methodology_id), None)
-    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_documents={document.document_type: document for document in current_bundle_documents(db, governance)},governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,methodology_options=methodology_options(),methodology_categories=researcher_methodology_categories(),protocol_builder_options=protocol_builder_options(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
+    return render(request,"study_detail.html",user=u,study=s,project=p,activities=acts,enrolments=ens,participants=ps,available=available,latest_invites=latest,response_counts=response_counts,study_permission=permission,team=team,access_map=access_map,can_edit=permission in {"edit","manage"},activity_types=sorted(ACTIVITY_TYPES),research_intelligence_enabled=settings.research_intelligence_enabled,suggestions=suggestions,evidence_confidence_enabled=settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled,confidence_assessments=confidence_assessments,governance=governance,governance_readiness=study_launch_readiness(governance),governance_documents={document.document_type: document for document in current_bundle_documents(db, governance)},governance_features=sorted(FEATURES),governance_assessment_states=sorted(ASSESSMENT_STATES),governance_special_category_states=sorted(SPECIAL_CATEGORY_STATES),methodology_configuration=methodology_configuration,protocol_builder_options=protocol_builder_options(),methodology_record=methodology_record,methodology_sources=source_metadata(tuple(methodology_record["provenance"]) if methodology_record else ()),methodology_library_version=methodology_library()["library_version"],methodology_disagreements=methodology_library()["disagreements"])
 
 @app.post("/studies/{study_id}/governance")
 def update_study_governance(
@@ -2638,7 +2682,9 @@ def update_methodology_configuration(
     primary_methodology_id: str = Form(""),
     methodology_variant: str = Form(""),
     secondary_methodology_values: list[str] = Form([], alias="secondary_methodologies"),
-    research_approach_values: list[str] = Form([], alias="research_approaches"),
+    research_philosophy: str = Form("not_specified"),
+    research_design: str = Form("not_specified"),
+    secondary_design: str = Form(""),
     evidence_method_values: list[str] = Form([], alias="evidence_methods"),
     analysis_approach_values: list[str] = Form([], alias="analysis_approaches"),
     theoretical_orientation_values: list[str] = Form([], alias="theoretical_orientations"),
@@ -2657,15 +2703,32 @@ def update_methodology_configuration(
 ):
     s = study(db, study_id, u.organisation_id)
     require_study_permission(db, u, s, edit=True)
-    research_approaches = _protocol_values(research_approach_values, "research_approaches")
+    research_philosophy = _protocol_value(research_philosophy, "research_philosophies")
+    research_design = _protocol_value(research_design, "research_designs")
+    secondary_design = _protocol_value(secondary_design, "research_designs") if secondary_design else ""
+    if secondary_design and secondary_design == research_design:
+        raise HTTPException(400, "Choose a different secondary design or leave it blank.")
     evidence_methods = _protocol_values(evidence_method_values, "evidence_methods")
     analysis_approaches = _protocol_values(analysis_approach_values, "analysis_approaches")
     theoretical_orientations = _protocol_values(theoretical_orientation_values, "theoretical_orientations")
+    configuration = methodology_configuration_for_study(db, s)
+    # New ordinary UI never asks researchers to reclassify through controlled
+    # identifiers. Preserve an existing controlled record; otherwise derive one
+    # only from an unambiguous canonical design/analysis combination.
+    derived_methodology_id = controlled_methodology_for_design(research_design, analysis_approaches)
+    existing_methodology_id = configuration.primary_methodology_id if configuration else ""
+    effective_methodology_id = derived_methodology_id or existing_methodology_id or primary_methodology_id
+    effective_variant = methodology_variant.strip() or (configuration.methodology_variant if configuration else "")
+    effective_secondary = secondary_methodology_values or (
+        json.loads(configuration.secondary_methodologies_json or "[]") if configuration else []
+    )
+    if ai_enabled and not effective_methodology_id:
+        raise HTTPException(400, "AI support needs a clear study design or analysis mapping. Choose a more specific design or analysis before enabling it.")
     try:
         issues = validate_configuration(
-            primary_methodology_id=primary_methodology_id,
-            methodology_variant=methodology_variant.strip(),
-            secondary_methodologies=secondary_methodology_values,
+            primary_methodology_id=effective_methodology_id,
+            methodology_variant=effective_variant,
+            secondary_methodologies=effective_secondary,
             research_questions=research_questions.strip(),
             protocol_reference=document_reference(protocol_reference, "Protocol reference"),
             protocol_version=protocol_version.strip(),
@@ -2674,30 +2737,32 @@ def update_methodology_configuration(
             ai_enabled=ai_enabled,
             allowed_ai_tasks=allowed_ai_task_values,
             researcher_confirmation=researcher_confirmation,
-        ) if primary_methodology_id else ([] if not ai_enabled and not allowed_ai_task_values else ["Select an approved primary methodology before enabling AI support."])
+        ) if effective_methodology_id else ([] if not ai_enabled and not allowed_ai_task_values else ["Choose a more specific design or analysis before enabling AI support."])
     except MethodologyGateViolation as exc:
         raise HTTPException(400, str(exc)) from exc
     if issues:
         raise HTTPException(400, " ".join(issues))
-    record = next((item for item in library_records() if item["methodology_id"] == primary_methodology_id), None)
+    record = next((item for item in library_records() if item["methodology_id"] == effective_methodology_id), None)
     allowed = set(record["allowed_ai_tasks"]) if record else set()
     requested = set(allowed_ai_task_values)
     if not requested.issubset(allowed):
         raise HTTPException(400, "METHODOLOGICAL REVIEW REQUIRED: unsupported AI task requested.")
-    configuration = methodology_configuration_for_study(db, s)
     if configuration is None:
         configuration = StudyMethodologyConfiguration(organisation_id=s.organisation_id, study_id=s.id)
         db.add(configuration)
-    configuration.primary_methodology_id = primary_methodology_id
-    configuration.methodology_variant = methodology_variant.strip()
-    configuration.secondary_methodologies_json = json.dumps(sorted(set(secondary_methodology_values)))
-    configuration.research_approaches_json = json.dumps(research_approaches)
+    configuration.primary_methodology_id = effective_methodology_id
+    configuration.methodology_variant = effective_variant
+    configuration.secondary_methodologies_json = json.dumps(sorted(set(effective_secondary)))
+    configuration.research_philosophy = research_philosophy
+    configuration.research_design = research_design
+    configuration.secondary_design = secondary_design
     configuration.evidence_methods_json = json.dumps(evidence_methods)
     configuration.analysis_approaches_json = json.dumps(analysis_approaches)
     configuration.theoretical_orientations_json = json.dumps(theoretical_orientations)
-    # Existing controlled values retain their original semantics and are shown
-    # as legacy/advanced choices rather than being guessed into new categories.
-    configuration.legacy_methodology_json = json.dumps(sorted(set(secondary_methodology_values)))
+    # Existing pre-0021 controlled and approach values retain their original
+    # semantics. They are not guessed into the new canonical dimensions.
+    if not configuration.legacy_methodology_json:
+        configuration.legacy_methodology_json = json.dumps(sorted(set(effective_secondary)))
     configuration.research_questions = research_questions.strip()
     configuration.protocol_reference = document_reference(protocol_reference, "Protocol reference")
     configuration.protocol_version = protocol_version.strip()
@@ -2710,9 +2775,9 @@ def update_methodology_configuration(
     configuration.researcher_notes = researcher_notes.strip()
     configuration.researcher_confirmed_by_id = u.id
     configuration.researcher_confirmed_at = datetime.now(timezone.utc)
-    audit(db, u.organisation_id, u.id, "study.methodology_configuration_confirmed", "study", s.id, primary_methodology_id or "protocol-builder")
+    audit(db, u.organisation_id, u.id, "study.methodology_configuration_confirmed", "study", s.id, effective_methodology_id or "protocol-builder")
     db.commit()
-    return RedirectResponse(f"/studies/{s.id}#methodology", 303)
+    return RedirectResponse(f"/studies/{s.id}?section=design#design", 303)
 @app.post("/studies/{study_id}/research-analysis/{suggestion_id}/review")
 def review_research_analysis(study_id:int,suggestion_id:int,decision:str=Form(...),note:str=Form(""),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     if not settings.research_intelligence_enabled: raise HTTPException(404,"Research Intelligence is disabled")

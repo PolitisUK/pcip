@@ -213,12 +213,10 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         homepage = client.get('/', follow_redirects=False)
         assert homepage.status_code == 200
         assert 'Civic intelligence for Place councils' in homepage.text
-        assert 'Understand communities before making decisions.' in homepage.text
-        assert 'Citizen Centric supports structured qualitative and mixed-methods research.' in homepage.text
-        assert 'the decisions that shape everyday life' in homepage.text
+        assert 'Rigorous community research for better local decisions.' in homepage.text
+        assert 'follow experience over time and turn participant evidence into accountable insight.' in homepage.text
         assert 'Administrative data often shows what happened.' in homepage.text
         assert 'Qualitative research helps explain why.' in homepage.text
-        assert 'decision-grade evidence' in homepage.text
         assert 'trained community ethnographers' in homepage.text
         assert 'Use stronger evidence in two directions.' in homepage.text
         assert 'Consultee responses, planning representations and planning enforcement concerns' in homepage.text
@@ -8508,10 +8506,83 @@ def test_study_protocol_builder_separates_method_layers_and_exposes_repeatable_c
         auth()
         page = client.get('/studies/1')
         assert page.status_code == 200
-        assert 'Research approach' in page.text
-        assert 'Evidence collection' in page.text
+        assert 'Research philosophy / paradigm' in page.text
+        assert 'Research design / methodology' in page.text
+        assert 'Evidence / data collection' in page.text
         assert 'Analysis' in page.text
-        assert 'Advanced / theoretical orientation (optional)' in page.text
+        assert 'Add a theoretical or specialist framework, if relevant' in page.text
         assert 'Not yet decided' in page.text
+        assert 'Choose an approach' not in page.text
+        assert 'Controlled primary methodology' not in page.text
+        assert 'Advanced methodology options' not in page.text
         assert 'name="allow_multiple_entries"' in page.text
         assert 'Allow multiple participant entries' in page.text
+
+
+def test_canonical_methodology_dimensions_preserve_legacy_and_derive_ai_mapping():
+    from app.models import Study, StudyMethodologyConfiguration
+
+    with SessionLocal() as db:
+        study = db.get(Study, 1)
+        assert study is not None
+        configuration = db.scalar(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.study_id == study.id))
+        if configuration is None:
+            configuration = StudyMethodologyConfiguration(organisation_id=study.organisation_id, study_id=study.id)
+            db.add(configuration)
+        configuration.research_approaches_json = '["ethnography"]'
+        db.commit()
+
+    with client:
+        auth()
+        response = post_with_csrf('/studies/1/methodology-configuration', data={
+            'research_philosophy': 'pragmatist',
+            'research_design': 'mixed_methods',
+            'evidence_methods': ['interviews', 'diaries', 'photos'],
+            'analysis_approaches': ['mixed_methods_integration'],
+            'theoretical_orientations': ['feminist'],
+            'research_questions': 'How can a local service improve?',
+            'protocol_reference': 'CANONICAL-UX-1',
+            'protocol_version': '1.0',
+            'sampling_approach': 'Purposive sampling',
+            'data_collection_plan': 'Interviews and repeated diaries',
+            'researcher_confirmation': 'true',
+        }, follow_redirects=False)
+        assert response.status_code == 303
+        page = client.get('/studies/1')
+        assert 'Research philosophy / paradigm' in page.text
+        assert 'Legacy methodology metadata' in page.text
+
+    with SessionLocal() as db:
+        configuration = db.scalar(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.study_id == 1))
+        assert configuration is not None
+        assert configuration.research_philosophy == 'pragmatist'
+        assert configuration.research_design == 'mixed_methods'
+        assert configuration.primary_methodology_id == 'M21'
+        assert configuration.research_approaches_json == '["ethnography"]'
+
+
+def test_ambiguous_canonical_methodology_requires_clarification_before_ai_support():
+    with client:
+        auth()
+        created = post_with_csrf('/projects/1/studies', data={
+            'title': unique_value('Ambiguous methodology'),
+            'code': unique_value('ambiguous-method').upper(),
+            'description': '',
+            'methodology': 'diary',
+            'status_value': 'draft',
+        }, follow_redirects=False)
+        assert created.status_code == 303
+        response = post_with_csrf(f"{created.headers['location']}/methodology-configuration", data={
+            'research_philosophy': 'not_specified',
+            'research_design': 'not_specified',
+            'research_questions': 'An intentionally broad question',
+            'protocol_reference': 'AMBIGUOUS-UX-1',
+            'protocol_version': '1.0',
+            'sampling_approach': 'To be confirmed',
+            'data_collection_plan': 'To be confirmed',
+            'ai_enabled': 'true',
+            'allowed_ai_tasks': 'retrieval',
+            'researcher_confirmation': 'true',
+        }, follow_redirects=False)
+        assert response.status_code == 400
+        assert 'Choose a more specific design or analysis before enabling it.' in response.text

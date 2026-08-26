@@ -175,6 +175,17 @@ a:hover {
   min-width: 0;
 }
 
+.study-nav {
+  display: flex;
+  gap: .4rem;
+  overflow-x: auto;
+  padding: .25rem 0 .75rem;
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.study-nav a { flex: 0 0 auto; padding: .5rem .7rem; color: var(--color-navy); font-weight: 700; text-decoration: none; border-radius: .4rem; }
+.study-nav a:hover, .study-nav a:focus-visible { background: var(--color-sky-soft); outline: 2px solid transparent; }
+
 .nav a {
   position: relative;
   padding: 9px 11px;
@@ -209,6 +220,12 @@ a:hover {
   border-radius: 999px;
   background: var(--color-copper);
 }
+
+.nav-menu { position: relative; }
+.nav-menu summary { cursor: pointer; list-style: none; padding: .5rem .7rem; font-weight: 700; color: var(--color-navy); }
+.nav-menu summary::-webkit-details-marker { display: none; }
+.nav-menu__items { position: absolute; z-index: 20; min-width: 12rem; padding: .4rem; background: #fff; border: 1px solid var(--color-border); border-radius: .5rem; box-shadow: 0 8px 18px rgba(21,48,74,.16); }
+.nav-menu__items a { display: block; white-space: nowrap; }
 
 .header-meta {
   display: flex;

@@ -8,9 +8,10 @@
 {% if can_edit %}
 <div class="card">
 	<div class="section-head">
-		<h2>Create project</h2>
-		<a class="btn secondary" href="/onboarding/first-project">Use first project wizard</a>
+		<h2>{% if projects %}New project{% else %}Create your first project{% endif %}</h2>
+		{% if not projects %}<a class="btn secondary" href="/onboarding/first-project">Use the guided first-project flow</a>{% endif %}
 	</div>
+	{% if projects %}<p class="muted">Use this concise form for a new workstream. The guided first-project flow is only for a new workspace.</p>{% endif %}
 	<form method="post" action="/projects" class="stack">
 		<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 		<div class="row">
