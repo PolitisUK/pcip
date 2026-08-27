@@ -120,10 +120,25 @@ def test_checkbox_control_rows_cannot_inherit_full_width_field_input_layout():
 
 
 def test_readiness_checks_database():
+    import app.main as main_module
+
     with client:
         data = client.get('/health/ready')
         assert data.status_code == 200
         assert data.json()['status'] == 'ready'
+        assert data.json()['revision'] == main_module.APPLICATION_REVISION
+
+
+def test_readiness_reports_the_non_sensitive_baked_image_revision(monkeypatch):
+    import app.main as main_module
+
+    expected_revision = 'a' * 40
+    monkeypatch.setattr(main_module, 'APPLICATION_REVISION', expected_revision)
+    with client:
+        response = client.get('/health/ready')
+
+    assert response.status_code == 200
+    assert response.json()['revision'] == expected_revision
 
 
 def test_readiness_fails_without_exposing_database_error(monkeypatch):
@@ -3535,6 +3550,35 @@ def test_release_promotion_final_steady_state_verifies_flags_and_candidate_diges
     assert 'expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST"' in final_check
     assert 'Production is not configured for the promoted candidate digest.' in final_check
     assert final_check.count('for route in privacy support terms cookies accessibility acceptable-use legal contact; do') == 1
+
+
+def test_release_promotion_requires_the_serving_image_revision_for_production_readiness():
+    promotion = Path('.github/workflows/promote-release.yml').read_text()
+    candidate_check = promotion.partition('Verify the restarted production candidate and public legal routes')[2].partition(
+        'Enable the approved production Rivermere startup runner'
+    )[0]
+    final_check = promotion.partition('Verify final production steady state after migrations are disabled')[2]
+
+    for check in (candidate_check, final_check):
+        assert 'EXPECTED_REVISION: ${{ needs.validate-release-evidence.outputs.release_sha }}' in check
+        assert '[[ "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]]' in check
+        assert 'jq -e --arg expected_revision "$EXPECTED_REVISION"' in check
+        assert '.status == "ready" and .revision == $expected_revision' in check
+        # A missing, stale, malformed, or not-ready response resets the streak;
+        # three responses from the serving candidate are required.
+        assert 'consecutive_ready=0' in check
+        assert 'consecutive_ready=$((consecutive_ready + 1))' in check
+        assert 'if [ "$consecutive_ready" -ge 3 ]; then' in check
+
+
+def test_readiness_revision_is_baked_from_the_image_build_revision():
+    dockerfile = Path('Dockerfile').read_text()
+    main = Path('app/main.py').read_text()
+
+    assert 'ARG VCS_REF=unknown' in dockerfile
+    assert 'APP_REVISION=$VCS_REF' in dockerfile
+    assert 'APPLICATION_REVISION = os.environ.get("APP_REVISION", "unknown")' in main
+    assert '"revision": APPLICATION_REVISION' in main
 
 
 def test_development_environment_allows_local_defaults():
