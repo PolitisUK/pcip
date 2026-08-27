@@ -3506,6 +3506,19 @@ def test_release_promotion_checks_readiness_separately_from_public_legal_routes(
     assert 'for route in health privacy support terms cookies accessibility acceptable-use legal contact; do' not in promotion
 
 
+def test_release_promotion_requires_a_new_container_after_migration_setting_changes():
+    promotion = Path('.github/workflows/promote-release.yml').read_text()
+
+    assert 'Staging did not complete a post-deployment restart.' in promotion
+    assert 'Verify staging steady state after migrations are disabled' in promotion
+    assert 'Staging did not restart after RUN_MIGRATIONS was disabled.' in promotion
+    assert 'Production did not complete a post-deployment restart.' in promotion
+    assert 'Verify final production steady state after migrations are disabled' in promotion
+    assert 'Production did not restart after RUN_MIGRATIONS was disabled.' in promotion
+    assert promotion.count('saw_not_ready=false') == 5
+    assert promotion.count('consecutive_ready') >= 20
+
+
 def test_development_environment_allows_local_defaults():
     candidate = hosted_settings(
         environment='development',
