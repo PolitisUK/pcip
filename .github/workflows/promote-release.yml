@@ -204,22 +204,37 @@ jobs:
           az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --settings RUN_MIGRATIONS=true >/dev/null
           az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --linux-fx-version "DOCKER|${{ steps.source.outputs.source_login_server }}/$IMAGE_REPOSITORY@$IMAGE_DIGEST" >/dev/null
           az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP"
-      - name: Verify staging readiness and public legal routes
+      - name: Verify the restarted staged candidate and public legal routes
         shell: bash
         run: |
           set -euo pipefail
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --query defaultHostName -o tsv)
-          ready=false
-          for attempt in {1..30}; do
+          saw_not_ready=false
+          consecutive_ready=0
+          for attempt in {1..60}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
             if grep -q '"status":"ready"' <<<"$response"; then
-              ready=true
-              break
+              if [ "$saw_not_ready" = true ]; then
+                consecutive_ready=$((consecutive_ready + 1))
+                if [ "$consecutive_ready" -ge 3 ]; then
+                  break
+                fi
+              fi
+            else
+              saw_not_ready=true
+              consecutive_ready=0
             fi
             sleep 10
           done
-          test "$ready" = true || { echo "Staging never became ready." >&2; exit 1; }
+          test "$saw_not_ready" = true || {
+            echo "Staging did not complete a post-deployment restart." >&2
+            exit 1
+          }
+          test "$consecutive_ready" -ge 3 || {
+            echo "Staging did not become ready after the deployed candidate restart." >&2
+            exit 1
+          }
           for route in privacy support terms cookies accessibility acceptable-use legal contact; do
             curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/$route" >/dev/null
           done
@@ -229,6 +244,38 @@ jobs:
         run: |
           set -euo pipefail
           az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --settings RUN_MIGRATIONS=false >/dev/null
+      - name: Verify staging steady state after migrations are disabled
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --query defaultHostName -o tsv)
+          saw_not_ready=false
+          consecutive_ready=0
+          for attempt in {1..60}; do
+            response=""
+            if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
+            if grep -q '"status":"ready"' <<<"$response"; then
+              if [ "$saw_not_ready" = true ]; then
+                consecutive_ready=$((consecutive_ready + 1))
+                if [ "$consecutive_ready" -ge 3 ]; then
+                  break
+                fi
+              fi
+            else
+              saw_not_ready=true
+              consecutive_ready=0
+            fi
+            sleep 10
+          done
+          test "$saw_not_ready" = true || {
+            echo "Staging did not restart after RUN_MIGRATIONS was disabled." >&2
+            exit 1
+          }
+          test "$consecutive_ready" -ge 3 || {
+            echo "Staging did not remain ready after migrations were disabled." >&2
+            exit 1
+          }
 
   promote-production:
     if: ${{ inputs.promote_to_production }}
@@ -300,22 +347,37 @@ jobs:
           az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=true >/dev/null
           az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --linux-fx-version "DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST" >/dev/null
           az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP"
-      - name: Verify sustained production readiness and legal routes
+      - name: Verify the restarted production candidate and public legal routes
         shell: bash
         run: |
           set -euo pipefail
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
-          ready=false
-          for attempt in {1..30}; do
+          saw_not_ready=false
+          consecutive_ready=0
+          for attempt in {1..60}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
             if grep -q '"status":"ready"' <<<"$response"; then
-              ready=true
-              break
+              if [ "$saw_not_ready" = true ]; then
+                consecutive_ready=$((consecutive_ready + 1))
+                if [ "$consecutive_ready" -ge 3 ]; then
+                  break
+                fi
+              fi
+            else
+              saw_not_ready=true
+              consecutive_ready=0
             fi
             sleep 10
           done
-          test "$ready" = true || { echo "Production never became ready." >&2; exit 1; }
+          test "$saw_not_ready" = true || {
+            echo "Production did not complete a post-deployment restart." >&2
+            exit 1
+          }
+          test "$consecutive_ready" -ge 3 || {
+            echo "Production did not become ready after the deployed candidate restart." >&2
+            exit 1
+          }
           for route in privacy support terms cookies accessibility acceptable-use legal contact; do
             curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://citizencentric.co.uk/$route" >/dev/null
           done
@@ -379,21 +441,32 @@ jobs:
             -n "$PRODUCTION_APP" \
             --setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL RIVERMERE_DEMO_VERIFICATION_NOT_BEFORE \
             >/dev/null
-      - name: Verify final production readiness
+      - name: Verify final production readiness after Rivermere cleanup
         if: ${{ always() && inputs.seed_rivermere_demo }}
         shell: bash
         run: |
           set -euo pipefail
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
-          for attempt in {1..30}; do
+          saw_not_ready=false
+          consecutive_ready=0
+          for attempt in {1..60}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
             if grep -q '"status":"ready"' <<<"$response"; then
-              break
+              if [ "$saw_not_ready" = true ]; then
+                consecutive_ready=$((consecutive_ready + 1))
+                if [ "$consecutive_ready" -ge 3 ]; then
+                  break
+                fi
+              fi
+            else
+              saw_not_ready=true
+              consecutive_ready=0
             fi
             sleep 10
           done
-          grep -q '"status":"ready"' <<<"$response" || { echo "Production did not recover after the Rivermere runner was cleared." >&2; exit 1; }
+          test "$saw_not_ready" = true || { echo "Production did not restart after the Rivermere runner was cleared." >&2; exit 1; }
+          test "$consecutive_ready" -ge 3 || { echo "Production did not remain ready after the Rivermere runner was cleared." >&2; exit 1; }
           for final_check in {1..3}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
@@ -403,3 +476,35 @@ jobs:
         if: always()
         shell: bash
         run: az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=false >/dev/null
+      - name: Verify final production steady state after migrations are disabled
+        if: ${{ success() && inputs.seed_rivermere_demo == false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
+          saw_not_ready=false
+          consecutive_ready=0
+          for attempt in {1..60}; do
+            response=""
+            if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
+            if grep -q '"status":"ready"' <<<"$response"; then
+              if [ "$saw_not_ready" = true ]; then
+                consecutive_ready=$((consecutive_ready + 1))
+                if [ "$consecutive_ready" -ge 3 ]; then
+                  break
+                fi
+              fi
+            else
+              saw_not_ready=true
+              consecutive_ready=0
+            fi
+            sleep 10
+          done
+          test "$saw_not_ready" = true || {
+            echo "Production did not restart after RUN_MIGRATIONS was disabled." >&2
+            exit 1
+          }
+          test "$consecutive_ready" -ge 3 || {
+            echo "Production did not remain ready after migrations were disabled." >&2
+            exit 1
+          }
