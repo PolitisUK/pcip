@@ -1,6 +1,13 @@
 from pathlib import Path
 
 
+def workflow_step(workflow: str, name: str) -> str:
+    marker = f"      - name: {name}\n"
+    start = workflow.index(marker)
+    following_step = workflow.find("\n      - name: ", start + len(marker))
+    return workflow[start:] if following_step == -1 else workflow[start:following_step]
+
+
 def test_rivermere_startup_runner_is_explicit_and_staging_only():
     entrypoint = Path("entrypoint.sh").read_text()
     deployment = Path(".github/workflows/deploy-azure.yml").read_text()
@@ -41,20 +48,35 @@ def test_production_rivermere_runner_preserves_release_and_cleanup_gates():
     assert "grant_sole_platform_admin_access=args.grant_sole_platform_admin_access" in importer
     assert "The production Rivermere import requires promote_to_production=true." in promotion
     assert "RUN_RIVERMERE_PRODUCTION_DEMO_SEED=true" in promotion
-    assert promotion.count("RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false") == 2
-    assert promotion.count("always() && inputs.seed_rivermere_demo") == 2
+    enable = workflow_step(promotion, "Enable the approved production Rivermere startup runner")
+    wait_for_verification = workflow_step(promotion, "Wait for durable production Rivermere verification")
+    clear = workflow_step(promotion, "Clear the production Rivermere startup runner")
+    final = workflow_step(promotion, "Verify final production readiness after Rivermere cleanup")
+    non_seed_fail_safe = workflow_step(promotion, "Fail safe to the no-migration production steady state")
+
+    assert "if: ${{ inputs.seed_rivermere_demo }}" in enable
+    assert "RUN_RIVERMERE_PRODUCTION_DEMO_SEED=true" in enable
+    assert "if: ${{ steps.rivermere_seed_control.outcome == 'success' }}" in wait_for_verification
+    assert "if: ${{ always() && inputs.seed_rivermere_demo }}" in clear
+    assert "RUN_MIGRATIONS=false RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false" in clear
+    assert "--setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL RIVERMERE_DEMO_VERIFICATION_NOT_BEFORE" in clear
+    assert "if: ${{ always() && inputs.seed_rivermere_demo }}" in final
+    assert ".startup_generation == $expected_generation" in final
+    assert "if [ \"$consecutive_ready\" -ge 3 ]; then" in final
+    # This is the third textual match: the non-seed failure path deliberately
+    # uses the complementary condition and must still restore migrations.
+    assert "if: ${{ always() && inputs.seed_rivermere_demo == false }}" in non_seed_fail_safe
+    assert "RUN_MIGRATIONS=false RELEASE_STARTUP_GENERATION=\"$FINAL_STARTUP_GENERATION\"" in non_seed_fail_safe
     assert "secrets.RIVERMERE_DEMO_OWNER_EMAIL" in promotion
     assert "secrets.RIVERMERE_DEMO_OWNER_USER_ID" in promotion
     assert "RIVERMERE_DEMO_OWNER_EMAIL=\"$RIVERMERE_DEMO_OWNER_EMAIL\"" in promotion
-    assert "--setting-names RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL" in promotion
     assert "RIVERMERE_DEMO_VERIFICATION_NOT_BEFORE" in promotion
     assert "Wait for durable production Rivermere verification" in promotion
     assert "/api/v1/rivermere/verification" in promotion
     assert "for attempt in {1..90}" in promotion
-    assert "for final_check in {1..3}" in promotion
     assert "response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 \"https://$host/health/ready\" || true)" not in promotion
-    assert promotion.count("if response=$(curl --fail") == 7
-    assert promotion.count('response=""') == 7
+    assert "if response=$(curl --fail" in wait_for_verification
+    assert "if response=$(curl --fail" in final
     assert "echo \"$RIVERMERE_DEMO_OWNER_EMAIL\"" not in promotion
     assert "echo \"$RIVERMERE_DEMO_OWNER_USER_ID\"" not in promotion
     assert "RIVERMERE_DEMO_OWNER_EMAIL" not in entrypoint
