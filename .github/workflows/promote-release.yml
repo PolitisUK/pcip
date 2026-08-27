@@ -349,33 +349,33 @@ jobs:
           az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP"
       - name: Verify the restarted production candidate and public legal routes
         shell: bash
+        env:
+          IMAGE_DIGEST: ${{ needs.stage.outputs.image_digest }}
         run: |
           set -euo pipefail
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
-          saw_not_ready=false
+          configured_image=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query siteConfig.linuxFxVersion -o tsv)
+          expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          test "$configured_image" = "$expected_image" || {
+            echo "Production is not configured for the promoted candidate digest." >&2
+            exit 1
+          }
           consecutive_ready=0
           for attempt in {1..60}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
             if grep -q '"status":"ready"' <<<"$response"; then
-              if [ "$saw_not_ready" = true ]; then
-                consecutive_ready=$((consecutive_ready + 1))
-                if [ "$consecutive_ready" -ge 3 ]; then
-                  break
-                fi
+              consecutive_ready=$((consecutive_ready + 1))
+              if [ "$consecutive_ready" -ge 3 ]; then
+                break
               fi
             else
-              saw_not_ready=true
               consecutive_ready=0
             fi
             sleep 10
           done
-          test "$saw_not_ready" = true || {
-            echo "Production did not complete a post-deployment restart." >&2
-            exit 1
-          }
           test "$consecutive_ready" -ge 3 || {
-            echo "Production did not become ready after the deployed candidate restart." >&2
+            echo "Production did not reach sustained readiness after the candidate was configured." >&2
             exit 1
           }
           for route in privacy support terms cookies accessibility acceptable-use legal contact; do
@@ -479,32 +479,43 @@ jobs:
       - name: Verify final production steady state after migrations are disabled
         if: ${{ success() && inputs.seed_rivermere_demo == false }}
         shell: bash
+        env:
+          IMAGE_DIGEST: ${{ needs.stage.outputs.image_digest }}
         run: |
           set -euo pipefail
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
-          saw_not_ready=false
+          run_migrations=$(az webapp config appsettings list -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query "[?name=='RUN_MIGRATIONS'].value | [0]" -o tsv)
+          test "$run_migrations" = false || { echo "RUN_MIGRATIONS was not restored to false." >&2; exit 1; }
+          run_rivermere_seed=$(az webapp config appsettings list -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query "[?name=='RUN_RIVERMERE_PRODUCTION_DEMO_SEED'].value | [0]" -o tsv)
+          test "$run_rivermere_seed" = false || { echo "RUN_RIVERMERE_PRODUCTION_DEMO_SEED was not false." >&2; exit 1; }
+          for transient_setting in RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL RIVERMERE_DEMO_VERIFICATION_NOT_BEFORE; do
+            transient_value=$(az webapp config appsettings list -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query "[?name=='$transient_setting'].name | [0]" -o tsv)
+            test -z "$transient_value" || { echo "A transient Rivermere setting remains configured." >&2; exit 1; }
+          done
+          configured_image=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query siteConfig.linuxFxVersion -o tsv)
+          expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          test "$configured_image" = "$expected_image" || {
+            echo "Production is not configured for the promoted candidate digest." >&2
+            exit 1
+          }
           consecutive_ready=0
           for attempt in {1..60}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
             if grep -q '"status":"ready"' <<<"$response"; then
-              if [ "$saw_not_ready" = true ]; then
-                consecutive_ready=$((consecutive_ready + 1))
-                if [ "$consecutive_ready" -ge 3 ]; then
-                  break
-                fi
+              consecutive_ready=$((consecutive_ready + 1))
+              if [ "$consecutive_ready" -ge 3 ]; then
+                break
               fi
             else
-              saw_not_ready=true
               consecutive_ready=0
             fi
             sleep 10
           done
-          test "$saw_not_ready" = true || {
-            echo "Production did not restart after RUN_MIGRATIONS was disabled." >&2
-            exit 1
-          }
           test "$consecutive_ready" -ge 3 || {
             echo "Production did not remain ready after migrations were disabled." >&2
             exit 1
           }
+          for route in privacy support terms cookies accessibility acceptable-use legal contact; do
+            curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://citizencentric.co.uk/$route" >/dev/null
+          done

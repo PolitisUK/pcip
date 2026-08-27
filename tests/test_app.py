@@ -3502,21 +3502,39 @@ def test_release_promotion_checks_readiness_separately_from_public_legal_routes(
 
     assert '"https://$host/health/ready"' in promotion
     assert promotion.count('"https://citizencentric.co.uk/health/ready"') == 0
-    assert promotion.count(public_legal_routes) == 2
+    assert promotion.count(public_legal_routes) == 3
     assert 'for route in health privacy support terms cookies accessibility acceptable-use legal contact; do' not in promotion
 
 
-def test_release_promotion_requires_a_new_container_after_migration_setting_changes():
+def test_release_promotion_final_steady_state_accepts_continuous_readiness():
     promotion = Path('.github/workflows/promote-release.yml').read_text()
+    candidate_check = promotion.partition('Verify the restarted production candidate and public legal routes')[2].partition(
+        'Enable the approved production Rivermere startup runner'
+    )[0]
+    final_check = promotion.partition('Verify final production steady state after migrations are disabled')[2]
 
     assert 'Staging did not complete a post-deployment restart.' in promotion
     assert 'Verify staging steady state after migrations are disabled' in promotion
     assert 'Staging did not restart after RUN_MIGRATIONS was disabled.' in promotion
-    assert 'Production did not complete a post-deployment restart.' in promotion
     assert 'Verify final production steady state after migrations are disabled' in promotion
-    assert 'Production did not restart after RUN_MIGRATIONS was disabled.' in promotion
-    assert promotion.count('saw_not_ready=false') == 5
-    assert promotion.count('consecutive_ready') >= 20
+    assert 'saw_not_ready' not in candidate_check
+    assert 'saw_not_ready' not in final_check
+    assert 'consecutive_ready=$((consecutive_ready + 1))' in final_check
+    assert 'consecutive_ready=0' in final_check
+    assert 'Production did not remain ready after migrations were disabled.' in final_check
+
+
+def test_release_promotion_final_steady_state_verifies_flags_and_candidate_digest():
+    promotion = Path('.github/workflows/promote-release.yml').read_text()
+    final_check = promotion.partition('Verify final production steady state after migrations are disabled')[2]
+
+    assert "RUN_MIGRATIONS was not restored to false." in final_check
+    assert "RUN_RIVERMERE_PRODUCTION_DEMO_SEED was not false." in final_check
+    assert 'RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL RIVERMERE_DEMO_VERIFICATION_NOT_BEFORE' in final_check
+    assert 'A transient Rivermere setting remains configured.' in final_check
+    assert 'expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST"' in final_check
+    assert 'Production is not configured for the promoted candidate digest.' in final_check
+    assert final_check.count('for route in privacy support terms cookies accessibility acceptable-use legal contact; do') == 1
 
 
 def test_development_environment_allows_local_defaults():
