@@ -224,7 +224,7 @@
       </div>
       <div class="field" data-choice-options hidden><label>Choice options (one per line)</label><textarea name="options" rows="3"></textarea></div>
       <label class="control-row"><input type="checkbox" name="required" value="true" checked> Required</label>
-      <fieldset class="field"><legend>Entry behaviour</legend><label class="control-row"><input type="checkbox" name="allow_multiple_entries" value="true"> Allow multiple participant entries</label><small class="muted">Participants can submit this activity more than once, for example as a diary or longitudinal log.</small></fieldset>
+      <fieldset class="field"><legend>Entry behaviour</legend><label class="control-row"><input type="checkbox" name="allow_multiple_entries" value="true"> Allow multiple participant entries</label><small class="muted">Participants can submit this activity more than once, for example as a diary or longitudinal log.</small><label class="control-row"><input type="checkbox" name="allow_participant_location" value="true"> Allow participants to add their location</label><small class="muted">Location is optional. It is collected only when a participant chooses “Use my current location” for an entry; it is never collected automatically.</small></fieldset>
       <button>Add activity</button>
     </form>
   </div>
@@ -234,7 +234,7 @@
     <h2>Activities</h2>
     {% for a in activities %}
     <details class="activity">
-      <summary><strong>{{ a.position }}. {{ a.title }}</strong> <span class="badge">{{ response_counts.get(a.id,0) }} submissions</span>{% if a.allow_multiple_entries %} <span class="badge">Repeatable / diary</span>{% endif %}</summary>
+      <summary><strong>{{ a.position }}. {{ a.title }}</strong> <span class="badge">{{ response_counts.get(a.id,0) }} submissions</span>{% if a.allow_multiple_entries %} <span class="badge">Repeatable / diary</span>{% endif %}{% if a.allow_participant_location %} <span class="badge">Optional location</span>{% endif %}</summary>
       <p>{{ a.prompt }}</p>
       <p class="muted">{{ a.activity_type|replace('_',' ')|title }} · {{ 'Repeatable entries' if a.allow_multiple_entries else 'Single response' }} · release day {{ a.release_offset_days }}{% if a.due_offset_days is not none %} · due day {{ a.due_offset_days }}{% endif %}</p>
       {% if can_edit %}
@@ -249,7 +249,7 @@
         </div>
         <div class="field" data-choice-options {% if a.activity_type not in ['single_choice', 'multiple_choice', 'ranking'] %}hidden{% endif %}><label>Choice options</label><textarea name="options">{{ a.options_json|replace('[','')|replace(']','')|replace('"','')|replace(',','\n') }}</textarea></div>
         <label class="control-row"><input type="checkbox" name="required" value="true" {% if a.required %}checked{% endif %}> Required</label>
-        <fieldset class="field"><legend>Entry behaviour</legend><label class="control-row"><input type="checkbox" name="allow_multiple_entries" value="true" {% if a.allow_multiple_entries %}checked{% endif %}> Allow multiple participant entries</label><small class="muted">Participants can submit this activity more than once, for example as a diary or longitudinal log.</small></fieldset>
+        <fieldset class="field"><legend>Entry behaviour</legend><label class="control-row"><input type="checkbox" name="allow_multiple_entries" value="true" {% if a.allow_multiple_entries %}checked{% endif %}> Allow multiple participant entries</label><small class="muted">Participants can submit this activity more than once, for example as a diary or longitudinal log.</small><label class="control-row"><input type="checkbox" name="allow_participant_location" value="true" {% if a.allow_participant_location %}checked{% endif %}> Allow participants to add their location</label><small class="muted">Location is optional and is collected only if the participant explicitly adds it to an entry.</small></fieldset>
         <div class="inline">
           <button>Save</button>
       </form>

@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Float,
     Index,
     Integer,
     String,
@@ -368,6 +369,7 @@ class Activity(Base):
     position: Mapped[int] = mapped_column(Integer, default=1)
     required: Mapped[bool] = mapped_column(Boolean, default=True)
     allow_multiple_entries: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_participant_location: Mapped[bool] = mapped_column(Boolean, default=False)
     release_offset_days: Mapped[int] = mapped_column(Integer, default=0)
     due_offset_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -397,6 +399,11 @@ class ActivityResponse(Base):
     # Hash only: raw participant idempotency keys never enter the database or
     # audit trail.  Null remains valid for legacy single-response records.
     client_entry_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    location_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_accuracy_metres: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    location_captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

@@ -149,6 +149,7 @@ from .participant_api.schemas import (
     EvidenceUploadResponse,
     DraftResponseRequest,
     DraftResponseResult,
+    EntryLocation,
     ActivityListResponse,
     ActivityResponseSummary,
     ActivityResponseValue,
@@ -3131,7 +3132,7 @@ def study_status(study_id:int,status_value:str=Form(...),u=Depends(roles("owner"
     if status_value == "live": require_study_launch_ready(db, s)
     s.status=status_value; db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/studies/{study_id}/activities")
-def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form("long_text"),options:str=Form(""),required:bool=Form(False),allow_multiple_entries:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form("long_text"),options:str=Form(""),required:bool=Form(False),allow_multiple_entries:bool=Form(False),allow_participant_location:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
     if activity_type not in ACTIVITY_TYPES or release_offset_days<0: raise HTTPException(400,"Invalid activity configuration.")
     try: due=int(due_offset_days) if due_offset_days.strip() else None
@@ -3140,9 +3141,9 @@ def create_activity(study_id:int,title:str=Form(...),prompt:str=Form(""),activit
     opts=[x.strip() for x in options.splitlines() if x.strip()]
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts)<2: raise HTTPException(400,"Choice and ranking activities require at least two options.")
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts) != len(set(opts)): raise HTTPException(400,"Activity options must be unique.")
-    pos=(db.scalar(select(func.max(Activity.position)).where(Activity.study_id==s.id)) or 0)+1; a=Activity(organisation_id=u.organisation_id,study_id=s.id,title=nonblank(title,"Activity title"),prompt=prompt.strip(),activity_type=activity_type,options_json=json.dumps(opts),position=pos,required=required,allow_multiple_entries=allow_multiple_entries,release_offset_days=release_offset_days,due_offset_days=due); db.add(a); db.flush(); audit(db,u.organisation_id,u.id,"activity.created","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
+    pos=(db.scalar(select(func.max(Activity.position)).where(Activity.study_id==s.id)) or 0)+1; a=Activity(organisation_id=u.organisation_id,study_id=s.id,title=nonblank(title,"Activity title"),prompt=prompt.strip(),activity_type=activity_type,options_json=json.dumps(opts),position=pos,required=required,allow_multiple_entries=allow_multiple_entries,allow_participant_location=allow_participant_location,release_offset_days=release_offset_days,due_offset_days=due); db.add(a); db.flush(); audit(db,u.organisation_id,u.id,"activity.created","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/activities/{activity_id}/edit")
-def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form(...),options:str=Form(""),required:bool=Form(False),allow_multiple_entries:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activity_type:str=Form(...),options:str=Form(""),required:bool=Form(False),allow_multiple_entries:bool=Form(False),allow_participant_location:bool=Form(False),release_offset_days:int=Form(0),due_offset_days:str=Form(""),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.organisation_id==u.organisation_id));
     if not a: raise HTTPException(404)
     require_study_permission(db,u,study(db,a.study_id,u.organisation_id),edit=True)
@@ -3153,7 +3154,7 @@ def edit_activity(activity_id:int,title:str=Form(...),prompt:str=Form(""),activi
     if due is not None and due<release_offset_days: raise HTTPException(400,"Invalid dates.")
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts)<2: raise HTTPException(400,"At least two options required.")
     if activity_type in {"single_choice","multiple_choice","ranking"} and len(opts) != len(set(opts)): raise HTTPException(400,"Activity options must be unique.")
-    a.title=nonblank(title,"Activity title"); a.prompt=prompt.strip(); a.activity_type=activity_type; a.options_json=json.dumps(opts); a.required=required; a.allow_multiple_entries=allow_multiple_entries; a.release_offset_days=release_offset_days; a.due_offset_days=due; audit(db,u.organisation_id,u.id,"activity.updated","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{a.study_id}",303)
+    a.title=nonblank(title,"Activity title"); a.prompt=prompt.strip(); a.activity_type=activity_type; a.options_json=json.dumps(opts); a.required=required; a.allow_multiple_entries=allow_multiple_entries; a.allow_participant_location=allow_participant_location; a.release_offset_days=release_offset_days; a.due_offset_days=due; audit(db,u.organisation_id,u.id,"activity.updated","activity",a.id,a.title); db.commit(); return RedirectResponse(f"/studies/{a.study_id}",303)
 @app.post("/activities/{activity_id}/delete")
 def delete_activity(activity_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     a=db.scalar(select(Activity).where(Activity.id==activity_id,Activity.organisation_id==u.organisation_id));
@@ -3777,6 +3778,7 @@ def participant_api_portal_summary(
                         answer=raw_value.get("answer"),
                         choices=list(raw_value.get("choices") or []),
                         evidence_id=raw_value.get("evidence_id"),
+                        location=_participant_response_location(response_row),
                     ),
                     submitted_at=response_row.submitted_at,
                     updated_at=response_row.updated_at,
@@ -3789,6 +3791,8 @@ def participant_api_portal_summary(
             prompt=activity.prompt,
             activity_type=activity.activity_type,
             required=activity.required,
+            allow_multiple_entries=bool(activity.allow_multiple_entries),
+            allow_participant_location=bool(activity.allow_participant_location),
             position=activity.position,
             availability=ActivityAvailability(
                 status=availability["status"],
@@ -4488,6 +4492,7 @@ def participant_api_submission_history(
                 project_title=project_row.title if project_row else study_row.title,
                 answer=value.answer if value else None,
                 choices=value.choices if value else [],
+                location=_participant_response_location(item),
                 evidence=[
                     SubmissionEvidenceItem(
                         evidence_id=evidence.id,
@@ -4691,6 +4696,51 @@ def _response_value_from_json(value_json: str | None) -> ActivityResponseValue |
     return value
 
 
+def _participant_response_location(response_row: ActivityResponse) -> EntryLocation | None:
+    """Return a complete stored location only; incomplete legacy rows stay hidden."""
+    if (
+        response_row.location_latitude is None
+        or response_row.location_longitude is None
+        or response_row.location_accuracy_metres is None
+        or response_row.location_source != "device"
+        or response_row.location_captured_at is None
+    ):
+        return None
+    captured_at = response_row.location_captured_at
+    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
+        captured_at = captured_at.replace(tzinfo=timezone.utc)
+    return EntryLocation(
+        latitude=response_row.location_latitude,
+        longitude=response_row.location_longitude,
+        accuracy_metres=response_row.location_accuracy_metres,
+        source="device",
+        captured_at=captured_at,
+    )
+
+
+def _store_participant_response_location(
+    response_row: ActivityResponse,
+    location: EntryLocation | None,
+) -> None:
+    if location is None:
+        response_row.location_latitude = None
+        response_row.location_longitude = None
+        response_row.location_accuracy_metres = None
+        response_row.location_source = None
+        response_row.location_captured_at = None
+        return
+    captured_at = location.captured_at
+    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
+        raise HTTPException(400, "Location capture time must include a timezone.")
+    if captured_at > now() + timedelta(minutes=5):
+        raise HTTPException(400, "Location capture time cannot be in the future.")
+    response_row.location_latitude = location.latitude
+    response_row.location_longitude = location.longitude
+    response_row.location_accuracy_metres = location.accuracy_metres
+    response_row.location_source = location.source
+    response_row.location_captured_at = captured_at.astimezone(timezone.utc)
+
+
 def _participant_activity_options(activity_row: Activity) -> list[str] | None:
     if activity_row.activity_type not in {"single_choice", "multiple_choice", "ranking"}:
         return None
@@ -4752,6 +4802,7 @@ def _participant_activity_summary(activity_row: Activity, window: dict[str, obje
         activity_type=activity_row.activity_type,
         required=bool(activity_row.required),
         allow_multiple_entries=bool(activity_row.allow_multiple_entries),
+        allow_participant_location=bool(activity_row.allow_participant_location),
         position=activity_row.position,
         availability=ActivityAvailability(
             status=str(window.get("status") or "open"),
@@ -4843,6 +4894,7 @@ def participant_api_activity_detail(
         value = _response_value_from_json(response_row.value_json)
         if value is not None:
             response_item.value = value
+            response_item.value.location = _participant_response_location(response_row)
         if response_row.submitted_at is not None:
             response_item.submitted_at = response_row.submitted_at
         if response_row.updated_at is not None:
@@ -4924,6 +4976,8 @@ def _participant_response_value_from_payload(
     }
     if payload.evidence_id is not None:
         value["evidence_id"] = payload.evidence_id
+    if payload.location is not None and not activity_row.allow_participant_location:
+        raise HTTPException(400, "Location is not enabled for this activity.")
     return _validate_activity_response_value(activity_row, value, action)
 
 
@@ -5151,6 +5205,7 @@ def participant_api_activity_response_draft(
             db.refresh(response_row)
         else:
             apply_response_action(response_row, value, "draft", now())
+        _store_participant_response_location(response_row, payload.location)
         audit(
             db,
             invitation.organisation_id,
@@ -5225,7 +5280,11 @@ def participant_api_activity_response_submit(
         raise HTTPException(409, "Activity response state conflict.")
     if existing and existing.status == "submitted":
         existing_value = json.loads(existing.value_json or "{}")
-        if existing_value != value:
+        existing_location = _participant_response_location(existing)
+        if existing_value != value or (
+            (existing_location.model_dump(mode="json") if existing_location else None)
+            != (payload.location.model_dump(mode="json") if payload.location else None)
+        ):
             raise HTTPException(409, "Activity response has already been submitted.")
         _cache_control_no_store(response)
         return SubmittedResponseResult(
@@ -5240,6 +5299,7 @@ def participant_api_activity_response_submit(
         if not _update_activity_response_if_not_submitted(db, response_row.id, value, "submit"):
             raise HTTPException(409, "Activity response has already been submitted.")
         db.refresh(response_row)
+        _store_participant_response_location(response_row, payload.location)
         audit(
             db,
             invitation.organisation_id,
