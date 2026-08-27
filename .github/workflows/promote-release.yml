@@ -194,45 +194,58 @@ jobs:
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Could not resolve a candidate image digest." >&2; exit 1; }
           printf 'image_digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
           echo "Staging candidate: ${{ steps.source.outputs.source_login_server }}/$IMAGE_REPOSITORY@$digest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Generate staging startup generations
+        id: startup_generations
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_generation=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          final_generation=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          test "$candidate_generation" != "$final_generation"
+          printf 'candidate_generation=%s\n' "$candidate_generation" >> "$GITHUB_OUTPUT"
+          printf 'final_generation=%s\n' "$final_generation" >> "$GITHUB_OUTPUT"
       - name: Deploy the digest-pinned candidate to staging
-        if: ${{ inputs.approved_image_digest == '' }}
         shell: bash
         env:
           IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
+          CANDIDATE_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.candidate_generation }}
         run: |
           set -euo pipefail
-          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --settings RUN_MIGRATIONS=true >/dev/null
+          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" \
+            --settings RUN_MIGRATIONS=true RELEASE_STARTUP_GENERATION="$CANDIDATE_STARTUP_GENERATION" >/dev/null
           az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --linux-fx-version "DOCKER|${{ steps.source.outputs.source_login_server }}/$IMAGE_REPOSITORY@$IMAGE_DIGEST" >/dev/null
           az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP"
       - name: Verify the restarted staged candidate and public legal routes
         shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
+          EXPECTED_REVISION: ${{ needs.validate-release-evidence.outputs.release_sha }}
+          EXPECTED_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.candidate_generation }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected release revision is invalid." >&2; exit 1; }
+          [[ "$EXPECTED_STARTUP_GENERATION" =~ ^[0-9a-f-]{36}$ ]] || { echo "Expected staging startup generation is invalid." >&2; exit 1; }
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --query defaultHostName -o tsv)
-          saw_not_ready=false
+          configured_image=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --query siteConfig.linuxFxVersion -o tsv)
+          expected_image="DOCKER|${{ steps.source.outputs.source_login_server }}/$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          test "$configured_image" = "$expected_image" || { echo "Staging is not configured for the candidate digest." >&2; exit 1; }
           consecutive_ready=0
           for attempt in {1..60}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
-            if grep -q '"status":"ready"' <<<"$response"; then
-              if [ "$saw_not_ready" = true ]; then
-                consecutive_ready=$((consecutive_ready + 1))
-                if [ "$consecutive_ready" -ge 3 ]; then
-                  break
-                fi
+            if jq -e --arg expected_revision "$EXPECTED_REVISION" --arg expected_generation "$EXPECTED_STARTUP_GENERATION" \
+              '.status == "ready" and .revision == $expected_revision and .startup_generation == $expected_generation' >/dev/null <<<"$response"; then
+              consecutive_ready=$((consecutive_ready + 1))
+              if [ "$consecutive_ready" -ge 3 ]; then
+                break
               fi
             else
-              saw_not_ready=true
               consecutive_ready=0
             fi
             sleep 10
           done
-          test "$saw_not_ready" = true || {
-            echo "Staging did not complete a post-deployment restart." >&2
-            exit 1
-          }
           test "$consecutive_ready" -ge 3 || {
-            echo "Staging did not become ready after the deployed candidate restart." >&2
+            echo "Staging did not reach sustained readiness for the migration-armed startup generation." >&2
             exit 1
           }
           for route in privacy support terms cookies accessibility acceptable-use legal contact; do
@@ -241,39 +254,44 @@ jobs:
       - name: Disable automatic migrations after staging validation
         if: always()
         shell: bash
+        env:
+          FINAL_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.final_generation }}
         run: |
           set -euo pipefail
-          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --settings RUN_MIGRATIONS=false >/dev/null
+          # Keep the non-sensitive final generation configured so readiness
+          # proves a process started after migration cleanup. Every attempt
+          # generates fresh values above.
+          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" \
+            --settings RUN_MIGRATIONS=false RELEASE_STARTUP_GENERATION="$FINAL_STARTUP_GENERATION" >/dev/null
       - name: Verify staging steady state after migrations are disabled
         if: ${{ success() }}
         shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
+          EXPECTED_REVISION: ${{ needs.validate-release-evidence.outputs.release_sha }}
+          EXPECTED_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.final_generation }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected release revision is invalid." >&2; exit 1; }
+          [[ "$EXPECTED_STARTUP_GENERATION" =~ ^[0-9a-f-]{36}$ ]] || { echo "Expected staging startup generation is invalid." >&2; exit 1; }
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$STAGING_APP" --query defaultHostName -o tsv)
-          saw_not_ready=false
           consecutive_ready=0
           for attempt in {1..60}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
-            if grep -q '"status":"ready"' <<<"$response"; then
-              if [ "$saw_not_ready" = true ]; then
-                consecutive_ready=$((consecutive_ready + 1))
-                if [ "$consecutive_ready" -ge 3 ]; then
-                  break
-                fi
+            if jq -e --arg expected_revision "$EXPECTED_REVISION" --arg expected_generation "$EXPECTED_STARTUP_GENERATION" \
+              '.status == "ready" and .revision == $expected_revision and .startup_generation == $expected_generation' >/dev/null <<<"$response"; then
+              consecutive_ready=$((consecutive_ready + 1))
+              if [ "$consecutive_ready" -ge 3 ]; then
+                break
               fi
             else
-              saw_not_ready=true
               consecutive_ready=0
             fi
             sleep 10
           done
-          test "$saw_not_ready" = true || {
-            echo "Staging did not restart after RUN_MIGRATIONS was disabled." >&2
-            exit 1
-          }
           test "$consecutive_ready" -ge 3 || {
-            echo "Staging did not remain ready after migrations were disabled." >&2
+            echo "Staging did not reach the final startup generation after migrations were disabled." >&2
             exit 1
           }
 
@@ -294,6 +312,16 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Generate production startup generations
+        id: startup_generations
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_generation=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          final_generation=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          test "$candidate_generation" != "$final_generation"
+          printf 'candidate_generation=%s\n' "$candidate_generation" >> "$GITHUB_OUTPUT"
+          printf 'final_generation=%s\n' "$final_generation" >> "$GITHUB_OUTPUT"
       - name: Enforce the no-migration production steady state
         shell: bash
         run: |
@@ -336,6 +364,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ needs.validate-release-evidence.outputs.release_sha }}
           IMAGE_DIGEST: ${{ needs.stage.outputs.image_digest }}
+          CANDIDATE_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.candidate_generation }}
         run: |
           set -euo pipefail
           az acr import -n "$PRODUCTION_ACR" --source "$SOURCE_LOGIN_SERVER/$IMAGE_REPOSITORY@$IMAGE_DIGEST" --image "$IMAGE_REPOSITORY:sha-$RELEASE_SHA"
@@ -344,38 +373,44 @@ jobs:
           # This is the only point at which the production workflow arms a
           # schema upgrade.  The always() cleanup below restores false even
           # when deployment or readiness verification fails.
-          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=true >/dev/null
+          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" \
+            --settings RUN_MIGRATIONS=true RELEASE_STARTUP_GENERATION="$CANDIDATE_STARTUP_GENERATION" >/dev/null
           az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --linux-fx-version "DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST" >/dev/null
           az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP"
       - name: Verify the restarted production candidate and public legal routes
         shell: bash
+        env:
+          IMAGE_DIGEST: ${{ needs.stage.outputs.image_digest }}
+          EXPECTED_REVISION: ${{ needs.validate-release-evidence.outputs.release_sha }}
+          EXPECTED_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.candidate_generation }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected release revision is invalid." >&2; exit 1; }
+          [[ "$EXPECTED_STARTUP_GENERATION" =~ ^[0-9a-f-]{36}$ ]] || { echo "Expected production startup generation is invalid." >&2; exit 1; }
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
-          saw_not_ready=false
+          configured_image=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query siteConfig.linuxFxVersion -o tsv)
+          expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          test "$configured_image" = "$expected_image" || {
+            echo "Production is not configured for the promoted candidate digest." >&2
+            exit 1
+          }
           consecutive_ready=0
           for attempt in {1..60}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
-            if grep -q '"status":"ready"' <<<"$response"; then
-              if [ "$saw_not_ready" = true ]; then
-                consecutive_ready=$((consecutive_ready + 1))
-                if [ "$consecutive_ready" -ge 3 ]; then
-                  break
-                fi
+            if jq -e --arg expected_revision "$EXPECTED_REVISION" --arg expected_generation "$EXPECTED_STARTUP_GENERATION" \
+              '.status == "ready" and .revision == $expected_revision and .startup_generation == $expected_generation' >/dev/null <<<"$response"; then
+              consecutive_ready=$((consecutive_ready + 1))
+              if [ "$consecutive_ready" -ge 3 ]; then
+                break
               fi
             else
-              saw_not_ready=true
               consecutive_ready=0
             fi
             sleep 10
           done
-          test "$saw_not_ready" = true || {
-            echo "Production did not complete a post-deployment restart." >&2
-            exit 1
-          }
           test "$consecutive_ready" -ge 3 || {
-            echo "Production did not become ready after the deployed candidate restart." >&2
+            echo "Production did not reach sustained readiness after the candidate was configured." >&2
             exit 1
           }
           for route in privacy support terms cookies accessibility acceptable-use legal contact; do
@@ -427,6 +462,8 @@ jobs:
       - name: Clear the production Rivermere startup runner
         if: ${{ always() && inputs.seed_rivermere_demo }}
         shell: bash
+        env:
+          FINAL_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.final_generation }}
         run: |
           set -euo pipefail
           # Setting the flag false restarts the app; remove the transient
@@ -434,7 +471,7 @@ jobs:
           az webapp config appsettings set \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$PRODUCTION_APP" \
-            --settings RUN_MIGRATIONS=false RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false \
+            --settings RUN_MIGRATIONS=false RUN_RIVERMERE_PRODUCTION_DEMO_SEED=false RELEASE_STARTUP_GENERATION="$FINAL_STARTUP_GENERATION" \
             >/dev/null
           az webapp config appsettings delete \
             -g "$AZURE_RESOURCE_GROUP" \
@@ -444,67 +481,87 @@ jobs:
       - name: Verify final production readiness after Rivermere cleanup
         if: ${{ always() && inputs.seed_rivermere_demo }}
         shell: bash
+        env:
+          EXPECTED_REVISION: ${{ needs.validate-release-evidence.outputs.release_sha }}
+          EXPECTED_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.final_generation }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected release revision is invalid." >&2; exit 1; }
+          [[ "$EXPECTED_STARTUP_GENERATION" =~ ^[0-9a-f-]{36}$ ]] || { echo "Expected production startup generation is invalid." >&2; exit 1; }
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
-          saw_not_ready=false
           consecutive_ready=0
           for attempt in {1..60}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
-            if grep -q '"status":"ready"' <<<"$response"; then
-              if [ "$saw_not_ready" = true ]; then
-                consecutive_ready=$((consecutive_ready + 1))
-                if [ "$consecutive_ready" -ge 3 ]; then
-                  break
-                fi
+            if jq -e --arg expected_revision "$EXPECTED_REVISION" --arg expected_generation "$EXPECTED_STARTUP_GENERATION" \
+              '.status == "ready" and .revision == $expected_revision and .startup_generation == $expected_generation' >/dev/null <<<"$response"; then
+              consecutive_ready=$((consecutive_ready + 1))
+              if [ "$consecutive_ready" -ge 3 ]; then
+                break
               fi
             else
-              saw_not_ready=true
               consecutive_ready=0
             fi
             sleep 10
           done
-          test "$saw_not_ready" = true || { echo "Production did not restart after the Rivermere runner was cleared." >&2; exit 1; }
-          test "$consecutive_ready" -ge 3 || { echo "Production did not remain ready after the Rivermere runner was cleared." >&2; exit 1; }
-          for final_check in {1..3}; do
-            response=""
-            if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
-            grep -q '"status":"ready"' <<<"$response" || { echo "Production did not remain ready after the Rivermere runner was cleared." >&2; exit 1; }
+          test "$consecutive_ready" -ge 3 || { echo "Production did not reach the final startup generation after the Rivermere runner was cleared." >&2; exit 1; }
+          for route in privacy support terms cookies accessibility acceptable-use legal contact; do
+            curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://citizencentric.co.uk/$route" >/dev/null
           done
       - name: Fail safe to the no-migration production steady state
-        if: always()
+        if: ${{ always() && inputs.seed_rivermere_demo == false }}
         shell: bash
-        run: az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=false >/dev/null
+        env:
+          FINAL_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.final_generation }}
+        run: |
+          # Retain the non-sensitive final generation: readiness must prove
+          # this safe post-cleanup process, and the next attempt rotates it.
+          az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=false RELEASE_STARTUP_GENERATION="$FINAL_STARTUP_GENERATION" >/dev/null
       - name: Verify final production steady state after migrations are disabled
         if: ${{ success() && inputs.seed_rivermere_demo == false }}
         shell: bash
+        env:
+          IMAGE_DIGEST: ${{ needs.stage.outputs.image_digest }}
+          EXPECTED_REVISION: ${{ needs.validate-release-evidence.outputs.release_sha }}
+          EXPECTED_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.final_generation }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected release revision is invalid." >&2; exit 1; }
+          [[ "$EXPECTED_STARTUP_GENERATION" =~ ^[0-9a-f-]{36}$ ]] || { echo "Expected production startup generation is invalid." >&2; exit 1; }
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
-          saw_not_ready=false
+          run_migrations=$(az webapp config appsettings list -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query "[?name=='RUN_MIGRATIONS'].value | [0]" -o tsv)
+          test "$run_migrations" = false || { echo "RUN_MIGRATIONS was not restored to false." >&2; exit 1; }
+          run_rivermere_seed=$(az webapp config appsettings list -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query "[?name=='RUN_RIVERMERE_PRODUCTION_DEMO_SEED'].value | [0]" -o tsv)
+          test "$run_rivermere_seed" = false || { echo "RUN_RIVERMERE_PRODUCTION_DEMO_SEED was not false." >&2; exit 1; }
+          for transient_setting in RIVERMERE_DEMO_OWNER_USER_ID RIVERMERE_DEMO_OWNER_EMAIL RIVERMERE_DEMO_VERIFICATION_NOT_BEFORE; do
+            transient_value=$(az webapp config appsettings list -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query "[?name=='$transient_setting'].name | [0]" -o tsv)
+            test -z "$transient_value" || { echo "A transient Rivermere setting remains configured." >&2; exit 1; }
+          done
+          configured_image=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query siteConfig.linuxFxVersion -o tsv)
+          expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          test "$configured_image" = "$expected_image" || {
+            echo "Production is not configured for the promoted candidate digest." >&2
+            exit 1
+          }
           consecutive_ready=0
           for attempt in {1..60}; do
             response=""
             if response=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://$host/health/ready"); then :; fi
-            if grep -q '"status":"ready"' <<<"$response"; then
-              if [ "$saw_not_ready" = true ]; then
-                consecutive_ready=$((consecutive_ready + 1))
-                if [ "$consecutive_ready" -ge 3 ]; then
-                  break
-                fi
+            if jq -e --arg expected_revision "$EXPECTED_REVISION" --arg expected_generation "$EXPECTED_STARTUP_GENERATION" \
+              '.status == "ready" and .revision == $expected_revision and .startup_generation == $expected_generation' >/dev/null <<<"$response"; then
+              consecutive_ready=$((consecutive_ready + 1))
+              if [ "$consecutive_ready" -ge 3 ]; then
+                break
               fi
             else
-              saw_not_ready=true
               consecutive_ready=0
             fi
             sleep 10
           done
-          test "$saw_not_ready" = true || {
-            echo "Production did not restart after RUN_MIGRATIONS was disabled." >&2
-            exit 1
-          }
           test "$consecutive_ready" -ge 3 || {
             echo "Production did not remain ready after migrations were disabled." >&2
             exit 1
           }
+          for route in privacy support terms cookies accessibility acceptable-use legal contact; do
+            curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://citizencentric.co.uk/$route" >/dev/null
+          done

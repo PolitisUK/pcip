@@ -62,6 +62,8 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  # file_picker's document-only iOS configuration is supported by CocoaPods,
+  # but cannot be expressed by its generated SwiftPM package.
   config:
     enable-swift-package-manager: false
 

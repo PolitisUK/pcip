@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 import asyncio
+import os
 import re
 import logging
 import time
@@ -188,6 +189,15 @@ from .participant_api.schemas import (
 )
 
 VERSION = "0.6.0"
+# Set by the image build from Dockerfile's VCS_REF argument. This is deliberately
+# non-sensitive: release verification uses it to distinguish the serving image
+# from an older container that may still answer requests during replacement.
+APPLICATION_REVISION = os.environ.get("APP_REVISION", "unknown")
+# App Service setting changes can be applied while an older container still
+# serves traffic. Capture the release-attempt generation during process import,
+# rather than reading it for each request, so readiness proves this process was
+# started after that generation was configured.
+STARTUP_GENERATION = os.environ.get("RELEASE_STARTUP_GENERATION", "unknown")
 BASE = Path(__file__).resolve().parent
 configure_observability(settings)
 
@@ -1713,7 +1723,12 @@ def readiness():
             status_code=503,
             content={"status": "unavailable"},
         )
-    return {"status": "ready", "version": VERSION}
+    return {
+        "status": "ready",
+        "version": VERSION,
+        "revision": APPLICATION_REVISION,
+        "startup_generation": STARTUP_GENERATION,
+    }
 
 
 def _rivermere_completion_payload(db: Session) -> dict[str, object]:
