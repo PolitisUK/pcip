@@ -921,6 +921,8 @@ export interface components {
             required: boolean;
             /** @description When true, each participant may create additional immutable entries over time. */
             allow_multiple_entries?: boolean;
+            /** @description When true, a participant may explicitly attach their current device location to an individual entry. It is never collected automatically. */
+            allow_participant_location?: boolean;
             /** @description Number of submitted entries visible to the current participant. */
             submitted_entry_count?: number;
             position: number;
@@ -950,6 +952,16 @@ export interface components {
             answer?: string | null;
             choices?: string[];
             evidence_id?: number | null;
+            location?: components["schemas"]["EntryLocation"];
+        };
+        EntryLocation: {
+            latitude: number;
+            longitude: number;
+            accuracy_metres: number;
+            /** @enum {string} */
+            source: "device";
+            /** Format: date-time */
+            captured_at: string;
         };
         ActivityDetailResponse: {
             activity: components["schemas"]["ActivitySummary"];
@@ -968,6 +980,7 @@ export interface components {
             answer?: string | null;
             choices?: string[];
             evidence_id?: number | null;
+            location?: components["schemas"]["EntryLocation"];
         };
         DraftResponseResult: {
             response_id: number;
@@ -1031,6 +1044,7 @@ export interface components {
             answer: string | null;
             choices: string[];
             evidence: components["schemas"]["SubmissionEvidenceItem"][];
+            location: components["schemas"]["EntryLocation"];
             /** @enum {string} */
             status: "draft" | "submitted";
             /** Format: date-time */

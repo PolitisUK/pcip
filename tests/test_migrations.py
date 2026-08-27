@@ -46,3 +46,24 @@ def test_canonical_methodology_dimensions_upgrade_from_0020(tmp_path):
     assert "research_philosophy" in columns.stdout
     assert "research_design" in columns.stdout
     assert "secondary_design" in columns.stdout
+
+
+def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path):
+    database_path = tmp_path / "location-0021.db"
+    environment = os.environ.copy()
+    environment["DATABASE_URL"] = f"sqlite:///{database_path}"
+    for command in (
+        [sys.executable, "-m", "alembic", "upgrade", "0021"],
+        [sys.executable, "-m", "alembic", "upgrade", "0022"],
+        [sys.executable, "-m", "alembic", "downgrade", "0021"],
+        [sys.executable, "-m", "alembic", "upgrade", "0022"],
+        [sys.executable, "-m", "alembic", "check"],
+    ):
+        result = subprocess.run(command, cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr
+    revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
+    assert revision.returncode == 0, revision.stderr
+    assert "0022" in revision.stdout
+    columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
+    assert columns.returncode == 0, columns.stderr
+    assert "location_latitude" in columns.stdout

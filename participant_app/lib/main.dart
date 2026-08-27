@@ -1,6 +1,6 @@
 // The original MVP is deliberately compact; keep its existing style without
 // allowing the style-only lint to obscure correctness diagnostics.
-// ignore_for_file: curly_braces_in_flow_control_structures
+// ignore_for_file: curly_braces_in_flow_control_structures, use_null_aware_elements
 
 import 'dart:convert';
 import 'dart:io';
@@ -17,6 +17,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:geolocator/geolocator.dart';
 
 import 'legal_content.dart';
 import 'legal_privacy.dart';
@@ -125,7 +126,6 @@ class Api implements ParticipantApi {
   Api(this.base, this.token);
   final Uri base;
   final String? token;
-  // ignore: use_null_aware_elements
   Future<Map<String, dynamic>> request(
     String method,
     String path, {
@@ -139,7 +139,6 @@ class Api implements ParticipantApi {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
         if (token case final value?) 'Authorization': 'Bearer $value',
-        // ignore: use_null_aware_elements
         if (idempotencyKey case final key?) 'Idempotency-Key': key,
       })
       ..body = body == null ? '' : jsonEncode(body);
@@ -187,20 +186,38 @@ class Api implements ParticipantApi {
           as List<dynamic>;
   Future<Map<String, dynamic>> portal() =>
       request('GET', '/api/v1/participant/portal');
-  Future<void> draft(int id, String answer, String key) async {
+  Future<void> draft(
+    int id,
+    String answer,
+    String key, {
+    Map<String, dynamic>? location,
+  }) async {
     await request(
       'PUT',
       '/api/v1/participant/activities/$id/draft',
-      body: {'answer': answer, 'choices': []},
+      body: {
+        'answer': answer,
+        'choices': [],
+        if (location != null) 'location': location,
+      },
       idempotencyKey: key,
     );
   }
 
-  Future<void> submit(int id, String answer, String key) async {
+  Future<void> submit(
+    int id,
+    String answer,
+    String key, {
+    Map<String, dynamic>? location,
+  }) async {
     await request(
       'POST',
       '/api/v1/participant/activities/$id/submit',
-      body: {'answer': answer, 'choices': []},
+      body: {
+        'answer': answer,
+        'choices': [],
+        if (location != null) 'location': location,
+      },
       idempotencyKey: key,
     );
   }
@@ -1243,6 +1260,9 @@ class Queue {
           item['activity_id'] as int,
           item['answer'] as String,
           item['idempotency_key'] as String,
+          location: item['location'] is Map
+              ? Map<String, dynamic>.from(item['location'] as Map)
+              : null,
         );
       } on ApiError catch (e) {
         if (e.message == 'Your session has ended.') {
@@ -1708,9 +1728,11 @@ class _TextActivityState extends State<TextActivity> {
   bool working = false;
   late bool submitted;
   late String entryKey;
+  Map<String, dynamic>? location;
   String status = '';
   String get key => 'draft_${widget.item['activity_id']}';
   bool get repeatable => widget.item['allow_multiple_entries'] == true;
+  bool get allowLocation => widget.item['allow_participant_location'] == true;
   @override
   void initState() {
     super.initState();
@@ -1720,20 +1742,98 @@ class _TextActivityState extends State<TextActivity> {
   }
 
   Future<void> restore() async {
-    text.text = (await SharedPreferences.getInstance()).getString(key) ?? '';
+    final saved = (await SharedPreferences.getInstance()).getString(key);
+    if (saved == null) return;
+    try {
+      final draft = Map<String, dynamic>.from(jsonDecode(saved) as Map);
+      text.text = draft['answer']?.toString() ?? '';
+      entryKey = draft['idempotency_key']?.toString() ?? entryKey;
+      if (draft['location'] is Map)
+        location = Map<String, dynamic>.from(draft['location'] as Map);
+    } catch (_) {
+      // Preserve draft compatibility with the earlier plain-text format.
+      text.text = saved;
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> persistDraft(SharedPreferences preferences) =>
+      preferences.setString(
+        key,
+        jsonEncode({
+          'answer': text.text,
+          'idempotency_key': entryKey,
+          if (location != null) 'location': location,
+        }),
+      );
+
+  Future<void> captureLocation() async {
+    if (!allowLocation) return;
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      if (mounted)
+        setState(
+          () => status = 'Location services are unavailable. You can still submit without a location.',
+        );
+      return;
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied)
+      permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      if (mounted)
+        setState(
+          () => status =
+              'Location was not added. You can still submit this entry.',
+        );
+      return;
+    }
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+      location = {
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'accuracy_metres': position.accuracy,
+        'source': 'device',
+        'captured_at': DateTime.now().toUtc().toIso8601String(),
+      };
+      await persistDraft(await SharedPreferences.getInstance());
+      if (mounted)
+        setState(
+          () => status =
+              'Location added (approximately ${position.accuracy.round()} m accuracy).',
+        );
+    } catch (_) {
+      if (mounted)
+        setState(
+          () => status =
+              'Location could not be added. You can still submit this entry.',
+        );
+    }
+  }
+
+  Future<void> removeLocation() async {
+    location = null;
+    await persistDraft(await SharedPreferences.getInstance());
+    if (mounted) setState(() => status = 'Location removed from this entry.');
   }
 
   Future<void> save(bool submit) async {
     setState(() => working = true);
     final id = entryKey;
     final p = await SharedPreferences.getInstance();
-    await p.setString(key, text.text);
+    await persistDraft(p);
     try {
       if (submit) {
         await widget.api.submit(
           widget.item['activity_id'] as int,
           text.text,
           id,
+          location: location,
         );
         await p.remove(key);
         status = repeatable
@@ -1743,12 +1843,14 @@ class _TextActivityState extends State<TextActivity> {
         if (repeatable) {
           text.clear();
           entryKey = const Uuid().v4();
+          location = null;
         }
       } else {
         await widget.api.draft(
           widget.item['activity_id'] as int,
           text.text,
           id,
+          location: location,
         );
         status = 'Draft saved.';
       }
@@ -1757,6 +1859,7 @@ class _TextActivityState extends State<TextActivity> {
         'activity_id': widget.item['activity_id'],
         'answer': text.text,
         'idempotency_key': id,
+        if (location != null) 'location': location,
         'attempts': 0,
       });
       status = 'Saved on this device. We will retry when you reconnect.';
@@ -1837,6 +1940,35 @@ class _TextActivityState extends State<TextActivity> {
                     ),
                   ),
           ),
+          if (!submitted && allowLocation) ...[
+            const SizedBox(height: 12),
+            if (location == null)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Add location (optional)'),
+                  OutlinedButton.icon(
+                    onPressed: working ? null : captureLocation,
+                    icon: const Icon(Icons.my_location_outlined),
+                    label: const Text('Use my current location'),
+                  ),
+                ],
+              )
+            else
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.location_on_outlined),
+                  title: const Text('Location added'),
+                  subtitle: Text(
+                    'Approximate accuracy: ${(location!['accuracy_metres'] as num).round()} m',
+                  ),
+                  trailing: TextButton(
+                    onPressed: working ? null : removeLocation,
+                    child: const Text('Remove'),
+                  ),
+                ),
+              ),
+          ],
           if (status.isNotEmpty)
             Semantics(
               liveRegion: true,
@@ -1853,7 +1985,13 @@ class _TextActivityState extends State<TextActivity> {
             height: 48,
             child: FilledButton(
               onPressed: working || submitted ? null : () => save(true),
-              child: Text(working ? 'Saving…' : repeatable ? 'Add entry' : 'Submit response'),
+              child: Text(
+                working
+                    ? 'Saving…'
+                    : repeatable
+                    ? 'Add entry'
+                    : 'Submit response',
+              ),
             ),
           ),
         ],
@@ -2103,6 +2241,11 @@ class _HistoryState extends State<History> {
                           Padding(
                             padding: const EdgeInsets.only(top: 10),
                             child: Text(choices.join(' • ')),
+                          ),
+                        if (r['location'] is Map)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 10),
+                            child: Text('Location attached to this entry'),
                           ),
                         ...evidence.map(
                           (item) => _HistoryEvidence(

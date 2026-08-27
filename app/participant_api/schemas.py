@@ -101,6 +101,7 @@ class ActivitySummary(BaseModel):
     options: list[str] | None = None
     required: bool
     allow_multiple_entries: bool = False
+    allow_participant_location: bool = False
     submitted_entry_count: int = 0
     position: int
     availability: ActivityAvailability
@@ -113,12 +114,23 @@ class ActivityListResponse(BaseModel):
     data: list[ActivitySummary]
 
 
+class EntryLocation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    accuracy_metres: float = Field(ge=0, le=100000, allow_inf_nan=False)
+    source: Literal["device"] = "device"
+    captured_at: datetime
+
+
 class DraftResponseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     answer: str | None = None
     choices: list[str] = Field(default_factory=list)
     evidence_id: int | None = Field(default=None, ge=1)
+    location: EntryLocation | None = None
 
 
 class SubmitResponseRequest(DraftResponseRequest):
@@ -271,6 +283,7 @@ class SubmissionHistoryItem(BaseModel):
     answer: str | None = None
     choices: list[str] = Field(default_factory=list)
     evidence: list[SubmissionEvidenceItem] = Field(default_factory=list)
+    location: EntryLocation | None = None
     status: Literal["draft", "submitted"]
     submitted_at: datetime | None = None
     updated_at: datetime
@@ -297,6 +310,7 @@ class ActivityResponseValue(BaseModel):
     answer: str | None = None
     choices: list[str] = Field(default_factory=list)
     evidence_id: int | None = None
+    location: EntryLocation | None = None
 
 
 class ActivityDetailResponseItem(BaseModel):

@@ -14,6 +14,9 @@ from app.participant_api.schemas import (
     SubmissionEvidenceItem,
     SubmissionHistoryItem,
     SubmissionHistoryResponse,
+    EntryLocation,
+    DraftResponseRequest,
+    ActivityResponseValue,
 )
 
 
@@ -91,3 +94,17 @@ def test_activity_contract_includes_repeatable_entry_semantics():
     assert activity["properties"]["allow_multiple_entries"]["type"] == "boolean"
     assert activity["properties"]["submitted_entry_count"]["type"] == "integer"
     assert activity["properties"]["submitted_entry_count"]["minimum"] == 0
+    assert activity["properties"]["allow_participant_location"]["type"] == "boolean"
+
+
+def test_location_contract_matches_the_strict_backend_models():
+    location = _contract_schema("EntryLocation")
+    draft = _contract_schema("DraftResponseRequest")
+    value = _contract_schema("ActivityResponseValue")
+
+    assert set(location["properties"]) == set(EntryLocation.model_fields)
+    assert set(location["required"]) == set(EntryLocation.model_fields)
+    assert draft["properties"]["location"] == {"$ref": "#/components/schemas/EntryLocation"}
+    assert value["properties"]["location"] == {"$ref": "#/components/schemas/EntryLocation"}
+    assert "location" in DraftResponseRequest.model_fields
+    assert "location" in ActivityResponseValue.model_fields

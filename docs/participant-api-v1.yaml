@@ -962,6 +962,9 @@ components:
         allow_multiple_entries:
           type: boolean
           description: When true, each participant may create additional immutable entries over time.
+        allow_participant_location:
+          type: boolean
+          description: When true, a participant may explicitly attach their current device location to an individual entry. It is never collected automatically.
         submitted_entry_count:
           type: integer
           minimum: 0
@@ -1037,6 +1040,31 @@ components:
           type: integer
           minimum: 1
           nullable: true
+        location:
+          $ref: '#/components/schemas/EntryLocation'
+    EntryLocation:
+      type: object
+      additionalProperties: false
+      required: [latitude, longitude, accuracy_metres, source, captured_at]
+      properties:
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+        accuracy_metres:
+          type: number
+          minimum: 0
+          maximum: 100000
+        source:
+          type: string
+          enum: [device]
+        captured_at:
+          type: string
+          format: date-time
     ActivityDetailResponse:
       type: object
       additionalProperties: false
@@ -1079,6 +1107,8 @@ components:
           type: integer
           minimum: 1
           nullable: true
+        location:
+          $ref: '#/components/schemas/EntryLocation'
     DraftResponseResult:
       type: object
       additionalProperties: false
@@ -1193,7 +1223,7 @@ components:
     SubmissionHistoryItem:
       type: object
       additionalProperties: false
-      required: [response_id, activity_id, activity_title, activity_prompt, study_title, project_title, answer, choices, evidence, status, submitted_at, updated_at]
+      required: [response_id, activity_id, activity_title, activity_prompt, study_title, project_title, answer, choices, evidence, location, status, submitted_at, updated_at]
       properties:
         response_id:
           type: integer
@@ -1219,6 +1249,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SubmissionEvidenceItem'
+        location:
+          $ref: '#/components/schemas/EntryLocation'
         status:
           type: string
           enum: [draft, submitted]

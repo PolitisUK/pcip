@@ -8659,6 +8659,56 @@ def test_repeatable_activity_keeps_distinct_entries_and_reuses_only_the_same_key
         assert [json.loads(row.value_json)['answer'] for row in rows] == ['first diary entry', 'second diary entry']
 
 
+def test_participant_location_is_opt_in_scoped_and_idempotent():
+    from app.models import Activity, ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('participant-location')
+    with SessionLocal() as db:
+        activity = db.get(Activity, context['activity_id'])
+        assert activity is not None
+        assert activity.allow_participant_location is False
+
+    location = {
+        'latitude': 51.5074,
+        'longitude': -0.1278,
+        'accuracy_metres': 12.5,
+        'source': 'device',
+        'captured_at': '2026-08-27T12:00:00Z',
+    }
+    headers = {'Authorization': f"Bearer {context['api_token']}", 'Idempotency-Key': 'location-entry-one'}
+    with client:
+        rejected = client.post(f"/api/v1/participant/activities/{context['activity_id']}/submit", json={'answer': 'entry', 'location': location}, headers=headers)
+        assert rejected.status_code == 400
+
+    with SessionLocal() as db:
+        activity = db.get(Activity, context['activity_id'])
+        assert activity is not None
+        activity.allow_participant_location = True
+        activity.allow_multiple_entries = True
+        db.commit()
+
+    with client:
+        first = client.post(f"/api/v1/participant/activities/{context['activity_id']}/submit", json={'answer': 'entry one', 'location': location}, headers=headers)
+        assert first.status_code == 200
+        retry = client.post(f"/api/v1/participant/activities/{context['activity_id']}/submit", json={'answer': 'entry one', 'location': location}, headers=headers)
+        assert retry.status_code == 200
+        assert retry.json()['response_id'] == first.json()['response_id']
+        invalid = client.post(f"/api/v1/participant/activities/{context['activity_id']}/submit", json={'answer': 'bad coordinate', 'location': {**location, 'latitude': 91}}, headers={'Authorization': f"Bearer {context['api_token']}", 'Idempotency-Key': 'location-entry-two'})
+        assert invalid.status_code == 422
+        history = client.get('/api/v1/participant/submissions', headers={'Authorization': f"Bearer {context['api_token']}"})
+        assert history.status_code == 200
+        assert history.json()['data'][0]['location'] == location
+
+    with SessionLocal() as db:
+        rows = list(db.scalars(select(ActivityResponse).where(
+            ActivityResponse.activity_id == context['activity_id'],
+            ActivityResponse.participant_id == context['participant_id'],
+        )))
+        assert len(rows) == 1
+        assert rows[0].location_latitude == location['latitude']
+        assert rows[0].location_longitude == location['longitude']
+
+
 def test_study_protocol_builder_separates_method_layers_and_exposes_repeatable_control():
     with client:
         auth()
