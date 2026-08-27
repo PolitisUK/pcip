@@ -3517,7 +3517,7 @@ def test_release_promotion_checks_readiness_separately_from_public_legal_routes(
 
     assert '"https://$host/health/ready"' in promotion
     assert promotion.count('"https://citizencentric.co.uk/health/ready"') == 0
-    assert promotion.count(public_legal_routes) == 3
+    assert promotion.count(public_legal_routes) == 4
     assert 'for route in health privacy support terms cookies accessibility acceptable-use legal contact; do' not in promotion
 
 
@@ -3528,12 +3528,11 @@ def test_release_promotion_final_steady_state_accepts_continuous_readiness():
     )[0]
     final_check = promotion.partition('Verify final production steady state after migrations are disabled')[2]
 
-    assert 'Staging did not complete a post-deployment restart.' in promotion
     assert 'Verify staging steady state after migrations are disabled' in promotion
-    assert 'Staging did not restart after RUN_MIGRATIONS was disabled.' in promotion
     assert 'Verify final production steady state after migrations are disabled' in promotion
     assert 'saw_not_ready' not in candidate_check
     assert 'saw_not_ready' not in final_check
+    assert 'saw_not_ready' not in promotion
     assert 'consecutive_ready=$((consecutive_ready + 1))' in final_check
     assert 'consecutive_ready=0' in final_check
     assert 'Production did not remain ready after migrations were disabled.' in final_check
@@ -3579,6 +3578,90 @@ def test_readiness_revision_is_baked_from_the_image_build_revision():
     assert 'APP_REVISION=$VCS_REF' in dockerfile
     assert 'APPLICATION_REVISION = os.environ.get("APP_REVISION", "unknown")' in main
     assert '"revision": APPLICATION_REVISION' in main
+
+
+def test_readiness_reports_the_startup_captured_generation(monkeypatch):
+    import app.main as main_module
+
+    captured_generation = 'candidate-startup-generation'
+    monkeypatch.setattr(main_module, 'STARTUP_GENERATION', captured_generation)
+    monkeypatch.setenv('RELEASE_STARTUP_GENERATION', 'later-control-plane-value')
+    with client:
+        response = client.get('/health/ready')
+
+    assert response.status_code == 200
+    assert response.json()['startup_generation'] == captured_generation
+
+
+def _qualifying_ready_streak(responses, expected_revision, expected_generation):
+    streak = 0
+    for response in responses:
+        if (
+            response.get('status') == 'ready'
+            and response.get('revision') == expected_revision
+            and response.get('startup_generation') == expected_generation
+        ):
+            streak += 1
+            if streak == 3:
+                return True
+        else:
+            streak = 0
+    return False
+
+
+def test_release_readiness_same_sha_old_generation_never_qualifies():
+    old = {'status': 'ready', 'revision': 'a', 'startup_generation': 'old'}
+    assert not _qualifying_ready_streak([old, old, old], 'a', 'new')
+
+
+def test_release_readiness_same_sha_waits_for_three_new_generation_responses():
+    old = {'status': 'ready', 'revision': 'a', 'startup_generation': 'old'}
+    new = {'status': 'ready', 'revision': 'a', 'startup_generation': 'new'}
+    assert _qualifying_ready_streak([old, old, new, new, new], 'a', 'new')
+
+
+def test_release_readiness_stale_generation_resets_the_streak():
+    old = {'status': 'ready', 'revision': 'a', 'startup_generation': 'old'}
+    new = {'status': 'ready', 'revision': 'a', 'startup_generation': 'new'}
+    assert _qualifying_ready_streak([new, new, old, new, new, new], 'a', 'new')
+
+
+def test_release_readiness_rejects_wrong_revision_or_missing_generation():
+    wrong_revision = {'status': 'ready', 'revision': 'old', 'startup_generation': 'new'}
+    missing_generation = {'status': 'ready', 'revision': 'a'}
+    assert not _qualifying_ready_streak([wrong_revision] * 3, 'a', 'new')
+    assert not _qualifying_ready_streak([missing_generation] * 3, 'a', 'new')
+
+
+def test_release_final_generation_is_distinct_from_the_candidate_generation():
+    candidate = {'status': 'ready', 'revision': 'a', 'startup_generation': 'candidate'}
+    final = {'status': 'ready', 'revision': 'a', 'startup_generation': 'final'}
+    assert _qualifying_ready_streak([candidate, candidate, candidate], 'a', 'candidate')
+    assert not _qualifying_ready_streak([candidate, candidate, candidate], 'a', 'final')
+    assert _qualifying_ready_streak([candidate, final, final, final], 'a', 'final')
+
+
+def test_release_workflow_arms_migrations_and_generation_together_and_fails_safe():
+    promotion = Path('.github/workflows/promote-release.yml').read_text()
+    candidate_deploy = promotion.partition('Promote the already-staged immutable artifact and run the one approved migration')[2].partition(
+        'Verify the restarted production candidate and public legal routes'
+    )[0]
+    final_check = promotion.partition('Verify final production steady state after migrations are disabled')[2]
+
+    assert 'RUN_MIGRATIONS=true RELEASE_STARTUP_GENERATION="$CANDIDATE_STARTUP_GENERATION"' in candidate_deploy
+    assert 'if: ${{ always() && inputs.seed_rivermere_demo == false }}' in promotion
+    assert 'RUN_MIGRATIONS=false RELEASE_STARTUP_GENERATION="$FINAL_STARTUP_GENERATION"' in promotion
+    assert 'RUN_MIGRATIONS was not restored to false.' in final_check
+
+
+def test_release_workflow_requires_generation_for_staging_and_production_without_an_outage():
+    promotion = Path('.github/workflows/promote-release.yml').read_text()
+
+    assert promotion.count('Generate staging startup generations') == 1
+    assert promotion.count('Generate production startup generations') == 1
+    assert promotion.count('.startup_generation == $expected_generation') >= 5
+    assert promotion.count('consecutive_ready=$((consecutive_ready + 1))') >= 4
+    assert 'saw_not_ready' not in promotion
 
 
 def test_development_environment_allows_local_defaults():
