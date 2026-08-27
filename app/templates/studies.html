@@ -15,13 +15,13 @@
 		<span class="muted">{{ studies|length }} total</span>
 	</div>
 	<table class="table">
-		<thead><tr><th>Study</th><th>Project</th><th>Method</th><th>Participants</th><th>Status</th></tr></thead>
+		<thead><tr><th>Study</th><th>Project</th><th>Design summary</th><th>Participants</th><th>Status</th></tr></thead>
 		<tbody>
 			{% for s in studies %}
 			<tr>
 				<td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td>
 				<td><a href="/projects/{{ s.project_id }}">{{ projects[s.project_id].title }}</a></td>
-				<td>{{ s.methodology|replace('_',' ')|title }}</td>
+				<td>{{ study_design_summaries.get(s.id, 'Legacy methodology metadata') }}</td>
 				<td>{{ enrolment_counts.get(s.id,0) }}</td>
 				<td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td>
 			</tr>

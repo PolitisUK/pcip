@@ -43,7 +43,7 @@
     <div class="row">
       <div class="field"><label>Study title</label><input name="title" required></div>
       <div class="field small"><label>Study code</label><input name="code" required></div>
-      <div class="field"><label>Methodology</label><select name="methodology"><option value="diary">Diary study</option><option value="walk_along">Walk-along</option><option value="interview">Interview</option><option value="focus_group">Focus group</option><option value="co_design">Co-design</option><option value="mixed_method">Mixed method</option></select></div>
+      <input type="hidden" name="methodology" value="diary">
       <div class="field small"><label>Status</label><select name="status_value">{% for s in statuses %}<option>{{ s }}</option>{% endfor %}</select></div>
     </div>
     <div class="field"><label>Description</label><textarea name="description" rows="3"></textarea></div>
@@ -59,12 +59,12 @@
   </div>
   {% if studies %}
   <table class="table">
-    <thead><tr><th>Study</th><th>Method</th><th>Status</th></tr></thead>
+    <thead><tr><th>Study</th><th>Design summary</th><th>Status</th></tr></thead>
     <tbody>
       {% for s in studies %}
       <tr>
         <td><a href="/studies/{{ s.id }}"><strong>{{ s.title }}</strong></a><br><span class="muted">{{ s.code }}</span></td>
-        <td>{{ s.methodology|replace('_',' ')|title }}</td>
+        <td>{{ study_design_summaries.get(s.id, 'Legacy methodology metadata') }}</td>
         <td><span class="badge {{ s.status }}">{{ s.status|title }}</span></td>
       </tr>
       {% endfor %}

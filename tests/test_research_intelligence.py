@@ -30,6 +30,8 @@ def methodology_configuration(**overrides):
     values = {
         "primary_methodology_id": "M08",
         "methodology_variant": "inductive",
+        "research_design": "not_specified",
+        "analysis_approaches_json": '["reflexive_thematic"]',
         "library_version": "1.0.0",
         "protocol_version": "protocol-v1",
         "ai_enabled": True,

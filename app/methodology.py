@@ -129,6 +129,35 @@ def get_methodology(methodology_id: str) -> dict:
     raise MethodologyGateViolation("Select an approved primary methodology.")
 
 
+def controlled_methodology_for_canonical(design: str, analysis: list[str]) -> str:
+    """Map only an unambiguous canonical design or analysis to published grounding."""
+    by_design = {
+        "ethnography": "M03",
+        "case_study": "M05",
+        "grounded_theory": "M06",
+        "phenomenological": "M15",
+        "narrative_inquiry": "M12",
+        "participatory_action": "M20",
+        "mixed_methods": "M21",
+    }
+    by_analysis = {
+        "reflexive_thematic": "M08",
+        "codebook_thematic": "M09",
+        "content_analysis": "M10",
+        "framework_analysis": "M11",
+        "grounded_theory_analysis": "M06",
+        "ipa": "M15",
+        "narrative_analysis": "M12",
+        "discourse_analysis": "M14",
+        "critical_discourse_analysis": "M14",
+        "conversation_analysis": "M13",
+        "mixed_methods_integration": "M21",
+    }
+    if design in by_design:
+        return by_design[design]
+    return by_analysis.get(analysis[0], "") if len(analysis) == 1 else ""
+
+
 def methodology_options() -> tuple[dict, ...]:
     return tuple(
         {"id": row["methodology_id"], "name": row["name"], "variants": tuple(row["variants"])}
@@ -174,6 +203,14 @@ def study_grounding(configuration, task: str) -> MethodologyGrounding:
         raise MethodologyGateViolation("A researcher must confirm the study methodology before AI support is used.")
     if not configuration.ai_enabled:
         raise MethodologyGateViolation("AI support is not enabled for this study.")
+    current_methodology_id = controlled_methodology_for_canonical(
+        getattr(configuration, "research_design", ""),
+        _as_json_list(getattr(configuration, "analysis_approaches_json", "[]")),
+    )
+    if not current_methodology_id or configuration.primary_methodology_id != current_methodology_id:
+        raise MethodologyGateViolation(
+            "AI support needs a clear current study design or analysis mapping."
+        )
     record = get_methodology(configuration.primary_methodology_id)
     variant = (configuration.methodology_variant or "").strip()
     if variant and variant not in record["variants"]:

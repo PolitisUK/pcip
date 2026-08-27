@@ -10,7 +10,7 @@
   {% block head_meta %}{% endblock %}
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" href="/static/citizen-centric-logo-compact.png">
-  <link rel="stylesheet" href="/static/app.css?v={{ version }}-media-branding-v2">
+  <link rel="stylesheet" href="/static/app.css?v={{ version }}-ux-v3">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -31,10 +31,7 @@
       <a class="{% if request.url.path.startswith('/participants') %}active{% endif %}" href="/participants" {% if request.url.path.startswith('/participants') %}aria-current="page"{% endif %}>Participants</a>
       <a class="{% if request.url.path.startswith('/messages') %}active{% endif %}" href="/messages" {% if request.url.path.startswith('/messages') %}aria-current="page"{% endif %}>Messages</a>
       {% if user.role in ['owner','admin'] %}
-      <a class="{% if request.url.path.startswith('/agreements') %}active{% endif %}" href="/agreements" {% if request.url.path.startswith('/agreements') %}aria-current="page"{% endif %}>Legal &amp; agreements</a>
-      <a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers" {% if request.url.path.startswith('/researchers') %}aria-current="page"{% endif %}>Team</a>
-      <a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit" {% if request.url.path.startswith('/audit') %}aria-current="page"{% endif %}>Audit log</a>
-      <a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox" {% if request.url.path.startswith('/outbox') %}aria-current="page"{% endif %}>Email</a>
+      <details class="nav-menu"><summary>Organisation</summary><div class="nav-menu__items"><a class="{% if request.url.path.startswith('/researchers') %}active{% endif %}" href="/researchers">Team</a><a class="{% if request.url.path.startswith('/agreements') %}active{% endif %}" href="/agreements">Legal &amp; agreements</a><a class="{% if request.url.path.startswith('/audit') %}active{% endif %}" href="/audit">Audit log</a><a class="{% if request.url.path.startswith('/outbox') %}active{% endif %}" href="/outbox">Email delivery</a></div></details>
       {% endif %}
       {% if user.is_platform_admin %}
       <a class="{% if request.url.path.startswith('/admin') %}active{% endif %}" href="/admin" {% if request.url.path.startswith('/admin') %}aria-current="page"{% endif %}>Platform administration</a>
@@ -62,11 +59,7 @@
   </header>
   <main class="main" id="main-content" tabindex="-1">
     <header class="page-header">
-      <div class="eyebrow">{{ user.organisation.name }}</div>
-      <div class="page-title-row">
-        <h1>{% block title %}{% endblock %}</h1>
-        <span class="badge page-badge">{{ user.role|title }}</span>
-      </div>
+      <div class="page-title-row"><h1>{% block title %}{% endblock %}</h1></div>
       {% block page_description %}{% endblock %}
     </header>
     {% if user.role == 'observer' %}<div class="notice neutral">You have observer access. Editing controls are hidden.</div>{% endif %}
@@ -88,7 +81,7 @@
 {% endif %}
 <div class="sr-only" aria-live="polite" aria-atomic="true" id="live-region"></div>
 {% block footer %}{% if user %}<footer class="app-footer">Citizen Centric <span>by Politis</span> · <small>v{{ version }}</small></footer>{% else %}{% include "_public_footer.html" %}{% endif %}{% endblock %}
-<script nonce="{{ csp_nonce }}" src="/static/app.js?v={{ version }}" defer></script>
+<script nonce="{{ csp_nonce }}" src="/static/app.js?v={{ version }}-ux-v3" defer></script>
 {% block page_scripts %}{% endblock %}
 </body>
 </html>

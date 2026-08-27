@@ -50,3 +50,35 @@ window.addEventListener("pagehide", function () {
   // Keep bfcache snapshots free of client-only submission state.
   restoreWorkingControls();
 });
+
+function setConditionalFields(scope) {
+  var selector = scope.querySelector("[data-response-type]");
+  if (!selector) return;
+  var needsChoices = ["single_choice", "multiple_choice", "ranking"].includes(selector.value);
+  scope.querySelectorAll("[data-choice-options]").forEach(function (field) {
+    field.hidden = !needsChoices;
+    field.querySelectorAll("textarea, input").forEach(function (control) {
+      control.disabled = !needsChoices;
+    });
+  });
+}
+
+document.querySelectorAll("form").forEach(function (form) {
+  setConditionalFields(form);
+  var responseType = form.querySelector("[data-response-type]");
+  if (responseType) responseType.addEventListener("change", function () { setConditionalFields(form); });
+  var aiToggle = form.querySelector("input[name='ai_enabled']");
+  var aiTasks = form.querySelector("[data-ai-tasks]");
+  if (aiToggle && aiTasks) {
+    var syncAiTasks = function () { aiTasks.hidden = !aiToggle.checked; };
+    syncAiTasks();
+    aiToggle.addEventListener("change", syncAiTasks);
+  }
+  var specialCategory = form.querySelector("[data-special-category]");
+  var articleNine = form.querySelector("[data-article-nine]");
+  if (specialCategory && articleNine) {
+    var syncArticleNine = function () { articleNine.hidden = specialCategory.value !== "yes"; };
+    syncArticleNine();
+    specialCategory.addEventListener("change", syncArticleNine);
+  }
+});

@@ -297,8 +297,13 @@ class StudyMethodologyConfiguration(Base):
     secondary_methodologies_json: Mapped[str] = mapped_column(Text, default="[]")
     # The protocol-builder selections are deliberately stored separately from
     # the controlled-methodology identifiers above.  This retains historical
-    # provenance while avoiding a false equivalence between approach, data
-    # generation, analysis and theoretical orientation.
+    # provenance while avoiding a false equivalence between philosophy, design,
+    # data generation, analysis and theoretical orientation.
+    research_philosophy: Mapped[str] = mapped_column(String(80), default="not_specified")
+    research_design: Mapped[str] = mapped_column(String(80), default="not_specified")
+    secondary_design: Mapped[str] = mapped_column(String(80), default="")
+    # Retained solely as the source record for the pre-0021 "research
+    # approaches" selector.  New configurations never overwrite it.
     research_approaches_json: Mapped[str] = mapped_column(Text, default="[]")
     evidence_methods_json: Mapped[str] = mapped_column(Text, default="[]")
     analysis_approaches_json: Mapped[str] = mapped_column(Text, default="[]")

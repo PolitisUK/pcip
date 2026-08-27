@@ -213,12 +213,10 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         homepage = client.get('/', follow_redirects=False)
         assert homepage.status_code == 200
         assert 'Civic intelligence for Place councils' in homepage.text
-        assert 'Understand communities before making decisions.' in homepage.text
-        assert 'Citizen Centric supports structured qualitative and mixed-methods research.' in homepage.text
-        assert 'the decisions that shape everyday life' in homepage.text
+        assert 'Rigorous community research for better local decisions.' in homepage.text
+        assert 'follow experience over time and turn participant evidence into accountable insight.' in homepage.text
         assert 'Administrative data often shows what happened.' in homepage.text
         assert 'Qualitative research helps explain why.' in homepage.text
-        assert 'decision-grade evidence' in homepage.text
         assert 'trained community ethnographers' in homepage.text
         assert 'Use stronger evidence in two directions.' in homepage.text
         assert 'Consultee responses, planning representations and planning enforcement concerns' in homepage.text
@@ -8508,10 +8506,323 @@ def test_study_protocol_builder_separates_method_layers_and_exposes_repeatable_c
         auth()
         page = client.get('/studies/1')
         assert page.status_code == 200
-        assert 'Research approach' in page.text
-        assert 'Evidence collection' in page.text
+        assert 'Research philosophy / paradigm' in page.text
+        assert 'Research design / methodology' in page.text
+        assert 'Evidence / data collection' in page.text
         assert 'Analysis' in page.text
-        assert 'Advanced / theoretical orientation (optional)' in page.text
+        assert 'Add a theoretical or specialist framework, if relevant' in page.text
         assert 'Not yet decided' in page.text
+        assert 'Choose an approach' not in page.text
+        assert 'Controlled primary methodology' not in page.text
+        assert 'Advanced methodology options' not in page.text
         assert 'name="allow_multiple_entries"' in page.text
         assert 'Allow multiple participant entries' in page.text
+
+
+def test_canonical_methodology_dimensions_preserve_legacy_and_derive_ai_mapping():
+    from app.models import Study, StudyMethodologyConfiguration
+
+    with SessionLocal() as db:
+        study = db.get(Study, 1)
+        assert study is not None
+        configuration = db.scalar(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.study_id == study.id))
+        if configuration is None:
+            configuration = StudyMethodologyConfiguration(organisation_id=study.organisation_id, study_id=study.id)
+            db.add(configuration)
+        configuration.research_approaches_json = '["ethnography"]'
+        db.commit()
+
+    with client:
+        auth()
+        response = post_with_csrf('/studies/1/methodology-configuration', data={
+            'research_philosophy': 'pragmatist',
+            'research_design': 'mixed_methods',
+            'evidence_methods': ['interviews', 'diaries', 'photos'],
+            'analysis_approaches': ['mixed_methods_integration'],
+            'theoretical_orientations': ['feminist'],
+            'research_questions': 'How can a local service improve?',
+            'protocol_reference': 'CANONICAL-UX-1',
+            'protocol_version': '1.0',
+            'sampling_approach': 'Purposive sampling',
+            'data_collection_plan': 'Interviews and repeated diaries',
+            'researcher_confirmation': 'true',
+        }, follow_redirects=False)
+        assert response.status_code == 303
+        page = client.get('/studies/1')
+        assert 'Research philosophy / paradigm' in page.text
+        assert 'Legacy methodology metadata' in page.text
+
+    with SessionLocal() as db:
+        configuration = db.scalar(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.study_id == 1))
+        assert configuration is not None
+        assert configuration.research_philosophy == 'pragmatist'
+        assert configuration.research_design == 'mixed_methods'
+        assert configuration.primary_methodology_id == 'M21'
+        assert configuration.research_approaches_json == '["ethnography"]'
+
+
+def test_ambiguous_canonical_methodology_requires_clarification_before_ai_support():
+    with client:
+        auth()
+        created = post_with_csrf('/projects/1/studies', data={
+            'title': unique_value('Ambiguous methodology'),
+            'code': unique_value('ambiguous-method').upper(),
+            'description': '',
+            'methodology': 'diary',
+            'status_value': 'draft',
+        }, follow_redirects=False)
+        assert created.status_code == 303
+        response = post_with_csrf(f"{created.headers['location']}/methodology-configuration", data={
+            'research_philosophy': 'not_specified',
+            'research_design': 'not_specified',
+            'research_questions': 'An intentionally broad question',
+            'protocol_reference': 'AMBIGUOUS-UX-1',
+            'protocol_version': '1.0',
+            'sampling_approach': 'To be confirmed',
+            'data_collection_plan': 'To be confirmed',
+            'ai_enabled': 'true',
+            'allowed_ai_tasks': 'retrieval',
+            'researcher_confirmation': 'true',
+        }, follow_redirects=False)
+        assert response.status_code == 400
+        assert 'Choose a more specific design or analysis before enabling it.' in response.text
+
+
+@pytest.mark.parametrize(
+    ('design', 'analysis', 'expected_id', 'expected_name'),
+    [
+        ('ethnography', [], 'M03', 'Ethnography and participant observation'),
+        ('case_study', [], 'M05', 'Qualitative case study'),
+        ('grounded_theory', [], 'M06', 'Grounded theory'),
+        ('phenomenological', [], 'M15', 'Phenomenological inquiry and interpretative phenomenological analysis'),
+        ('narrative_inquiry', [], 'M12', 'Narrative inquiry and narrative analysis'),
+        ('participatory_action', [], 'M20', 'Participatory, action, co-produced and engaged research'),
+        ('mixed_methods', [], 'M21', 'Mixed methods and triangulation'),
+        ('not_specified', ['reflexive_thematic'], 'M08', 'Reflexive thematic analysis'),
+        ('not_specified', ['codebook_thematic'], 'M09', 'Codebook and coding-reliability thematic analysis'),
+        ('not_specified', ['content_analysis'], 'M10', 'Qualitative content analysis'),
+        ('not_specified', ['framework_analysis'], 'M11', 'Framework method / framework analysis'),
+        ('not_specified', ['grounded_theory_analysis'], 'M06', 'Grounded theory'),
+        ('not_specified', ['ipa'], 'M15', 'Phenomenological inquiry and interpretative phenomenological analysis'),
+        ('not_specified', ['narrative_analysis'], 'M12', 'Narrative inquiry and narrative analysis'),
+        ('not_specified', ['discourse_analysis'], 'M14', 'Discourse analysis and critical discourse analysis'),
+        ('not_specified', ['critical_discourse_analysis'], 'M14', 'Discourse analysis and critical discourse analysis'),
+        ('not_specified', ['conversation_analysis'], 'M13', 'Conversation analysis'),
+        ('not_specified', ['mixed_methods_integration'], 'M21', 'Mixed methods and triangulation'),
+    ],
+)
+def test_canonical_methodology_mapping_matches_published_controlled_library(design, analysis, expected_id, expected_name):
+    from app.main import controlled_methodology_for_design
+    from app.methodology import get_methodology
+
+    assert controlled_methodology_for_design(design, analysis) == expected_id
+    record = get_methodology(expected_id)
+    assert record['name'] == expected_name
+    assert 'retrieval' in record['allowed_ai_tasks']
+    assert record['provenance']
+
+
+def test_ambiguous_canonical_methodology_never_invents_a_controlled_mapping():
+    from app.main import controlled_methodology_for_design
+
+    assert controlled_methodology_for_design('evaluation', ['descriptive_statistics']) == ''
+    assert controlled_methodology_for_design('not_specified', ['reflexive_thematic', 'framework_analysis']) == ''
+
+
+def test_canonical_change_clears_stale_grounding_and_preserves_legacy_provenance():
+    from app.db import SessionLocal
+    from app.methodology import MethodologyGateViolation, study_grounding
+    from app.models import StudyMethodologyConfiguration
+
+    with client:
+        auth()
+        created = post_with_csrf('/projects/1/studies', data={
+            'title': unique_value('Stale grounding'), 'code': unique_value('stale-grounding').upper(),
+            'description': '', 'methodology': 'diary', 'status_value': 'draft',
+        }, follow_redirects=False)
+        study_id = int(created.headers['location'].rsplit('/', 1)[-1])
+        initial = post_with_csrf(f'/studies/{study_id}/methodology-configuration', data={
+            'research_philosophy': 'interpretivist_constructivist', 'research_design': 'not_specified',
+            'research_questions': 'How are local experiences interpreted?', 'protocol_reference': 'STALE-1',
+            'protocol_version': '1.0', 'sampling_approach': 'Purposive', 'data_collection_plan': 'Diary entries',
+            'analysis_approaches': 'reflexive_thematic', 'ai_enabled': 'true', 'allowed_ai_tasks': 'retrieval',
+            'researcher_confirmation': 'true',
+        }, follow_redirects=False)
+        assert initial.status_code == 303
+        cleared = post_with_csrf(f'/studies/{study_id}/methodology-configuration', data={
+            'research_philosophy': 'pragmatist', 'research_design': 'evaluation',
+            'research_questions': 'What outcomes are measurable?', 'protocol_reference': 'STALE-2',
+            'protocol_version': '1.1', 'sampling_approach': 'Defined evaluation sample',
+            'data_collection_plan': 'Structured measures', 'analysis_approaches': 'descriptive_statistics',
+            'researcher_confirmation': 'true',
+        }, follow_redirects=False)
+        assert cleared.status_code == 303
+        with SessionLocal() as db:
+            configuration = db.scalar(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.study_id == study_id))
+            assert configuration is not None
+            assert configuration.primary_methodology_id == ''
+            assert configuration.ai_enabled is False
+            assert configuration.allowed_ai_tasks_json == '[]'
+            with pytest.raises(MethodologyGateViolation, match='AI support is not enabled'):
+                study_grounding(configuration, 'retrieval')
+
+
+def test_legacy_methodology_labels_remain_provenance_and_are_not_revalidated():
+    from app.db import SessionLocal
+    from app.models import StudyMethodologyConfiguration
+
+    with client:
+        auth()
+        created = post_with_csrf('/projects/1/studies', data={
+            'title': unique_value('Legacy metadata'), 'code': unique_value('legacy-metadata').upper(),
+            'description': '', 'methodology': 'diary', 'status_value': 'draft',
+        }, follow_redirects=False)
+        study_id = int(created.headers['location'].rsplit('/', 1)[-1])
+        with SessionLocal() as db:
+            db.add(StudyMethodologyConfiguration(
+                organisation_id=1, study_id=study_id, primary_methodology_id='M03',
+                methodology_variant='longitudinal diary',
+                secondary_methodologies_json='["longitudinal diary", "photo elicitation"]',
+                research_approaches_json='["ethnography"]', researcher_confirmed_at=now(),
+            ))
+            db.commit()
+        saved = post_with_csrf(f'/studies/{study_id}/methodology-configuration', data={
+            'research_philosophy': 'interpretivist_constructivist', 'research_design': 'case_study',
+            'research_questions': 'How does this bounded case develop?', 'protocol_reference': 'LEGACY-1',
+            'protocol_version': '1.0', 'sampling_approach': 'Case-based', 'data_collection_plan': 'Records and diaries',
+            'researcher_confirmation': 'true',
+        }, follow_redirects=False)
+        assert saved.status_code == 303
+        with SessionLocal() as db:
+            configuration = db.scalar(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.study_id == study_id))
+            assert configuration is not None
+            assert configuration.primary_methodology_id == 'M05'
+            assert configuration.methodology_variant == ''
+            assert configuration.secondary_methodologies_json == '[]'
+            legacy = json.loads(configuration.legacy_methodology_json)['pre_0021_controlled_methodology']
+            assert legacy['methodology_variant'] == 'longitudinal diary'
+            assert legacy['secondary_methodologies_json'] == '["longitudinal diary", "photo elicitation"]'
+            assert configuration.research_approaches_json == '["ethnography"]'
+
+
+def test_new_methodology_form_defaults_to_not_specified_without_implicit_ethnography():
+    from app.db import SessionLocal
+    from app.models import StudyMethodologyConfiguration
+
+    with client:
+        auth()
+        created = post_with_csrf('/projects/1/studies', data={
+            'title': unique_value('Unspecified defaults'), 'code': unique_value('unspecified-defaults').upper(),
+            'description': '', 'methodology': 'diary', 'status_value': 'draft',
+        }, follow_redirects=False)
+        location = created.headers['location']
+        page = client.get(location)
+        philosophy_fieldset = re.search(r'<fieldset class="field"><legend>Research philosophy / paradigm</legend>.*?</fieldset>', page.text, re.DOTALL)
+        assert philosophy_fieldset is not None
+        assert 'value="not_specified" checked' in philosophy_fieldset.group(0)
+        assert 'value="interpretivist_constructivist" checked' not in philosophy_fieldset.group(0)
+        design_select = re.search(r'<select id="research-design".*?</select>', page.text, re.DOTALL)
+        assert design_select is not None
+        assert '<option value="not_specified" selected>Not specified / not sure</option>' in design_select.group(0)
+        assert '<option value="ethnography" selected' not in design_select.group(0)
+        for control_name in ('evidence_methods', 'analysis_approaches', 'theoretical_orientations'):
+            controls = re.findall(rf'<input[^>]+name="{control_name}"[^>]*>', page.text)
+            assert controls and not any('checked' in control for control in controls)
+        study_id = int(location.rsplit('/', 1)[-1])
+        saved = post_with_csrf(f'/studies/{study_id}/methodology-configuration', data={
+            'research_philosophy': 'not_specified', 'research_design': 'not_specified',
+            'research_questions': 'To be refined', 'protocol_reference': 'UNSPECIFIED-1', 'protocol_version': '1.0',
+            'sampling_approach': 'To be refined', 'data_collection_plan': 'To be refined',
+            'researcher_confirmation': 'true',
+        }, follow_redirects=False)
+        assert saved.status_code == 303
+        with SessionLocal() as db:
+            configuration = db.scalar(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.study_id == study_id))
+            assert configuration is not None
+            assert configuration.research_philosophy == 'not_specified'
+            assert configuration.research_design == 'not_specified'
+            assert configuration.evidence_methods_json == '[]'
+            assert configuration.analysis_approaches_json == '[]'
+            assert configuration.theoretical_orientations_json == '[]'
+            assert configuration.primary_methodology_id == ''
+
+
+def test_study_consent_display_uses_current_study_status_and_preserves_history():
+    from types import SimpleNamespace
+    from app.main import study_consent_display
+
+    active_invitation = SimpleNamespace(accepted_at=now(), revoked_at=None, expires_at=now() + timedelta(days=1))
+    enrolled = SimpleNamespace(status='enrolled')
+    active_participant = SimpleNamespace(status='active', consent_status='granted')
+    assert study_consent_display(enrolled, active_participant, active_invitation)['label'] == 'Consented for this study'
+
+    withdrawn_participant = SimpleNamespace(status='withdrawn', consent_status='withdrawn')
+    withdrawn = study_consent_display(enrolled, withdrawn_participant, active_invitation)
+    assert withdrawn['label'] == 'Withdrawn'
+    assert withdrawn['historical_acceptance']
+
+    pending = study_consent_display(enrolled, active_participant, SimpleNamespace(accepted_at=None, revoked_at=None, expires_at=now() + timedelta(days=1)))
+    assert pending['label'] == 'Awaiting study consent'
+    revoked = study_consent_display(enrolled, active_participant, SimpleNamespace(accepted_at=now(), revoked_at=now(), expires_at=now() + timedelta(days=1)))
+    assert revoked['label'] == 'Revoked'
+    expired = study_consent_display(enrolled, active_participant, SimpleNamespace(accepted_at=now(), revoked_at=None, expires_at=now() - timedelta(days=1)))
+    assert expired['label'] == 'Expired'
+    # A granted participant is not automatically consented in another study.
+    assert study_consent_display(enrolled, active_participant, None)['invitation_label'] == 'Not sent'
+
+
+def test_study_participant_consent_display_uses_current_enrolment_not_historical_acceptance():
+    from app.db import SessionLocal
+    from app.models import Participant, ParticipantInvitation, StudyEnrolment
+
+    with client:
+        auth()
+        first = post_with_csrf('/projects/1/studies', data={
+            'title': unique_value('Consent display one'), 'code': unique_value('consent-display-one').upper(),
+            'description': '', 'methodology': 'diary', 'status_value': 'draft',
+        }, follow_redirects=False)
+        second = post_with_csrf('/projects/1/studies', data={
+            'title': unique_value('Consent display two'), 'code': unique_value('consent-display-two').upper(),
+            'description': '', 'methodology': 'diary', 'status_value': 'draft',
+        }, follow_redirects=False)
+        first_study_id = int(first.headers['location'].rsplit('/', 1)[-1])
+        second_study_id = int(second.headers['location'].rsplit('/', 1)[-1])
+        with SessionLocal() as db:
+            participant_row = Participant(
+                organisation_id=1, reference=unique_value('CONSENT').upper(), name='Consent display participant',
+                status='active', consent_status='granted', communication_preference='email', created_by_id=1,
+            )
+            db.add(participant_row); db.flush()
+            participant_id = participant_row.id
+            db.add_all([
+                StudyEnrolment(organisation_id=1, study_id=first_study_id, participant_id=participant_id, status='enrolled'),
+                StudyEnrolment(organisation_id=1, study_id=second_study_id, participant_id=participant_id, status='enrolled'),
+                ParticipantInvitation(
+                    organisation_id=1, participant_id=participant_id, study_id=first_study_id,
+                    token_hash=unique_value('consent-display-token'), expires_at=now() + timedelta(days=1),
+                    accepted_at=now(), invited_by_id=1,
+                ),
+            ])
+            db.commit()
+        accepted = client.get(f'/studies/{first_study_id}')
+        assert 'Consented for this study' in accepted.text
+        with SessionLocal() as db:
+            enrolment = db.scalar(select(StudyEnrolment).where(
+                StudyEnrolment.study_id == first_study_id,
+                StudyEnrolment.participant_id == participant_id,
+            ))
+            invitation = db.scalar(select(ParticipantInvitation).where(
+                ParticipantInvitation.study_id == first_study_id,
+                ParticipantInvitation.participant_id == participant_id,
+            ))
+            assert enrolment is not None and invitation is not None
+            enrolment.status = 'withdrawn'
+            invitation.revoked_at = now()
+            db.commit()
+        withdrawn = client.get(f'/studies/{first_study_id}')
+        assert 'Withdrawn' in withdrawn.text
+        assert 'Previously accepted on' in withdrawn.text
+        assert 'Consented for this study' not in withdrawn.text
+        other_study = client.get(f'/studies/{second_study_id}')
+        assert 'Awaiting study consent' in other_study.text
+        assert 'Consented for this study' not in other_study.text
