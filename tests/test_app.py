@@ -846,6 +846,54 @@ def test_participant_api_exposes_scoped_document_references_and_snapshots_consen
         second_documents = client.get('/api/v1/participant/legal-documents', headers=second_headers).json()['documents']
         assert {document['version'] for document in second_documents} == {'2.0'}
         assert client.post('/api/v1/participant/consent', json={'consent': True, 'document_hashes': {item['document_type']: item['content_sha256'] for item in second_documents}}, headers=second_headers).status_code == 200
+
+        available = client.get(
+            '/api/v1/participant/session/available-studies',
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert available.status_code == 200
+        assert available.headers.get('cache-control') == 'no-store'
+        assert {item['study_id'] for item in available.json()['data']} == {
+            study_id,
+            second_study_id,
+        }
+
+        denied = client.post(
+            '/api/v1/participant/session/switch',
+            json={'study_id': second_study_id + 999999},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert denied.status_code == 403
+
+        switched = client.post(
+            '/api/v1/participant/session/switch',
+            json={'study_id': second_study_id},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert switched.status_code == 200
+        assert switched.headers.get('cache-control') == 'no-store'
+        switched_body = switched.json()
+        assert switched_body['invitation']['study_id'] == second_study_id
+        assert switched_body['next_action'] == 'portal'
+        assert 'access_token' in switched_body['session']
+        switched_headers = {
+            'Authorization': f"Bearer {switched_body['session']['access_token']}",
+        }
+        switched_session = client.get('/api/v1/participant/session', headers=switched_headers)
+        assert switched_session.status_code == 200
+        assert switched_session.json()['study_scope'] == [second_study_id]
+        assert client.get(
+            f'/api/v1/participant/portal?study_id={study_id}',
+            headers=switched_headers,
+            follow_redirects=False,
+        ).status_code == 403
+        # Switching rotates the target study's old active session without
+        # revealing its raw token or broadening either token's scope.
+        assert client.get('/api/v1/participant/session', headers=second_headers).status_code == 401
+
         with SessionLocal() as db:
             first = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id))
             second = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == second_study_id))

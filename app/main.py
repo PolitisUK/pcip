@@ -155,6 +155,7 @@ from .participant_api.schemas import (
     ActivityResponseSummary,
     ActivityResponseValue,
     ActivitySummary,
+    AvailableStudyListResponse,
     BearerSession,
     CreateMessageRequest,
     CreateMessageResponse,
@@ -175,6 +176,7 @@ from .participant_api.schemas import (
     ConsentAcceptanceResponse,
     SessionExchangeRequest,
     SessionExchangeResponse,
+    SessionSwitchRequest,
     SessionInfo,
     SubmissionHistoryItem,
     SubmissionEvidenceItem,
@@ -1552,6 +1554,88 @@ def _resolve_participant_api_context(
     if not participant_row:
         raise _participant_api_unauthorised()
     return session_row, invitation, participant_row
+
+
+def _participant_switchable_studies(
+    db: Session,
+    invitation: ParticipantInvitation,
+    participant_row: Participant,
+) -> list[tuple[ParticipantInvitation, Study]]:
+    """Return only study invitations that are independently safe to enter.
+
+    A participant API token remains bound to one invitation.  This helper is
+    intentionally stricter than a participant lookup: every selectable study
+    needs its own accepted, unrevoked invitation and an active enrolment.
+    """
+    if not invitation.accepted_at:
+        raise HTTPException(403, "Participant consent has not been accepted.")
+    if participant_row.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(403, "Participant consent is no longer active.")
+
+    rows = db.execute(
+        select(ParticipantInvitation, Study)
+        .join(
+            Study,
+            and_(
+                Study.id == ParticipantInvitation.study_id,
+                Study.organisation_id == ParticipantInvitation.organisation_id,
+            ),
+        )
+        .join(
+            StudyEnrolment,
+            and_(
+                StudyEnrolment.organisation_id == ParticipantInvitation.organisation_id,
+                StudyEnrolment.study_id == ParticipantInvitation.study_id,
+                StudyEnrolment.participant_id == ParticipantInvitation.participant_id,
+                StudyEnrolment.status != "withdrawn",
+            ),
+        )
+        .where(
+            ParticipantInvitation.organisation_id == invitation.organisation_id,
+            ParticipantInvitation.participant_id == participant_row.id,
+            ParticipantInvitation.accepted_at.is_not(None),
+            ParticipantInvitation.revoked_at.is_(None),
+        )
+        .order_by(Study.title.asc(), ParticipantInvitation.created_at.desc())
+    ).all()
+    active = [(candidate, study_row) for candidate, study_row in rows if unexpired(candidate.expires_at)]
+
+    # There should be one live accepted invitation per study.  Do not choose
+    # arbitrarily if historical invitation state has become inconsistent.
+    by_study_id: dict[int, tuple[ParticipantInvitation, Study]] = {}
+    for candidate, study_row in active:
+        if study_row.id in by_study_id:
+            raise HTTPException(409, "Participant study access configuration is invalid.")
+        by_study_id[study_row.id] = (candidate, study_row)
+    return list(by_study_id.values())
+
+
+def _participant_session_exchange_response(
+    raw_token: str,
+    session_row: PublicAuthSession,
+    invitation: ParticipantInvitation,
+    participant_row: Participant,
+) -> SessionExchangeResponse:
+    return SessionExchangeResponse(
+        session=BearerSession(
+            access_token=raw_token,
+            token_type="Bearer",
+            expires_at=session_row.expires_at,
+            revocable=True,
+        ),
+        participant=ParticipantSummary(
+            display_name=participant_row.name,
+            consent_status=participant_row.consent_status,
+        ),
+        invitation=InvitationContext(
+            study_id=invitation.study_id,
+            invitation_status="accepted" if invitation.accepted_at else "valid",
+            expires_at=invitation.expires_at,
+            accepted_at=invitation.accepted_at,
+            requires_study_documents=invitation.consent_bundle_id is not None,
+        ),
+        next_action="portal" if invitation.accepted_at else "consent_required",
+    )
 
 
 def create_pilot_sample_data(db: Session, user: User) -> dict[str, int]:
@@ -4302,8 +4386,6 @@ def participant_api_session_exchange(
     except IntegrityError:
         db.rollback()
         raise _participant_api_exchange_conflict()
-    next_action = "portal" if invitation.accepted_at else "consent_required"
-    invitation_status = "accepted" if invitation.accepted_at else "valid"
     audit(
         db,
         invitation.organisation_id,
@@ -4311,31 +4393,17 @@ def participant_api_session_exchange(
         "participant.api_session_exchanged",
         "participant_invitation",
         invitation.id,
-        next_action,
+        "portal" if invitation.accepted_at else "consent_required",
     )
     if access_code:
         access_code.redeemed_at = now()
     db.commit()
     _cache_control_no_store(response)
-    return SessionExchangeResponse(
-        session=BearerSession(
-            access_token=raw_token,
-            token_type="Bearer",
-            expires_at=session_row.expires_at,
-            revocable=True,
-        ),
-        participant=ParticipantSummary(
-            display_name=participant_row.name,
-            consent_status=participant_row.consent_status,
-        ),
-        invitation=InvitationContext(
-            study_id=invitation.study_id,
-            invitation_status=invitation_status,
-            expires_at=invitation.expires_at,
-            accepted_at=invitation.accepted_at,
-            requires_study_documents=invitation.consent_bundle_id is not None,
-        ),
-        next_action=next_action,
+    return _participant_session_exchange_response(
+        raw_token,
+        session_row,
+        invitation,
+        participant_row,
     )
 
 
@@ -4365,6 +4433,106 @@ def participant_api_session(
         ),
         next_action="portal" if invitation.accepted_at else "consent_required",
         study_scope=[invitation.study_id],
+    )
+
+
+@app.get(
+    "/api/v1/participant/session/available-studies",
+    response_model=AvailableStudyListResponse,
+)
+def participant_api_available_studies(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
+    rows = _participant_switchable_studies(db, invitation, participant_row)
+    _cache_control_no_store(response)
+    return AvailableStudyListResponse(
+        data=[
+            StudySummary(
+                study_id=study_row.id,
+                title=study_row.title,
+                description=study_row.description,
+                status=study_row.status,
+                methodology=study_row.methodology,
+                enrolled=True,
+            )
+            for _candidate, study_row in rows
+        ]
+    )
+
+
+@app.post(
+    "/api/v1/participant/session/switch",
+    response_model=SessionExchangeResponse,
+)
+def participant_api_session_switch(
+    payload: SessionSwitchRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    _require_json_content_type(request)
+    source_session, invitation, participant_row = _resolve_participant_api_context(request, db)
+    if payload.study_id == invitation.study_id:
+        raise HTTPException(400, "The requested study is already active.")
+
+    _enforce_rate_limit(
+        request,
+        db,
+        scope="participant_api_session_switch",
+        ip_limit=settings.rate_limit_portal_write_ip,
+        account_key=f"invitation:{invitation.id}",
+        account_limit=settings.rate_limit_portal_write_token,
+    )
+    available = _participant_switchable_studies(db, invitation, participant_row)
+    target = next(
+        (
+            candidate
+            for candidate, study_row in available
+            if study_row.id == payload.study_id
+        ),
+        None,
+    )
+    if target is None:
+        raise HTTPException(403, "Requested study is outside participant scope.")
+
+    # Preserve the one-active-session-per-invitation safeguard.  The source
+    # session stays valid until the new token has been delivered, so a dropped
+    # response cannot strand the participant outside both studies.
+    target_sessions = db.scalars(
+        select(PublicAuthSession).where(
+            PublicAuthSession.scope == PARTICIPANT_API_SCOPE,
+            PublicAuthSession.participant_invitation_id == target.id,
+            PublicAuthSession.revoked_at.is_(None),
+        )
+    ).all()
+    for existing in target_sessions:
+        if existing.id != source_session.id:
+            existing.revoked_at = now()
+
+    raw_token, target_session = create_participant_api_session(
+        db,
+        participant_invitation_id=target.id,
+        ttl_seconds=settings.session_max_age_seconds,
+    )
+    audit(
+        db,
+        invitation.organisation_id,
+        None,
+        "participant.api_session_switched",
+        "participant_invitation",
+        target.id,
+        str(target.study_id),
+    )
+    db.commit()
+    _cache_control_no_store(response)
+    return _participant_session_exchange_response(
+        raw_token,
+        target_session,
+        target,
+        participant_row,
     )
 
 
