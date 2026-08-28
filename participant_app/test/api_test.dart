@@ -140,6 +140,21 @@ void main() {
     );
   });
 
+  test('available-studies conflict has a safe, actionable participant message', () {
+    expect(
+      availableStudiesLoadError(const ApiError(
+        'Internal detail must not reach participants.',
+        retryable: false,
+        statusCode: 409,
+      )),
+      'Your study access needs review. You can continue using your current study, but switching studies is temporarily unavailable. Please contact the research team.',
+    );
+    expect(
+      availableStudiesLoadError(const ApiError('Temporary failure.', statusCode: 500)),
+      'Your available studies could not be loaded. You can keep using this study.',
+    );
+  });
+
   test('logout cache cleanup retains no participant data', () async {
     SharedPreferences.setMockInitialValues({
       'cached_profile': '{"display_name":"Synthetic participant"}',

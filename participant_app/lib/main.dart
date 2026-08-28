@@ -596,9 +596,9 @@ class _ParticipantAppState extends State<ParticipantApp> {
       try {
         availableStudies = await api!.availableStudies();
         studySwitchError = null;
-      } catch (_) {
+      } catch (error) {
         availableStudies = [];
-        studySwitchError = 'Your available studies could not be loaded. You can keep using this study.';
+        studySwitchError = availableStudiesLoadError(error);
       }
     }
   }
@@ -754,6 +754,13 @@ class _ParticipantAppState extends State<ParticipantApp> {
       ),
     );
   }
+}
+
+String availableStudiesLoadError(Object error) {
+  if (error is ApiError && error.statusCode == 409) {
+    return 'Your study access needs review. You can continue using your current study, but switching studies is temporarily unavailable. Please contact the research team.';
+  }
+  return 'Your available studies could not be loaded. You can keep using this study.';
 }
 
 class Invite extends StatefulWidget {
