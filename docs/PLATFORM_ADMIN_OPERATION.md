@@ -9,6 +9,67 @@ First, record approval for the read-only lookup and resolve the exact internal
 user ID. This command is operational only: do not expose it through an API or
 run it outside an authorised production execution path.
 
+## Approved non-interactive production path
+
+Do not enable App Service SSH, use Kudu, retrieve a publishing profile, or copy
+database credentials to a workstation or GitHub runner. The approved execution
+path is the protected **Run approved PCIP production operation** GitHub Actions
+workflow. It submits a validated request to a dedicated Azure Service Bus queue
+after the `production` environment approval. The event-driven Container Apps
+job has its own managed identity, can read only the existing `database-url` Key
+Vault secret, and runs the digest-pinned deployed image. The workflow must use
+the dedicated `AZURE_PRODUCTION_OPERATIONS_CLIENT_ID` OIDC identity; it must
+never fall back to the broader release-promotion identity.
+
+The workflow accepts one enumerated operation only: `lookup-user-identity`.
+It does not accept an arbitrary shell command, Python module, CLI flags, or SQL.
+It verifies the supplied release SHA against three consecutive production
+readiness responses and verifies the supplied immutable digest is configured on
+both App Service and the worker. The supplied email is masked, is not written to
+the step summary, and is carried only in the short-lived queue message; the
+worker does not log it or persist it in application data.
+
+Before first use, an infrastructure owner must separately approve and deploy
+`infra/production-operations.bicep` with the digest of a release that contains
+`scripts.production_operation_worker`. This is a one-time provisioning change:
+it requires the `Microsoft.App` and `Microsoft.ServiceBus` providers, creates
+an event-driven job with no ingress, a dedicated queue with local/SAS
+authentication disabled, and grants the job identity `AcrPull`, Service Bus
+**Data Receiver only on that queue**, plus **Key Vault Secrets User only at the
+existing `database-url` secret scope**. The module also creates a dedicated
+operation-log workspace. The GitHub OIDC principal has Service Bus **Data Sender
+only on that queue**, read-only access to the worker/App Service/ACR metadata,
+and read-only access to the dedicated operation logs. It receives no Key Vault,
+PostgreSQL, App Service write, SSH, or job-start permission. It must not change
+PostgreSQL networking or grant GitHub database, Key Vault-secret, or
+interactive-shell access.
+
+The infrastructure owner must create the dedicated Entra workload identity and
+federated credential separately. Its GitHub OIDC subject must be the exact
+repository-and-`production`-environment subject issued by GitHub (normally
+`repo:PolitisUK/pcip:environment:production`, unless the repository is using
+GitHub's immutable-subject format). Store its application client ID only as the
+protected-environment variable `AZURE_PRODUCTION_OPERATIONS_CLIENT_ID`. Do not
+reuse `AZURE_CLIENT_ID`, and do not give the operations identity the existing
+resource-group Contributor role. Configure the protected-environment variables
+for the queue namespace, queue name, worker job name, and dedicated Log
+Analytics workspace ID from the Bicep outputs; none is a secret.
+
+The execution sequence is:
+
+1. Record approval for the read-only lookup and select the workflow from `main`.
+2. Select `lookup-user-identity`; provide the exact email, deployed release SHA,
+   immutable deployed image digest, and named operator.
+3. Approve the protected GitHub `production` environment.
+4. Review the returned JSON only: internal user ID, active state,
+   platform-admin state, and membership IDs/roles/states.
+5. Record the exact internal user ID, then run the separately authorised
+   `set_platform_admin --dry-run` process below.
+
+The workflow records its GitHub run, actor, named operator, target release,
+operation, execution ID, and success/failure in the protected run summary. It
+does not print the supplied email or any credential.
+
 ```bash
 python -m scripts.lookup_user_identity \
   --email <email>
