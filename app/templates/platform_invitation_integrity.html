@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Participant invitation integrity{% endblock %}
+{% block page_description %}<p class="page-description">Platform-only review of duplicate accepted, live participant invitations. No participant research material or invitation credentials are shown.</p>{% endblock %}
+{% block content %}
+<section class="card section card--data">
+  <div class="section-head"><div><h2>Duplicate live accepted invitations</h2><p class="muted">Each row needs an explicit review before any invitation is revoked.</p></div><span class="badge">{{ groups|length }} groups</span></div>
+  <table class="table">
+    <thead><tr><th>Organisation ID</th><th>Participant ID</th><th>Study</th><th>Live accepted invitations</th><th></th></tr></thead>
+    <tbody>
+      {% for group in groups %}
+      <tr>
+        <td>{{ group.organisation_id }}</td><td>{{ group.participant_id }}</td><td>{{ group.study_id }} · {{ group.study_title }}</td><td>{{ group.invitation_count }}</td>
+        <td><a class="mini" href="/admin/participant-invitation-integrity/{{ group.organisation_id }}/{{ group.participant_id }}/{{ group.study_id }}">Review duplicate</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">No duplicate live accepted invitations were found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
