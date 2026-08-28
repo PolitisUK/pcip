@@ -22,6 +22,14 @@ class SessionExchangeRequest(BaseModel):
     device_hint: DeviceHint | None = None
 
 
+class SessionSwitchRequest(BaseModel):
+    """Request a new, study-scoped session from an existing participant session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    study_id: int = Field(ge=1)
+
+
 class BearerSession(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -73,6 +81,14 @@ class StudyListResponse(BaseModel):
 
     data: list[StudySummary]
     pagination: Pagination
+
+
+class AvailableStudyListResponse(BaseModel):
+    """Studies to which the current participant may safely switch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    data: list[StudySummary]
 
 
 class ActivityAvailability(BaseModel):

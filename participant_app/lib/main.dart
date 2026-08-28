@@ -26,6 +26,8 @@ import 'legal_privacy.dart';
 abstract class ParticipantApi {
   Future<Map<String, dynamic>> exchange(String invitation);
   Future<Map<String, dynamic>> session();
+  Future<List<Map<String, dynamic>>> availableStudies();
+  Future<Map<String, dynamic>> switchStudy(int studyId);
   Future<Map<String, dynamic>> legalDocuments();
   Future<void> consent(Map<String, String> documentHashes);
   Future<void> logout();
@@ -212,6 +214,23 @@ class Api implements ParticipantApi {
   @override
   Future<Map<String, dynamic>> session() =>
       request('GET', '/api/v1/participant/session');
+  @override
+  Future<List<Map<String, dynamic>>> availableStudies() async {
+    final result = await request(
+      'GET',
+      '/api/v1/participant/session/available-studies',
+    );
+    final data = result['data'];
+    if (data is! List) return const [];
+    return data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  @override
+  Future<Map<String, dynamic>> switchStudy(int studyId) => request(
+    'POST',
+    '/api/v1/participant/session/switch',
+    body: {'study_id': studyId},
+  );
   @override
   Future<Map<String, dynamic>> legalDocuments() =>
       request('GET', '/api/v1/participant/legal-documents');
@@ -520,8 +539,9 @@ class _ParticipantAppState extends State<ParticipantApp> {
   ParticipantApi? api;
   Map<String, dynamic>? session;
   List<Map<String, dynamic>> studyDocuments = [];
+  List<Map<String, dynamic>> availableStudies = [];
   bool busy = true, documentsLoading = false;
-  String? error, documentsError;
+  String? error, documentsError, studySwitchError;
   ParticipantApi make(String u, String? t) =>
       widget.factory?.call(u, t) ?? Api(Uri.parse(u), t);
   @override
@@ -567,11 +587,19 @@ class _ParticipantAppState extends State<ParticipantApp> {
 
   Future<void> refreshSession() async {
     session = await api!.session();
-    if (invitationRequiresConsent(session))
+    if (invitationRequiresConsent(session)) {
+      availableStudies = [];
       await loadStudyDocuments();
-    else {
+    } else {
       studyDocuments = [];
       documentsError = null;
+      try {
+        availableStudies = await api!.availableStudies();
+        studySwitchError = null;
+      } catch (_) {
+        availableStudies = [];
+        studySwitchError = 'Your available studies could not be loaded. You can keep using this study.';
+      }
     }
   }
 
@@ -590,6 +618,7 @@ class _ParticipantAppState extends State<ParticipantApp> {
       }
       api = null;
       session = null;
+      availableStudies = [];
     }
     if (mounted) setState(() => busy = false);
   }
@@ -643,8 +672,40 @@ class _ParticipantAppState extends State<ParticipantApp> {
       setState(() {
         api = null;
         session = null;
+        availableStudies = [];
         error = null;
       });
+  }
+
+  Future<void> switchStudy(int studyId) async {
+    final currentStudyId =
+        (session?['invitation'] as Map?)?['study_id'] as int?;
+    if (api == null || currentStudyId == studyId) return;
+    if (await Queue.count() > 0 || await MediaQueue.count() > 0) {
+      studySwitchError = 'Finish sending your saved responses and uploads before changing study.';
+      if (mounted) setState(() {});
+      return;
+    }
+    try {
+      final switched = await api!.switchStudy(studyId);
+      final token = (switched['session'] as Map?)?['access_token']?.toString();
+      final saved = await widget.store.read();
+      if (token == null || token.isEmpty || saved == null)
+        throw const ApiError('Your secure session could not be changed.');
+      await widget.store.save(saved.$1, token);
+      api = make(saved.$1, token);
+      await refreshSession();
+      error = null;
+    } on ApiError catch (e) {
+      if (e.category == 'session_ended') {
+        await signOut();
+        return;
+      }
+      studySwitchError = e.message;
+    } catch (_) {
+      studySwitchError = 'Your study could not be changed. Please try again.';
+    }
+    if (mounted) setState(() {});
   }
 
   @override
@@ -678,12 +739,18 @@ class _ParticipantAppState extends State<ParticipantApp> {
           onAccept: accept,
         ),
       );
+    final activeStudyId = (session!['invitation'] as Map?)?['study_id'] as int?;
     return MaterialApp(
       theme: participantTheme,
       home: Home(
+        key: ValueKey('study-$activeStudyId'),
         api: api! as Api,
         name: participant['display_name'] as String,
         onLogout: signOut,
+        studies: availableStudies,
+        activeStudyId: activeStudyId,
+        studySwitchError: studySwitchError,
+        onSwitchStudy: switchStudy,
       ),
     );
   }
@@ -1002,11 +1069,19 @@ class Home extends StatefulWidget {
     required this.api,
     required this.name,
     required this.onLogout,
+    this.studies = const [],
+    this.activeStudyId,
+    this.studySwitchError,
+    this.onSwitchStudy,
     this.dashboardLoader,
   });
   final Api api;
   final String name;
   final Future<void> Function() onLogout;
+  final List<Map<String, dynamic>> studies;
+  final int? activeStudyId;
+  final String? studySwitchError;
+  final Future<void> Function(int studyId)? onSwitchStudy;
   final Future<Map<String, dynamic>> Function()? dashboardLoader;
   @override
   State<Home> createState() => _HomeState();
@@ -1041,6 +1116,21 @@ class _HomeState extends State<Home> {
     appBar: AppBar(
       title: const Text('Citizen Centric'),
       actions: [
+        if (widget.studies.length > 1 && widget.onSwitchStudy != null)
+          PopupMenuButton<int>(
+            tooltip: 'Switch study',
+            icon: const Icon(Icons.swap_horiz),
+            onSelected: widget.onSwitchStudy,
+            itemBuilder: (context) => widget.studies
+                .map(
+                  (study) => PopupMenuItem<int>(
+                    value: study['study_id'] as int,
+                    enabled: study['study_id'] != widget.activeStudyId,
+                    child: Text(study['title']?.toString() ?? 'Study'),
+                  ),
+                )
+                .toList(),
+          ),
         IconButton(
           tooltip: 'Sign out',
           onPressed: widget.onLogout,
@@ -1081,6 +1171,17 @@ class _HomeState extends State<Home> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
             children: [
+              if (widget.studySwitchError != null)
+                Semantics(
+                  liveRegion: true,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      widget.studySwitchError!,
+                      style: const TextStyle(color: Color(0xFF9C2C21)),
+                    ),
+                  ),
+                ),
               Container(
                 padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(

@@ -217,19 +217,21 @@ def test_login_uses_transparent_citizen_centric_wordmark():
     assert 'mobile/participant-app/assets/citizen-centric-logo.png' not in dockerfile
 
 
-def test_public_footer_uses_transparent_wordmark_without_filter_or_low_contrast_overrides():
+def test_public_footer_uses_a_visible_high_contrast_wordmark_without_a_png_mask():
     css = Path('app/static/app.css').read_text()
     footer = Path('app/templates/_public_footer.html').read_text()
 
     assert 'brand-logo--on-blue' not in footer
     assert 'role="img" aria-label="Citizen Centric by Politis"' in footer
-    assert 'brightness(0) invert(1)' not in css
     assert '.public-nav a,\n.public-footer a' not in css
     assert '.public-footer-brand p {\n  max-width: 390px;\n  margin: 22px 0 0;\n  color: #e5efff;' in css
     assert '.public-footer-group h2 {\n  margin: 0 0 6px;\n  color: #fff;' in css
     assert '.public-footer-bottom small {\n  color: #e5efff;' in css
     assert css.index('.public-footer a {') > css.index('.public-footer {')
-    assert '-webkit-mask: url("/static/citizen-centric-logo.png") center / contain no-repeat;' in css
+    assert '.public-footer .brand-logo--wordmark {\n  width: 100%;\n  height: auto;' in css
+    assert 'filter: brightness(0) invert(1);' in css
+    assert '-webkit-mask:' not in css
+    assert 'mask:' not in css
 
 
 def test_public_homepage_is_available_without_authentication_and_keeps_workspace_data_private():
@@ -844,6 +846,54 @@ def test_participant_api_exposes_scoped_document_references_and_snapshots_consen
         second_documents = client.get('/api/v1/participant/legal-documents', headers=second_headers).json()['documents']
         assert {document['version'] for document in second_documents} == {'2.0'}
         assert client.post('/api/v1/participant/consent', json={'consent': True, 'document_hashes': {item['document_type']: item['content_sha256'] for item in second_documents}}, headers=second_headers).status_code == 200
+
+        available = client.get(
+            '/api/v1/participant/session/available-studies',
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert available.status_code == 200
+        assert available.headers.get('cache-control') == 'no-store'
+        assert {item['study_id'] for item in available.json()['data']} == {
+            study_id,
+            second_study_id,
+        }
+
+        denied = client.post(
+            '/api/v1/participant/session/switch',
+            json={'study_id': second_study_id + 999999},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert denied.status_code == 403
+
+        switched = client.post(
+            '/api/v1/participant/session/switch',
+            json={'study_id': second_study_id},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert switched.status_code == 200
+        assert switched.headers.get('cache-control') == 'no-store'
+        switched_body = switched.json()
+        assert switched_body['invitation']['study_id'] == second_study_id
+        assert switched_body['next_action'] == 'portal'
+        assert 'access_token' in switched_body['session']
+        switched_headers = {
+            'Authorization': f"Bearer {switched_body['session']['access_token']}",
+        }
+        switched_session = client.get('/api/v1/participant/session', headers=switched_headers)
+        assert switched_session.status_code == 200
+        assert switched_session.json()['study_scope'] == [second_study_id]
+        assert client.get(
+            f'/api/v1/participant/portal?study_id={study_id}',
+            headers=switched_headers,
+            follow_redirects=False,
+        ).status_code == 403
+        # Switching rotates the target study's old active session without
+        # revealing its raw token or broadening either token's scope.
+        assert client.get('/api/v1/participant/session', headers=second_headers).status_code == 401
+
         with SessionLocal() as db:
             first = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id))
             second = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == second_study_id))

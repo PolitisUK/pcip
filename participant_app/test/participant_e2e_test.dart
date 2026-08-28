@@ -23,6 +23,42 @@ class _FailingSessionStore extends SessionStore {
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  testWidgets('participant can select another independently available study', (
+    tester,
+  ) async {
+    int? selectedStudyId;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Home(
+          api: _api,
+          name: 'Test participant',
+          activeStudyId: 11,
+          studies: const [
+            {'study_id': 11, 'title': 'Neighbourhood diary'},
+            {'study_id': 22, 'title': 'Travel diary'},
+          ],
+          onLogout: () async {},
+          onSwitchStudy: (studyId) async => selectedStudyId = studyId,
+          dashboardLoader: () async => {
+            'study': {'title': 'Neighbourhood diary'},
+            'activities': [],
+            'messages': [],
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Switch study'), findsOneWidget);
+    await tester.tap(find.byTooltip('Switch study'));
+    await tester.pumpAndSettle();
+    expect(find.text('Travel diary'), findsOneWidget);
+
+    await tester.tap(find.text('Travel diary'));
+    await tester.pumpAndSettle();
+    expect(selectedStudyId, 22);
+  });
+
   test('photo is durable before upload and server acknowledgement clears only the queued copy', () async {
     final root = await Directory.systemTemp.createTemp('pcip-media-test-');
     addTearDown(() => root.delete(recursive: true));
@@ -236,24 +272,28 @@ void main() {
     expect(find.text('Take a photo'), findsNothing);
   });
 
-  testWidgets('repeatable media activity remains available after an earlier entry', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: participantActivityPage(_api, {
-          'activity_id': 13,
-          'title': 'Repeatable photo diary',
-          'activity_type': 'photo',
-          'allow_multiple_entries': true,
-          'response': {'status': 'submitted'},
-        }),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Take a photo'), findsOneWidget);
-    expect(find.text('Submitted activities cannot be changed.'), findsNothing);
-  });
+  testWidgets(
+    'repeatable media activity remains available after an earlier entry',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: participantActivityPage(_api, {
+            'activity_id': 13,
+            'title': 'Repeatable photo diary',
+            'activity_type': 'photo',
+            'allow_multiple_entries': true,
+            'response': {'status': 'submitted'},
+          }),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Take a photo'), findsOneWidget);
+      expect(
+        find.text('Submitted activities cannot be changed.'),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('secure-storage recovery returns to the join screen', (
     tester,

@@ -113,6 +113,68 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/participant/session/available-studies:
+    get:
+      tags: [Session]
+      summary: List studies available for a secure session switch.
+      description: >-
+        Returns only studies for which the current participant has a separate
+        accepted, unrevoked invitation and an active enrolment. This does not
+        widen the presented token's study scope.
+      responses:
+        '200':
+          description: Studies available for a session switch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableStudyListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/participant/session/switch:
+    post:
+      tags: [Session]
+      summary: Switch to another independently consented study.
+      description: >-
+        Creates a new opaque bearer session bound to the selected study. The
+        selected study must be returned by available-studies; arbitrary study
+        identifiers are rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionSwitchRequest'
+      responses:
+        '200':
+          description: Study-scoped session created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionExchangeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/participant/studies:
     get:
       tags: [Studies]
@@ -743,6 +805,14 @@ components:
           description: One-time post-consent app access code, or a legacy invitation token, accepted only at exchange.
         device_hint:
           $ref: '#/components/schemas/DeviceHint'
+    SessionSwitchRequest:
+      type: object
+      additionalProperties: false
+      required: [study_id]
+      properties:
+        study_id:
+          type: integer
+          minimum: 1
     BearerSession:
       type: object
       additionalProperties: false
@@ -881,6 +951,15 @@ components:
           type: string
         enrolled:
           type: boolean
+    AvailableStudyListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/StudySummary'
     StudyListResponse:
       type: object
       additionalProperties: false

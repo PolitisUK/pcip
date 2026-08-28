@@ -133,6 +133,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/participant/session/available-studies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List studies available for a secure session switch.
+         * @description Returns only studies for which the current participant has a separate accepted, unrevoked invitation and an active enrolment. This does not widen the presented token's study scope.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Studies available for a session switch. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AvailableStudyListResponse"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/participant/session/switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch to another independently consented study.
+         * @description Creates a new opaque bearer session bound to the selected study. The selected study must be returned by available-studies; arbitrary study identifiers are rejected.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SessionSwitchRequest"];
+                };
+            };
+            responses: {
+                /** @description Study-scoped session created. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SessionExchangeResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                415: components["responses"]["UnsupportedMediaType"];
+                422: components["responses"]["ValidationError"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/participant/studies": {
         parameters: {
             query?: never;
@@ -825,6 +920,9 @@ export interface components {
             invitation_token: string;
             device_hint?: components["schemas"]["DeviceHint"];
         };
+        SessionSwitchRequest: {
+            study_id: number;
+        };
         BearerSession: {
             /** @description Opaque token. Not a JWT. */
             access_token: string;
@@ -889,6 +987,9 @@ export interface components {
             status: string;
             methodology: string;
             enrolled: boolean;
+        };
+        AvailableStudyListResponse: {
+            data: components["schemas"]["StudySummary"][];
         };
         StudyListResponse: {
             data: components["schemas"]["StudySummary"][];

@@ -5,12 +5,14 @@ import yaml
 
 from app.participant_api.schemas import (
     ActivitySummary,
+    AvailableStudyListResponse,
     BearerSession,
     InvitationContext,
     ParticipantSummary,
     ParticipantSessionResponse,
     SessionInfo,
     SessionExchangeResponse,
+    SessionSwitchRequest,
     SubmissionEvidenceItem,
     SubmissionHistoryItem,
     SubmissionHistoryResponse,
@@ -34,6 +36,8 @@ def test_session_contract_matches_backend_response_models():
     bearer_session = _contract_schema("BearerSession")
     exchange = _contract_schema("SessionExchangeResponse")
     session = _contract_schema("ParticipantSessionResponse")
+    available_studies = _contract_schema("AvailableStudyListResponse")
+    switch_request = _contract_schema("SessionSwitchRequest")
 
     assert set(invitation["properties"]) == set(InvitationContext.model_fields)
     assert set(invitation["required"]) == set(InvitationContext.model_fields)
@@ -48,6 +52,10 @@ def test_session_contract_matches_backend_response_models():
     assert set(session["properties"]) == set(ParticipantSessionResponse.model_fields)
     assert set(session["required"]) == set(ParticipantSessionResponse.model_fields)
     assert set(session["properties"]["session"]["properties"]) == set(SessionInfo.model_fields)
+    assert set(available_studies["properties"]) == set(AvailableStudyListResponse.model_fields)
+    assert set(available_studies["required"]) == set(AvailableStudyListResponse.model_fields)
+    assert set(switch_request["properties"]) == set(SessionSwitchRequest.model_fields)
+    assert set(switch_request["required"]) == set(SessionSwitchRequest.model_fields)
 
     expected_next_actions = list(
         get_args(ParticipantSessionResponse.model_fields["next_action"].annotation)
@@ -66,9 +74,15 @@ def test_session_paths_reference_the_matching_response_schemas():
     session_schema = paths["/api/v1/participant/session"]["get"]["responses"]["200"]["content"][
         "application/json"
     ]["schema"]
+    available_studies_schema = paths["/api/v1/participant/session/available-studies"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    switch_request_schema = paths["/api/v1/participant/session/switch"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    switch_schema = paths["/api/v1/participant/session/switch"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
 
     assert exchange_schema == {"$ref": "#/components/schemas/SessionExchangeResponse"}
     assert session_schema == {"$ref": "#/components/schemas/ParticipantSessionResponse"}
+    assert available_studies_schema == {"$ref": "#/components/schemas/AvailableStudyListResponse"}
+    assert switch_request_schema == {"$ref": "#/components/schemas/SessionSwitchRequest"}
+    assert switch_schema == {"$ref": "#/components/schemas/SessionExchangeResponse"}
 
 
 def test_submission_history_contract_matches_backend_response_models():
