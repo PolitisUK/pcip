@@ -122,12 +122,18 @@ from .participant_services import (
     apply_response_action,
     build_evidence_file,
     create_participant_invitation,
+    duplicate_invitation_review_fingerprint,
+    duplicate_live_accepted_invitation_groups,
+    duplicate_live_accepted_invitations,
+    ensure_invitation_can_be_accepted,
     create_participant_message,
     create_researcher_message,
-    find_live_unaccepted_invitation,
+    LiveParticipantInvitationConflict,
     grant_participant_consent,
     is_evidence_downloadable,
+    invitation_enrolment,
     list_participant_visible_messages,
+    lock_participant_invitation_scope,
     mark_invitation_revoked,
     resolve_org_scoped_evidence,
     resolve_invitation_by_token,
@@ -2447,6 +2453,160 @@ def platform_admin_dashboard(
     )
 
 
+@app.get("/admin/participant-invitation-integrity", response_class=HTMLResponse)
+def platform_participant_invitation_integrity(
+    request: Request,
+    u=Depends(platform_admin),
+    db: Session = Depends(get_db),
+):
+    """List only invalid invitation groups; never expose invitation credentials."""
+    groups = duplicate_live_accepted_invitation_groups(db, now())
+    audit(
+        db,
+        u.organisation_id,
+        u.id,
+        "platform_admin.participant_invitation_integrity_viewed",
+        "platform",
+        "participant_invitation_integrity",
+    )
+    db.commit()
+    return render(
+        request,
+        "platform_invitation_integrity.html",
+        user=u,
+        groups=groups,
+    )
+
+
+@app.get(
+    "/admin/participant-invitation-integrity/{organisation_id}/{participant_id}/{study_id}",
+    response_class=HTMLResponse,
+)
+def review_platform_participant_invitation_integrity(
+    organisation_id: int,
+    participant_id: int,
+    study_id: int,
+    request: Request,
+    u=Depends(platform_admin),
+    db: Session = Depends(get_db),
+):
+    invitations = duplicate_live_accepted_invitations(
+        db,
+        organisation_id=organisation_id,
+        participant_id=participant_id,
+        study_id=study_id,
+        current_time=now(),
+    )
+    study_title = db.scalar(
+        select(Study.title).where(
+            Study.id == study_id,
+            Study.organisation_id == organisation_id,
+        )
+    )
+    participant_row = db.get(Participant, participant_id)
+    if (
+        study_title is None
+        or participant_row is None
+        or participant_row.organisation_id != organisation_id
+        or len(invitations) < 2
+    ):
+        raise HTTPException(404, "Not found.")
+    enrolment = invitation_enrolment(
+        db,
+        organisation_id=organisation_id,
+        participant_id=participant_id,
+        study_id=study_id,
+    )
+    audit(
+        db,
+        organisation_id,
+        u.id,
+        "platform_admin.participant_invitation_integrity_reviewed",
+        "participant_invitation_integrity",
+        f"{participant_id}:{study_id}",
+    )
+    db.commit()
+    return render(
+        request,
+        "platform_invitation_integrity_review.html",
+        user=u,
+        organisation_id=organisation_id,
+        participant_id=participant_id,
+        study_id=study_id,
+        study_title=study_title,
+        invitations=invitations,
+        enrolment=enrolment,
+        participant_consent_status=participant_row.consent_status,
+        review_fingerprint=duplicate_invitation_review_fingerprint(invitations),
+    )
+
+
+@app.post(
+    "/admin/participant-invitation-integrity/{organisation_id}/{participant_id}/{study_id}/resolve"
+)
+def resolve_platform_participant_invitation_integrity(
+    organisation_id: int,
+    participant_id: int,
+    study_id: int,
+    request: Request,
+    retained_invitation_id: int = Form(...),
+    review_fingerprint: str = Form(...),
+    confirm_revoke: bool = Form(False),
+    u=Depends(platform_admin),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    if not confirm_revoke:
+        raise HTTPException(400, "Confirm the revocation before continuing.")
+    try:
+        lock_participant_invitation_scope(
+            db,
+            organisation_id=organisation_id,
+            participant_id=participant_id,
+        )
+        invitations = duplicate_live_accepted_invitations(
+            db,
+            organisation_id=organisation_id,
+            participant_id=participant_id,
+            study_id=study_id,
+            current_time=now(),
+            lock=True,
+        )
+        if (
+            len(invitations) < 2
+            or duplicate_invitation_review_fingerprint(invitations) != review_fingerprint
+        ):
+            raise LiveParticipantInvitationConflict()
+        live_ids = {invitation.id for invitation in invitations}
+        if retained_invitation_id not in live_ids:
+            raise HTTPException(404, "Not found.")
+        revoked_ids = sorted(live_ids - {retained_invitation_id})
+        revoked_at = now()
+        for invitation in invitations:
+            if invitation.id in revoked_ids:
+                mark_invitation_revoked(invitation, revoked_at)
+        audit(
+            db,
+            organisation_id,
+            u.id,
+            "platform_admin.participant_invitation_duplicates_remediated",
+            "participant_invitation_integrity",
+            f"{participant_id}:{study_id}",
+            json.dumps(
+                {
+                    "retained_invitation_id": retained_invitation_id,
+                    "revoked_invitation_ids": revoked_ids,
+                }
+            ),
+        )
+        db.commit()
+    except LiveParticipantInvitationConflict as error:
+        db.rollback()
+        raise HTTPException(409, "The invitation records changed. Review the duplicate again before correcting it.") from error
+    set_flash(request, "success", "The selected invitation was retained and redundant invitations were revoked.")
+    return RedirectResponse("/admin/participant-invitation-integrity", 303)
+
+
 @app.post("/pilot/sample-data")
 def generate_pilot_sample_data(
     request: Request,
@@ -3573,14 +3733,18 @@ def send_participant_invite(db,u,s,p):
         ),
         participant_id=p.id,
         study_id=s.id,
-    ); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title); db.commit()
+    ); p.status="invited"; audit(db,u.organisation_id,u.id,"participant.invited","participant",p.id,s.title)
 @app.post("/studies/{study_id}/invite/{participant_id}")
 def invite_participant(study_id:int,participant_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); p=participant(db,participant_id,u.organisation_id)
     if not p.email: raise HTTPException(400,"Participant requires an email address.")
-    active = find_live_unaccepted_invitation(db, s.id, p.id, now())
-    if active: raise HTTPException(400,"A live invitation already exists. Revoke it before resending.")
-    send_participant_invite(db,u,s,p); return RedirectResponse(f"/studies/{s.id}",303)
+    try:
+        send_participant_invite(db,u,s,p)
+        db.commit()
+    except LiveParticipantInvitationConflict as error:
+        db.rollback()
+        raise HTTPException(400,"This participant already has a live invitation for this study. Use Re-send only if a replacement is required.") from error
+    return RedirectResponse(f"/studies/{s.id}",303)
 @app.post("/participant-invitations/{invitation_id}/revoke")
 def revoke_participant_invite(invitation_id:int,u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     inv = resolve_org_scoped_invitation(db, u.organisation_id, invitation_id)
@@ -3592,7 +3756,17 @@ def resend_participant_invite(invitation_id:int,u=Depends(roles("owner","admin",
     inv = resolve_org_scoped_invitation(db, u.organisation_id, invitation_id)
     if not inv: raise HTTPException(404)
     require_study_permission(db,u,study(db,inv.study_id,u.organisation_id),edit=True)
-    mark_invitation_revoked(inv, now()); send_participant_invite(db,u,study(db,inv.study_id,u.organisation_id),participant(db,inv.participant_id,u.organisation_id)); return RedirectResponse(f"/studies/{inv.study_id}",303)
+    mark_invitation_revoked(inv, now())
+    # Make the explicit supersession visible before the common live-invitation
+    # guard rechecks this participant scope.
+    db.flush()
+    try:
+        send_participant_invite(db,u,study(db,inv.study_id,u.organisation_id),participant(db,inv.participant_id,u.organisation_id))
+        db.commit()
+    except LiveParticipantInvitationConflict as error:
+        db.rollback()
+        raise HTTPException(409,"This participant has another live invitation for this study. Review the invitation records before resending.") from error
+    return RedirectResponse(f"/studies/{inv.study_id}",303)
 
 @app.get("/join-study",response_class=HTMLResponse)
 def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
@@ -3662,6 +3836,11 @@ def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),rev
         raise HTTPException(409, str(error)) from error
     if documents and not all((reviewed_participant_information, reviewed_privacy_notice, reviewed_consent_text)):
         raise HTTPException(400, "Read each study-specific document before consenting.")
+    try:
+        ensure_invitation_can_be_accepted(db, inv, now())
+    except LiveParticipantInvitationConflict as error:
+        db.rollback()
+        raise HTTPException(409, "This participant study access needs administrator review.") from error
     capture_consent_document_evidence(inv, governance)
     grant_participant_consent(inv, p, now())
     audit(db, inv.organisation_id, None, "participant.invitation_accepted", "participant", p.id)

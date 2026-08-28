@@ -935,10 +935,10 @@ def test_incomplete_governance_invalidates_current_bundle_without_changing_histo
 
         blocked = post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False)
         assert blocked.status_code == 400
-        assert 'consent documents' in blocked.text.lower()
+        assert 'already has a live invitation for this study' in blocked.text.lower()
 
         assert post_with_csrf(f'/studies/{study_id}/governance', data=_controller_governance_payload('2.0'), follow_redirects=False).status_code == 303
-        assert post_with_csrf(f'/studies/{study_id}/invite/{participant_id}', follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/participant-invitations/{invitation_a.id}/resend', follow_redirects=False).status_code == 303
         with SessionLocal() as db:
             invitation_b = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id).order_by(ParticipantInvitation.id.desc()))
             historical = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == participant_id, ParticipantInvitation.study_id == study_id).order_by(ParticipantInvitation.id.asc()))
@@ -4504,7 +4504,7 @@ def test_invitation_routes_preserve_invite_revoke_resend_behaviour():
             follow_redirects=False,
         )
         assert duplicate_invite.status_code == 400
-        assert 'A live invitation already exists' in duplicate_invite.text
+        assert 'already has a live invitation for this study' in duplicate_invite.text
 
         with SessionLocal() as db:
             active_invitation = db.scalar(
@@ -4543,6 +4543,348 @@ def test_invitation_routes_preserve_invite_revoke_resend_behaviour():
             assert len(invitations) >= 2
             assert invitations[-1].id != invitation_id
             assert invitations[-1].revoked_at is None
+
+
+def test_normal_invite_rejects_a_second_invitation_after_the_first_is_accepted():
+    """Regression for the production 409: accepted invitations remain live."""
+    from app.models import ParticipantInvitation
+
+    with client:
+        auth()
+        created = post_with_csrf(
+            '/participants',
+            data={
+                'reference': unique_value('ACCEPTED-INVITE').upper(),
+                'name': 'Accepted invitation participant',
+                'email': f"{unique_value('accepted-invite')}@example.org",
+                'phone': '',
+                'status_value': 'prospective',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+            },
+            follow_redirects=False,
+        )
+        participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
+        study_id = int(client.get('/studies').text.split('/studies/')[1].split('"')[0])
+        assert post_with_csrf(
+            f'/studies/{study_id}/enrol',
+            data={'participant_id': participant_id},
+            follow_redirects=False,
+        ).status_code == 303
+        assert post_with_csrf(
+            f'/studies/{study_id}/invite/{participant_id}',
+            follow_redirects=False,
+        ).status_code == 303
+
+        with SessionLocal() as db:
+            first = db.scalar(
+                select(ParticipantInvitation).where(
+                    ParticipantInvitation.study_id == study_id,
+                    ParticipantInvitation.participant_id == participant_id,
+                )
+            )
+            assert first is not None
+            first.accepted_at = now()
+            db.commit()
+
+        blocked = post_with_csrf(
+            f'/studies/{study_id}/invite/{participant_id}',
+            follow_redirects=False,
+        )
+        assert blocked.status_code == 400
+        assert 'already has a live invitation for this study' in blocked.text
+        with SessionLocal() as db:
+            assert db.scalar(
+                select(func.count(ParticipantInvitation.id)).where(
+                    ParticipantInvitation.study_id == study_id,
+                    ParticipantInvitation.participant_id == participant_id,
+                )
+            ) == 1
+
+
+def test_invitation_service_enforces_one_live_invitation_but_allows_safe_scopes():
+    from app.models import Participant, Project, Study
+    from app.participant_services import (
+        LiveParticipantInvitationConflict,
+        create_participant_invitation,
+        mark_invitation_revoked,
+    )
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert owner is not None
+        first_study = db.scalar(select(Study).where(Study.organisation_id == owner.organisation_id))
+        assert first_study is not None
+        first_participant = Participant(
+            organisation_id=owner.organisation_id,
+            reference=unique_value('INV-SCOPE').upper(),
+            name='Invitation scope participant',
+            email=f"{unique_value('inv-scope')}@example.org",
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            created_by_id=owner.id,
+        )
+        second_participant = Participant(
+            organisation_id=owner.organisation_id,
+            reference=unique_value('INV-SCOPE-2').upper(),
+            name='Second invitation scope participant',
+            email=f"{unique_value('inv-scope-2')}@example.org",
+            status='prospective',
+            consent_status='pending',
+            communication_preference='email',
+            created_by_id=owner.id,
+        )
+        project = db.scalar(select(Project).where(Project.organisation_id == owner.organisation_id))
+        assert project is not None
+        second_study = Study(
+            organisation_id=owner.organisation_id,
+            project_id=project.id,
+            title=unique_value('Second invitation scope study'),
+            code=unique_value('INV-SCOPE-STUDY').upper(),
+            description='',
+            methodology='diary',
+            status='recruiting',
+            created_by_id=owner.id,
+        )
+        db.add_all([first_participant, second_participant, second_study])
+        db.flush()
+        first, _ = create_participant_invitation(
+            db, owner.organisation_id, first_participant.id, first_study.id,
+            owner.id, now() + timedelta(days=1),
+        )
+        with pytest.raises(LiveParticipantInvitationConflict):
+            create_participant_invitation(
+                db, owner.organisation_id, first_participant.id, first_study.id,
+                owner.id, now() + timedelta(days=1),
+            )
+        mark_invitation_revoked(first, now())
+        replacement, _ = create_participant_invitation(
+            db, owner.organisation_id, first_participant.id, first_study.id,
+            owner.id, now() + timedelta(days=1),
+        )
+        assert replacement.id != first.id
+        different_study, _ = create_participant_invitation(
+            db, owner.organisation_id, first_participant.id, second_study.id,
+            owner.id, now() + timedelta(days=1),
+        )
+        different_participant, _ = create_participant_invitation(
+            db, owner.organisation_id, second_participant.id, first_study.id,
+            owner.id, now() + timedelta(days=1),
+        )
+        assert different_study.study_id == second_study.id
+        assert different_participant.participant_id == second_participant.id
+        db.commit()
+
+
+def test_participant_invitation_scope_lock_compiles_to_a_postgresql_row_lock():
+    from sqlalchemy.dialects import postgresql
+    from app.participant_services import participant_invitation_scope_lock_statement
+
+    statement = participant_invitation_scope_lock_statement(
+        organisation_id=41,
+        participant_id=99,
+    )
+    assert 'FOR UPDATE' in str(statement.compile(dialect=postgresql.dialect()))
+
+
+def _create_duplicate_live_accepted_invitations_for_platform_review():
+    from app.models import Participant, ParticipantInvitation, Study, StudyEnrolment
+    from app.security import new_token, token_hash
+
+    with SessionLocal() as db:
+        administrator = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert administrator is not None
+        study_row = db.scalar(select(Study).where(Study.organisation_id == administrator.organisation_id))
+        assert study_row is not None
+        participant_row = Participant(
+            organisation_id=administrator.organisation_id,
+            reference=unique_value('DUP-INV').upper(),
+            name='Duplicate invitation participant',
+            email=f"{unique_value('duplicate-invitation')}@example.org",
+            status='active',
+            consent_status='granted',
+            communication_preference='email',
+            created_by_id=administrator.id,
+        )
+        db.add(participant_row)
+        db.flush()
+        db.add(StudyEnrolment(
+            organisation_id=administrator.organisation_id,
+            study_id=study_row.id,
+            participant_id=participant_row.id,
+            status='enrolled',
+        ))
+        invitations = []
+        for _ in range(2):
+            invitation = ParticipantInvitation(
+                organisation_id=administrator.organisation_id,
+                participant_id=participant_row.id,
+                study_id=study_row.id,
+                token_hash=token_hash(new_token()),
+                expires_at=now() + timedelta(days=1),
+                accepted_at=now(),
+                invited_by_id=administrator.id,
+            )
+            db.add(invitation)
+            invitations.append(invitation)
+        db.commit()
+        return (
+            administrator.organisation_id,
+            participant_row.id,
+            study_row.id,
+            [invitation.id for invitation in invitations],
+        )
+
+
+def test_platform_admin_can_review_and_explicitly_remediate_duplicate_invitations():
+    from app.models import AuditEvent, ParticipantInvitation
+
+    organisation_id, participant_id, study_id, invitation_ids = (
+        _create_duplicate_live_accepted_invitations_for_platform_review()
+    )
+    with client:
+        with SessionLocal() as db:
+            administrator = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            assert administrator is not None
+            administrator.is_platform_admin = False
+            db.commit()
+        client.cookies.clear()
+        auth()
+        assert client.get('/admin/participant-invitation-integrity', follow_redirects=False).status_code == 404
+        with SessionLocal() as db:
+            administrator = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            assert administrator is not None
+            administrator.is_platform_admin = True
+            db.commit()
+        client.cookies.clear()
+        auth()
+        listing = client.get('/admin/participant-invitation-integrity')
+        assert listing.status_code == 200
+        assert str(participant_id) in listing.text
+        assert f'/admin/participant-invitation-integrity/{organisation_id}/{participant_id}/{study_id}' in listing.text
+        review = client.get(
+            f'/admin/participant-invitation-integrity/{organisation_id}/{participant_id}/{study_id}'
+        )
+        assert review.status_code == 200
+        assert all(str(invitation_id) in review.text for invitation_id in invitation_ids)
+        assert 'duplicate-invitation' not in review.text
+        fingerprint = re.search(r'name="review_fingerprint" value="([a-f0-9]+)"', review.text)
+        assert fingerprint is not None
+        response = post_with_csrf(
+            f'/admin/participant-invitation-integrity/{organisation_id}/{participant_id}/{study_id}/resolve',
+            data={
+                'retained_invitation_id': invitation_ids[0],
+                'review_fingerprint': fingerprint.group(1),
+                'confirm_revoke': 'true',
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        with SessionLocal() as db:
+            invitations = db.scalars(
+                select(ParticipantInvitation).where(ParticipantInvitation.id.in_(invitation_ids))
+            ).all()
+            retained = next(row for row in invitations if row.id == invitation_ids[0])
+            revoked = next(row for row in invitations if row.id != invitation_ids[0])
+            assert retained.revoked_at is None
+            assert revoked.revoked_at is not None
+            assert db.scalar(select(func.count(AuditEvent.id)).where(
+                AuditEvent.action == 'platform_admin.participant_invitation_duplicates_remediated',
+                AuditEvent.actor_user_id.is_not(None),
+            )) >= 1
+
+
+def test_participant_invitation_integrity_is_not_available_to_customer_roles_or_anonymous():
+    from app.models import OrganisationMembership
+    from app.security import hash_password
+
+    credentials = []
+    with SessionLocal() as db:
+        organisation_id = db.scalar(select(User.organisation_id).where(User.email == 'admin@politis.local'))
+        assert organisation_id is not None
+        for role in ('owner', 'admin', 'researcher'):
+            email = f"{unique_value(f'integrity-{role}')}@example.org"
+            user = User(
+                organisation_id=organisation_id,
+                name=f'Integrity {role}',
+                email=email,
+                password_hash=hash_password('CustomerPass123!'),
+                role=role,
+                is_platform_admin=False,
+            )
+            db.add(user)
+            db.flush()
+            db.add(OrganisationMembership(
+                user_id=user.id,
+                organisation_id=organisation_id,
+                role=role,
+            ))
+            credentials.append((email, 'CustomerPass123!'))
+        db.commit()
+
+    with client:
+        client.cookies.clear()
+        assert client.get('/admin/participant-invitation-integrity', follow_redirects=False).status_code == 303
+        for email, password in credentials:
+            client.cookies.clear()
+            assert login_as(email, password).status_code == 303
+            assert client.get('/admin/participant-invitation-integrity', follow_redirects=False).status_code == 404
+
+
+def test_platform_invitation_remediation_rejects_missing_csrf_stale_reviews_and_unrelated_ids():
+    from app.models import ParticipantInvitation
+
+    organisation_id, participant_id, study_id, invitation_ids = (
+        _create_duplicate_live_accepted_invitations_for_platform_review()
+    )
+    with client:
+        with SessionLocal() as db:
+            administrator = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            assert administrator is not None
+            administrator.is_platform_admin = True
+            db.commit()
+        client.cookies.clear()
+        auth()
+        review_url = f'/admin/participant-invitation-integrity/{organisation_id}/{participant_id}/{study_id}'
+        review = client.get(review_url)
+        fingerprint = re.search(r'name="review_fingerprint" value="([a-f0-9]+)"', review.text)
+        assert fingerprint is not None
+        resolve_url = f'{review_url}/resolve'
+        denied = client.post(resolve_url, data={
+            'csrf_token': 'invalid',
+            'retained_invitation_id': invitation_ids[0],
+            'review_fingerprint': fingerprint.group(1),
+            'confirm_revoke': 'true',
+        })
+        assert denied.status_code == 403
+        with SessionLocal() as db:
+            invitation = db.get(ParticipantInvitation, invitation_ids[1])
+            assert invitation is not None
+            invitation.expires_at = now() + timedelta(days=2)
+            db.commit()
+        stale = post_with_csrf(resolve_url, data={
+            'retained_invitation_id': invitation_ids[0],
+            'review_fingerprint': fingerprint.group(1),
+            'confirm_revoke': 'true',
+        }, follow_redirects=False)
+        assert stale.status_code == 409
+        fresh_review = client.get(review_url)
+        fresh_fingerprint = re.search(r'name="review_fingerprint" value="([a-f0-9]+)"', fresh_review.text)
+        assert fresh_fingerprint is not None
+        unrelated = post_with_csrf(resolve_url, data={
+            'retained_invitation_id': invitation_ids[0] + 999999,
+            'review_fingerprint': fresh_fingerprint.group(1),
+            'confirm_revoke': 'true',
+        }, follow_redirects=False)
+        assert unrelated.status_code == 404
+        with SessionLocal() as db:
+            assert all(
+                row.revoked_at is None
+                for row in db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.id.in_(invitation_ids)))
+            )
 
 
 def test_grant_participant_consent_sets_accepted_at_when_absent():

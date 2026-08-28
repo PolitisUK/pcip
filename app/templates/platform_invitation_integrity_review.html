@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Review duplicate participant invitations{% endblock %}
+{% block page_description %}<p class="page-description">Choose the invitation that should remain active. The other live accepted invitations in this exact group will be revoked; historical records, consent, enrolment and research material are not deleted.</p>{% endblock %}
+{% block content %}
+<section class="card section card--data">
+  <dl class="details-list">
+    <dt>Organisation ID</dt><dd>{{ organisation_id }}</dd>
+    <dt>Participant ID</dt><dd>{{ participant_id }}</dd>
+    <dt>Study</dt><dd>{{ study_id }} · {{ study_title }}</dd>
+    <dt>Enrolment</dt><dd>{{ enrolment.status if enrolment else 'No enrolment record' }}</dd>
+    <dt>Participant consent status</dt><dd>{{ participant_consent_status }}</dd>
+  </dl>
+</section>
+<section class="card section card--data">
+  <h2>Choose the invitation to retain</h2>
+  <form method="post" action="/admin/participant-invitation-integrity/{{ organisation_id }}/{{ participant_id }}/{{ study_id }}/resolve">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="review_fingerprint" value="{{ review_fingerprint }}">
+    <table class="table">
+      <thead><tr><th>Retain</th><th>Invitation ID</th><th>Created</th><th>Accepted</th><th>Revoked</th><th>Expires</th></tr></thead>
+      <tbody>
+      {% for invitation in invitations %}
+      <tr>
+        <td><input type="radio" name="retained_invitation_id" value="{{ invitation.id }}" required aria-label="Retain invitation {{ invitation.id }}"></td>
+        <td>{{ invitation.id }}</td><td>{{ invitation.created_at }}</td><td>{{ invitation.accepted_at }}</td><td>{{ invitation.revoked_at or 'Not revoked' }}</td><td>{{ invitation.expires_at }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <label class="control-row"><input type="checkbox" name="confirm_revoke" value="true" required><span>I confirm that every other live accepted invitation shown above should be revoked.</span></label>
+    <button class="danger" type="submit">Retain selected invitation and revoke redundant invitations</button>
+  </form>
+</section>
+{% endblock %}
