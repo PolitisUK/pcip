@@ -381,13 +381,14 @@ h3 {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
   gap: var(--space-4);
 }
 
 .summary-card {
   background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
   border: 1px solid #d6e0ef;
+  min-inline-size: 0;
   min-height: 140px;
   display: grid;
   gap: var(--space-2);
@@ -411,8 +412,11 @@ h3 {
 }
 
 .summary-value {
-  font-size: clamp(1.8rem, 2.8vw, 2.6rem);
-  line-height: 1;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  font-size: clamp(1.35rem, 2.1vw, 2.4rem);
+  line-height: 1.1;
   font-weight: 700;
   color: var(--text);
 }
@@ -1898,6 +1902,76 @@ fieldset.field legend {
   outline: 3px solid var(--color-focus);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+.methodology-options,
+.methodology-guidance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.methodology-choice,
+.methodology-guidance-card {
+  min-inline-size: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  padding: var(--space-3);
+}
+
+.methodology-choice {
+  display: grid;
+  grid-template-columns: 1.2rem minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: start;
+  width: 100%;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.methodology-choice:hover {
+  border-color: #a9bddb;
+  background: #f8fbff;
+}
+
+.methodology-choice:has(input:focus-visible) {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.methodology-choice input[type="checkbox"],
+.methodology-choice input[type="radio"] {
+  inline-size: 1.1rem;
+  block-size: 1.1rem;
+  min-inline-size: 1.1rem;
+  margin: 0.25rem 0 0;
+  accent-color: var(--brand-800);
+}
+
+.methodology-choice__content {
+  min-inline-size: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.methodology-choice__title {
+  color: var(--text);
+  font-size: var(--type-base);
+  line-height: 1.35;
+}
+
+.methodology-choice__description,
+.methodology-choice__supports {
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+  line-height: 1.45;
+}
+
+.methodology-choice__supports > span {
+  color: var(--text);
+  font-weight: 650;
 }
 
 .breadcrumbs {

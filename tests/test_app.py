@@ -8787,6 +8787,47 @@ def test_study_protocol_builder_separates_method_layers_and_exposes_repeatable_c
         assert 'Allow multiple participant entries' in page.text
 
 
+def test_protocol_builder_renders_complete_decision_support_without_narrow_radio_grid_content():
+    from app.main import protocol_builder_options
+
+    options = protocol_builder_options()
+    expected_groups = {
+        'research_philosophies',
+        'research_designs',
+        'evidence_methods',
+        'analysis_approaches',
+        'theoretical_orientations',
+    }
+    assert set(options) == expected_groups
+    for group in expected_groups:
+        assert options[group]
+        assert all(item['label'] and item['description'] and item['supports'] for item in options[group])
+
+    with client:
+        auth()
+        page = client.get('/studies/1')
+
+    assert page.status_code == 200
+    assert 'class="methodology-choice"' in page.text
+    assert 'class="methodology-choice__content"' in page.text
+    assert 'Typically supports:' in page.text
+    assert 'Knowledge is understood as socially situated and constructed' in page.text
+    assert 'post-positivist work also recognises uncertainty' in page.text
+    assert 'purposeful combinations of qualitative and quantitative methods' in page.text
+
+
+def test_methodology_choices_and_study_summary_values_use_overflow_safe_layouts():
+    css = Path('app/static/app.css').read_text()
+
+    assert 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));' in css
+    assert '.summary-value {' in css
+    assert 'overflow-wrap: anywhere;' in css
+    assert '.methodology-choice {' in css
+    assert 'grid-template-columns: 1.2rem minmax(0, 1fr);' in css
+    assert '.methodology-choice__content {' in css
+    assert 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr));' in css
+
+
 def test_canonical_methodology_dimensions_preserve_legacy_and_derive_ai_mapping():
     from app.models import Study, StudyMethodologyConfiguration
 
