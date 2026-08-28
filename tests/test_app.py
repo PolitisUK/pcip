@@ -217,19 +217,21 @@ def test_login_uses_transparent_citizen_centric_wordmark():
     assert 'mobile/participant-app/assets/citizen-centric-logo.png' not in dockerfile
 
 
-def test_public_footer_uses_transparent_wordmark_without_filter_or_low_contrast_overrides():
+def test_public_footer_uses_a_visible_high_contrast_wordmark_without_a_png_mask():
     css = Path('app/static/app.css').read_text()
     footer = Path('app/templates/_public_footer.html').read_text()
 
     assert 'brand-logo--on-blue' not in footer
     assert 'role="img" aria-label="Citizen Centric by Politis"' in footer
-    assert 'brightness(0) invert(1)' not in css
     assert '.public-nav a,\n.public-footer a' not in css
     assert '.public-footer-brand p {\n  max-width: 390px;\n  margin: 22px 0 0;\n  color: #e5efff;' in css
     assert '.public-footer-group h2 {\n  margin: 0 0 6px;\n  color: #fff;' in css
     assert '.public-footer-bottom small {\n  color: #e5efff;' in css
     assert css.index('.public-footer a {') > css.index('.public-footer {')
-    assert '-webkit-mask: url("/static/citizen-centric-logo.png") center / contain no-repeat;' in css
+    assert '.public-footer .brand-logo--wordmark {\n  width: 100%;\n  height: auto;' in css
+    assert 'filter: brightness(0) invert(1);' in css
+    assert '-webkit-mask:' not in css
+    assert 'mask:' not in css
 
 
 def test_public_homepage_is_available_without_authentication_and_keeps_workspace_data_private():

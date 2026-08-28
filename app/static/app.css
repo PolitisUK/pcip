@@ -1830,19 +1830,13 @@ button.is-loading::after,
 .public-footer .brand-logo--wordmark {
   width: 100%;
   height: auto;
-}
-
-@supports ((-webkit-mask-image: url("/static/citizen-centric-logo.png")) or (mask-image: url("/static/citizen-centric-logo.png"))) {
-  .public-footer .footer-wordmark {
-    aspect-ratio: 900 / 204;
-    background: #fff;
-    -webkit-mask: url("/static/citizen-centric-logo.png") center / contain no-repeat;
-    mask: url("/static/citizen-centric-logo.png") center / contain no-repeat;
-  }
-
-  .public-footer .footer-wordmark img {
-    visibility: hidden;
-  }
+  /*
+   * Keep the transparent PNG as an image rather than a CSS mask.  iOS Safari
+   * can report PNG-mask support while failing to apply the mask, which leaves
+   * only the white fallback rectangle visible.  Filtering the image preserves
+   * its alpha channel and gives the footer a reliably high-contrast wordmark.
+   */
+  filter: brightness(0) invert(1);
 }
 
 .text-link {
