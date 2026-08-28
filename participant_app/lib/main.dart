@@ -2,6 +2,7 @@
 // allowing the style-only lint to obscure correctness diagnostics.
 // ignore_for_file: curly_braces_in_flow_control_structures, use_null_aware_elements
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -31,10 +32,16 @@ abstract class ParticipantApi {
 }
 
 class ApiError implements Exception {
-  const ApiError(this.message, {this.retryable = true, this.category});
+  const ApiError(
+    this.message, {
+    this.retryable = true,
+    this.category,
+    this.statusCode,
+  });
   final String message;
   final bool retryable;
   final String? category;
+  final int? statusCode;
 }
 
 const _allowLocalQaHttp = bool.fromEnvironment('PCIP_LOCAL_QA');
@@ -123,9 +130,11 @@ String mediaContentType(String filename, String kind) {
 }
 
 class Api implements ParticipantApi {
-  Api(this.base, this.token);
+  Api(this.base, this.token, {http.Client? client})
+    : _client = client ?? http.Client();
   final Uri base;
   final String? token;
+  final http.Client _client;
   Future<Map<String, dynamic>> request(
     String method,
     String path, {
@@ -142,16 +151,55 @@ class Api implements ParticipantApi {
         if (idempotencyKey case final key?) 'Idempotency-Key': key,
       })
       ..body = body == null ? '' : jsonEncode(body);
-    final x = await http.Response.fromStream(await r.send());
-    if (x.statusCode == 401) throw const ApiError('Your session has ended.');
+    late http.Response x;
+    try {
+      x = await http.Response.fromStream(await _client.send(r));
+    } on SocketException {
+      throw ApiError(
+        'A network connection is unavailable.',
+        category: 'network',
+      );
+    } on TimeoutException {
+      throw const ApiError(
+        'The service connection timed out.',
+        category: 'timeout',
+      );
+    } on http.ClientException {
+      throw const ApiError(
+        'A network connection is unavailable.',
+        category: 'network',
+      );
+    }
+    if (x.statusCode == 401) {
+      throw const ApiError(
+        'Your session has ended.',
+        retryable: false,
+        category: 'session_ended',
+        statusCode: 401,
+      );
+    }
     if (x.statusCode == 400 && path == '/api/v1/participant/session/exchange')
       throw const ApiError(
         'This app code is invalid, expired or already used.',
+        retryable: false,
+        category: 'invitation_rejected',
+        statusCode: 400,
       );
-    if (x.statusCode < 200 || x.statusCode > 299)
-      throw const ApiError(
+    if (x.statusCode == 429 || x.statusCode >= 500) {
+      throw ApiError(
+        'The service is temporarily unavailable. Please try again.',
+        category: x.statusCode == 429 ? 'rate_limited' : 'server_error',
+        statusCode: x.statusCode,
+      );
+    }
+    if (x.statusCode < 200 || x.statusCode > 299) {
+      throw ApiError(
         'We could not complete that safely. Please try again.',
+        retryable: false,
+        category: 'request_rejected',
+        statusCode: x.statusCode,
       );
+    }
     return Map<String, dynamic>.from(jsonDecode(x.body));
   }
 
@@ -1854,15 +1902,23 @@ class _TextActivityState extends State<TextActivity> {
         );
         status = 'Draft saved.';
       }
+    } on ApiError catch (error) {
+      if (error.retryable) {
+        await Queue.add({
+          'activity_id': widget.item['activity_id'],
+          'answer': text.text,
+          'idempotency_key': id,
+          if (location != null) 'location': location,
+          'attempts': 0,
+        });
+        status = 'Saved on this device. We will retry when you reconnect.';
+      } else if (error.category == 'session_ended') {
+        status = 'Your session has ended. Sign in again before submitting this entry.';
+      } else {
+        status = 'We could not submit this entry. Please try again or contact your research team.';
+      }
     } catch (_) {
-      await Queue.add({
-        'activity_id': widget.item['activity_id'],
-        'answer': text.text,
-        'idempotency_key': id,
-        if (location != null) 'location': location,
-        'attempts': 0,
-      });
-      status = 'Saved on this device. We will retry when you reconnect.';
+      status = 'We could not submit this entry. Please try again or contact your research team.';
     }
     if (mounted) setState(() => working = false);
   }

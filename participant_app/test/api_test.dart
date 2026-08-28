@@ -1,6 +1,22 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:participant_app/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+class _StatusClient extends http.BaseClient {
+  _StatusClient(this.statusCode);
+  final int statusCode;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async =>
+      http.StreamedResponse(
+        Stream.value(utf8.encode('{}')),
+        statusCode,
+        request: request,
+      );
+}
 
 void main() {
   test('non HTTPS endpoints fail closed before a request is sent', () async {
@@ -67,6 +83,61 @@ void main() {
     expect(Queue.backoff(0), const Duration(seconds: 1));
     expect(Queue.backoff(3), const Duration(seconds: 8));
     expect(Queue.backoff(99), const Duration(seconds: 64));
+  });
+
+  test(
+    'API error classification queues only transient server responses',
+    () async {
+      for (final status in [429, 500]) {
+        final api = Api(
+          Uri.parse('https://citizencentric.co.uk'),
+          'synthetic',
+          client: _StatusClient(status),
+        );
+        await expectLater(
+          api.request('POST', '/api/v1/participant/activities/1/submit'),
+          throwsA(
+            isA<ApiError>()
+                .having((error) => error.retryable, 'retryable', isTrue)
+                .having((error) => error.statusCode, 'status', status),
+          ),
+        );
+      }
+    },
+  );
+
+  test('API error classification does not queue rejected requests', () async {
+    for (final status in [400, 403, 404, 409, 422]) {
+      final api = Api(
+        Uri.parse('https://citizencentric.co.uk'),
+        'synthetic',
+        client: _StatusClient(status),
+      );
+      await expectLater(
+        api.request('POST', '/api/v1/participant/activities/1/submit'),
+        throwsA(
+          isA<ApiError>()
+              .having((error) => error.retryable, 'retryable', isFalse)
+              .having((error) => error.statusCode, 'status', status),
+        ),
+      );
+    }
+  });
+
+  test('expired sessions remain non-retryable and require sign-in', () async {
+    final api = Api(
+      Uri.parse('https://citizencentric.co.uk'),
+      'synthetic',
+      client: _StatusClient(401),
+    );
+    await expectLater(
+      api.request('POST', '/api/v1/participant/activities/1/submit'),
+      throwsA(
+        isA<ApiError>()
+            .having((error) => error.category, 'category', 'session_ended')
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
+    );
   });
 
   test('logout cache cleanup retains no participant data', () async {
