@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:participant_app/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,9 +12,22 @@ const _locationChannel = MethodChannel('flutter.baseflow.com/geolocator');
 Api get _api =>
     Api(Uri.parse('https://citizencentric.co.uk'), 'synthetic-token');
 
-Widget _activity() => MaterialApp(
+class _StatusClient extends http.BaseClient {
+  _StatusClient(this.statusCode);
+  final int statusCode;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async =>
+      http.StreamedResponse(
+        Stream.value(const <int>[123, 125]),
+        statusCode,
+        request: request,
+      );
+}
+
+Widget _activity({Api? api}) => MaterialApp(
   home: TextActivity(
-    api: _api,
+    api: api ?? _api,
     item: const {
       'activity_id': 71,
       'title': 'Optional location diary',
@@ -61,6 +75,88 @@ void main() {
     expect(find.text('Location added'), findsNothing);
     expect(find.text('Submit response'), findsOneWidget);
   });
+
+  testWidgets('transient server failure preserves the entry and queues it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _activity(
+        api: Api(
+          Uri.parse('https://citizencentric.co.uk'),
+          'synthetic',
+          client: _StatusClient(500),
+        ),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'A durable entry');
+    await tester.tap(find.text('Submit response'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Saved on this device. We will retry when you reconnect.'),
+      findsOneWidget,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getStringList('submission_queue'), hasLength(1));
+  });
+
+  testWidgets('server rejection leaves the draft but does not queue it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _activity(
+        api: Api(
+          Uri.parse('https://citizencentric.co.uk'),
+          'synthetic',
+          client: _StatusClient(422),
+        ),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'A valid local draft');
+    await tester.tap(find.text('Submit response'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'We could not submit this entry. Please try again or contact your research team.',
+      ),
+      findsOneWidget,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getStringList('submission_queue'), isNull);
+    expect(prefs.getString('draft_71'), contains('A valid local draft'));
+  });
+
+  testWidgets(
+    'expired session does not queue and directs the participant to sign in',
+    (tester) async {
+      await tester.pumpWidget(
+        _activity(
+          api: Api(
+            Uri.parse('https://citizencentric.co.uk'),
+            'synthetic',
+            client: _StatusClient(401),
+          ),
+        ),
+      );
+      await tester.enterText(find.byType(TextField), 'Session-protected entry');
+      await tester.tap(find.text('Submit response'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          'Your session has ended. Sign in again before submitting this entry.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        (await SharedPreferences.getInstance()).getStringList(
+          'submission_queue',
+        ),
+        isNull,
+      );
+    },
+  );
 
   testWidgets('permanently denied permission does not request again', (
     tester,

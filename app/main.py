@@ -2592,7 +2592,7 @@ def create_study(project_id:int,title:str=Form(...),code:str=Form(...),descripti
     try: db.flush(); audit(db,u.organisation_id,u.id,"study.created","study",s.id,s.title); db.commit()
     except Exception: db.rollback(); raise HTTPException(400,"Study code must be unique.")
     return RedirectResponse(f"/studies/{s.id}",303)
-@app.get("/studies/{study_id}",response_class=HTMLResponse)
+@app.get("/studies/{study_id:int}",response_class=HTMLResponse)
 def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); permission=require_study_permission(db,u,s); p=project(db,s.project_id,u.organisation_id); acts=db.scalars(select(Activity).where(Activity.study_id==s.id,Activity.organisation_id==u.organisation_id).order_by(Activity.position)).all(); ens=db.scalars(select(StudyEnrolment).where(StudyEnrolment.study_id==s.id,StudyEnrolment.organisation_id==u.organisation_id)).all(); invs=db.scalars(select(ParticipantInvitation).where(ParticipantInvitation.study_id==s.id,ParticipantInvitation.organisation_id==u.organisation_id).order_by(ParticipantInvitation.created_at.desc())).all(); latest={}
     for i in invs: latest.setdefault(i.participant_id,i)

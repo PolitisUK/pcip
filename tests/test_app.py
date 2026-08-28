@@ -170,6 +170,16 @@ def test_login_and_dashboard():
         assert d.status_code == 200 and 'Seven-day town centre diary' in d.text
 
 
+def test_study_detail_route_requires_a_numeric_id_and_study_links_use_ids():
+    with client:
+        invalid = client.get('/studies/evidence-explorer', follow_redirects=False)
+        assert invalid.status_code == 404
+        auth()
+        studies = client.get('/studies')
+        assert studies.status_code == 200
+        assert '/studies/1' in studies.text
+
+
 def test_login_uses_transparent_citizen_centric_wordmark():
     with client:
         page = client.get('/login')
