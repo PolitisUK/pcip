@@ -452,7 +452,7 @@ jobs:
           [[ "$OPERATIONS_WORKER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Operations worker image must be an immutable sha256 digest." >&2; exit 1; }
           [[ "$OPERATIONS_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Operations worker provenance revision is invalid." >&2; exit 1; }
           az acr manifest show-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST" --query digest -o tsv | grep -qx "$OPERATIONS_WORKER_DIGEST"
-          az acr manifest list-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY" --query "[?digest=='$OPERATIONS_WORKER_DIGEST' && tags && contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')].digest | [0]" -o tsv | grep -qx "$OPERATIONS_WORKER_DIGEST"
+          az acr manifest list-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY" --query "[?digest=='$OPERATIONS_WORKER_DIGEST' && tags && contains(tags, 'operations-worker-sha-$OPERATIONS_WORKER_REVISION')].digest | [0]" -o tsv | grep -qx "$OPERATIONS_WORKER_DIGEST"
           expected_image="$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST"
           job_before=$(az containerapp job show -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" -o json)
           jq -e --arg image "$expected_image" --arg provenance "$OPERATIONS_WORKER_REVISION" --arg identity "$OPERATIONS_WORKER_IDENTITY" --arg registry "$PRODUCTION_ACR.azurecr.io" '

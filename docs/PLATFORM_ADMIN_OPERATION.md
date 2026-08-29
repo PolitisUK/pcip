@@ -33,7 +33,9 @@ worker does not log it or persist it in application data.
 Before first use, an infrastructure owner must separately approve and deploy
 `infra/production-operations.bicep` with the digest of a release that contains
 `scripts.production_operation_worker`. `imageDigest` is the independently
-approved worker artifact, not the App Service image. Supply
+approved worker artifact, not the App Service image. Publish that exact digest
+with the dedicated `operations-worker-sha-<revision>` tag; do not reuse the
+application release's `sha-<revision>` tag. Supply
 `workerProvenanceRevision` as the full commit SHA that built it, and record the
 two Bicep outputs as protected environment variables
 `PCIP_PRODUCTION_OPERATIONS_WORKER_DIGEST` and
@@ -73,8 +75,11 @@ missing worker, failed worker-artifact/provenance check, or read-back mismatch
 fails the release or rollback as incomplete; it is never silently ignored.
 Promotion and rollback deliberately retain the approved worker artifact rather
 than replacing it with an application digest that may predate the worker. They
-validate its ACR digest, its immutable `sha-<revision>` provenance tag, and the
-fixed event-driven template. The operations workflow uses the same checks.
+validate its ACR digest, its dedicated
+`operations-worker-sha-<revision>` provenance tag, and the fixed event-driven
+template. The dedicated tag namespace prevents an application release built
+from the same revision from moving the worker provenance tag to a different
+digest. The operations workflow uses the same checks.
 
 Production promotion, rollback, and the operations workflow share the GitHub
 Actions `pcip-production-control` concurrency group with cancellation disabled.
