@@ -270,6 +270,36 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "ContainerAppConsoleLogs_CL" in workflow
 
 
+def test_operations_workflow_reads_app_metadata_without_publishing_access():
+    workflow = Path(".github/workflows/production-operation.yml").read_text()
+    bicep = Path("infra/production-operations.bicep").read_text()
+    validation = workflow_step(workflow, "Validate the fixed operation and deployed release evidence")
+
+    assert "az resource show" in validation
+    assert "--resource-type Microsoft.Web/sites" in validation
+    assert "--api-version 2024-04-01" in validation
+    assert ".properties.siteConfig.linuxFxVersion // empty" in validation
+    assert ".properties.defaultHostName // empty" in validation
+    assert 'test "$configured_image" = "$expected_image"' in validation
+    assert 'test -n "$host"' in validation
+
+    forbidden = (
+        "az webapp show",
+        "list-publishing-profiles",
+        "publishxml",
+        "publishing credentials",
+        "publishing-credentials",
+        "ssh",
+        "kudu",
+    )
+    lowered = workflow.lower()
+    assert all(value not in lowered for value in forbidden)
+
+    app_reader = bicep.partition("resource operationsWorkflowAppReader")[2].partition("\n}\n")[0]
+    assert "scope: productionApp" in app_reader
+    assert "acdd72a7-3385-48ef-bd42-f606fba81ae7" in app_reader  # Azure Reader
+
+
 def test_release_and_rollback_retain_an_independently_approved_worker_artifact():
     promotion = Path(".github/workflows/promote-release.yml").read_text()
     rollback = Path(".github/workflows/rollback-release.yml").read_text()
