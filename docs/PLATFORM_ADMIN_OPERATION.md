@@ -40,10 +40,13 @@ two Bicep outputs as protected environment variables
 `PCIP_PRODUCTION_OPERATIONS_WORKER_REVISION`. This is a one-time provisioning change:
 it requires the `Microsoft.App` and `Microsoft.ServiceBus` providers, creates
 an event-driven job with no ingress, a dedicated queue with local/SAS
-authentication disabled, and grants the job identity `AcrPull`, Service Bus
+authentication disabled, and creates a dedicated user-assigned worker identity
+before the job. It grants that identity `AcrPull`, Service Bus
 **Data Receiver only on that queue**, plus **Key Vault Secrets User only at the
-existing `database-url` secret scope**. The module also creates a dedicated
-operation-log workspace. The GitHub OIDC principal has Service Bus **Data Sender
+existing `database-url` secret scope**, then attaches the same identity to the
+job for ACR, Key Vault and the event trigger. This ordering prevents the job's
+first revision from attempting an ACR pull before it has its required identity
+access. The module also creates a dedicated operation-log workspace. The GitHub OIDC principal has Service Bus **Data Sender
 only on that queue**, read-only access to the worker/App Service/ACR metadata,
 and read-only access to the dedicated operation logs. It receives no Key Vault,
 PostgreSQL, App Service write, SSH, or job-start permission. It must not change
@@ -58,7 +61,8 @@ GitHub's immutable-subject format). Store its application client ID only as the
 protected-environment variable `AZURE_PRODUCTION_OPERATIONS_CLIENT_ID`. Do not
 reuse `AZURE_CLIENT_ID`, and do not give the operations identity the existing
 resource-group Contributor role. Configure the protected-environment variables
-for the queue namespace, queue name, worker job name, and dedicated Log
+for the queue namespace, queue name, worker job name, dedicated worker identity
+resource ID (`PCIP_PRODUCTION_OPERATIONS_WORKER_IDENTITY`), and dedicated Log
 Analytics workspace ID from the Bicep outputs; none is a secret.
 
 Set the protected-environment variable `PCIP_PRODUCTION_OPERATIONS_ENABLED` to

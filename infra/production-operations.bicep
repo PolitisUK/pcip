@@ -43,6 +43,7 @@ param workerProvenanceRevision string
 param operationsWorkflowPrincipalId string
 
 var operationsLogName = '${operationsEnvironmentName}-log'
+var operationsWorkerIdentityName = '${operationsJobName}-identity'
 var imageReference = '${productionRegistry.properties.loginServer}/pcip@${imageDigest}'
 var serviceBusNamespace = '${operationsServiceBus.name}.servicebus.windows.net'
 
@@ -72,6 +73,14 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
 resource databaseUrlSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
   parent: keyVault
   name: databaseUrlSecretName
+}
+
+// This identity and its narrowly scoped access are provisioned before the job.
+// A system-assigned job identity cannot receive ACR access until after its first
+// revision succeeds, which creates an image-pull bootstrap cycle.
+resource operationsWorkerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: operationsWorkerIdentityName
+  location: location
 }
 
 resource operationsServiceBus 'Microsoft.ServiceBus/namespaces@2024-01-01' = {
@@ -116,8 +125,16 @@ resource operationsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = 
 resource operationsJob 'Microsoft.App/jobs@2025-01-01' = {
   name: operationsJobName
   location: location
+  dependsOn: [
+    operationsAcrPull
+    operationsDatabaseSecretReader
+    operationsQueueReceiver
+  ]
   identity: {
-    type: 'SystemAssigned'
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${operationsWorkerIdentity.id}': {}
+    }
   }
   properties: {
     environmentId: operationsEnvironment.id
@@ -134,7 +151,7 @@ resource operationsJob 'Microsoft.App/jobs@2025-01-01' = {
             {
               name: 'approved-operation-request'
               type: 'azure-servicebus'
-              identity: 'system'
+              identity: operationsWorkerIdentity.id
               metadata: {
                 queueName: operationsQueue.name
                 namespace: serviceBusNamespace
@@ -147,14 +164,14 @@ resource operationsJob 'Microsoft.App/jobs@2025-01-01' = {
       registries: [
         {
           server: productionRegistry.properties.loginServer
-          identity: 'system'
+          identity: operationsWorkerIdentity.id
         }
       ]
       secrets: [
         {
           name: 'database-url'
           keyVaultUrl: databaseUrlSecret.properties.secretUriWithVersion
-          identity: 'system'
+          identity: operationsWorkerIdentity.id
         }
       ]
     }
@@ -210,30 +227,30 @@ resource operationsJob 'Microsoft.App/jobs@2025-01-01' = {
 
 // The runner receives only the database URL secret, scoped to this one secret.
 resource operationsDatabaseSecretReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(databaseUrlSecret.id, operationsJob.id, 'operations-database-url-reader')
+  name: guid(databaseUrlSecret.id, operationsWorkerIdentity.id, 'operations-database-url-reader')
   scope: databaseUrlSecret
   properties: {
-    principalId: operationsJob.identity.principalId
+    principalId: operationsWorkerIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
   }
 }
 
 resource operationsAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(productionRegistry.id, operationsJob.id, 'operations-acr-pull')
+  name: guid(productionRegistry.id, operationsWorkerIdentity.id, 'operations-acr-pull')
   scope: productionRegistry
   properties: {
-    principalId: operationsJob.identity.principalId
+    principalId: operationsWorkerIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
   }
 }
 
 resource operationsQueueReceiver 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(operationsQueue.id, operationsJob.id, 'operations-queue-receiver')
+  name: guid(operationsQueue.id, operationsWorkerIdentity.id, 'operations-queue-receiver')
   scope: operationsQueue
   properties: {
-    principalId: operationsJob.identity.principalId
+    principalId: operationsWorkerIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0')
   }
@@ -292,6 +309,7 @@ resource operationsWorkflowLogReader 'Microsoft.Authorization/roleAssignments@20
 }
 
 output operationsJobResourceId string = operationsJob.id
+output operationsWorkerIdentityResourceId string = operationsWorkerIdentity.id
 output operationsLogWorkspaceId string = operationsLog.properties.customerId
 output operationsServiceBusNamespace string = serviceBusNamespace
 output operationsQueueName string = operationsQueue.name
