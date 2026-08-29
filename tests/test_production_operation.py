@@ -281,6 +281,23 @@ def test_workflow_result_contract_is_limited_to_approved_non_sensitive_fields():
     assert "existing@example.org" not in workflow
 
 
+def test_operation_result_polling_orders_by_time_and_fails_on_query_errors_but_tolerates_delay():
+    workflow = Path(".github/workflows/production-operation.yml").read_text()
+    result_step = workflow_step(workflow, "Retrieve the approved non-sensitive result")
+
+    assert "order by TimeGenerated asc" in result_step
+    assert "_timestamp_d" not in result_step
+    assert "logs=$(az monitor log-analytics query" in result_step
+    assert "2>/dev/null" not in result_step
+    assert "|| true" not in result_step
+    # A successful empty log result is polled for propagation delay; only a
+    # genuine Azure query error exits under the step's set -euo pipefail.
+    assert "set -euo pipefail" in result_step
+    assert "for attempt in {1..30}; do" in result_step
+    assert "sleep 10" in result_step
+    assert "[\"active\", \"is_platform_admin\", \"memberships\", \"user_id\"]" in result_step
+
+
 def test_operations_infrastructure_is_event_driven_and_least_privilege():
     bicep = open("infra/production-operations.bicep", encoding="utf-8").read()
 

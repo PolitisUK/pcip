@@ -149,9 +149,11 @@ jobs:
           CORRELATION_ID: ${{ steps.operation.outputs.correlation_id }}
         run: |
           set -euo pipefail
-          query="ContainerAppConsoleLogs_CL | where Log_s has '$CORRELATION_ID' | order by _timestamp_d asc | project Log_s"
+          query="ContainerAppConsoleLogs_CL | where Log_s has '$CORRELATION_ID' | order by TimeGenerated asc | project Log_s"
           for attempt in {1..30}; do
-            logs=$(az monitor log-analytics query --workspace "$OPERATIONS_LOG_WORKSPACE" --analytics-query "$query" --query '[].Log_s' -o json 2>/dev/null || true)
+            # An empty successful response is expected while logs propagate.
+            # A query failure must fail this protected operation explicitly.
+            logs=$(az monitor log-analytics query --workspace "$OPERATIONS_LOG_WORKSPACE" --analytics-query "$query" --query '[].Log_s' -o json)
             result=$(jq -r '.[]? | select(test("\\{.*\\}$")) | capture("(?<result>\\{.*\\}$").result' <<<"$logs" | tail -n 1)
             if jq -e --arg correlation "$CORRELATION_ID" '
               .correlation_id == $correlation and
