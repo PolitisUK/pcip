@@ -155,7 +155,7 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
 
     assert "workflow_dispatch:" in workflow
     assert "environment: production" in workflow
-    assert "group: pcip-production-operations" in workflow
+    assert "group: pcip-production-control" in workflow
     assert "- lookup-user-identity" in workflow
     assert "test \"$OPERATION\" = \"lookup-user-identity\"" in workflow
     assert "https://servicebus.azure.net" in workflow
@@ -173,62 +173,93 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "ContainerAppConsoleLogs_CL" in workflow
 
 
-def test_release_and_rollback_synchronize_only_an_enabled_worker_to_the_exact_immutable_digest():
+def test_release_and_rollback_retain_an_independently_approved_worker_artifact():
     promotion = Path(".github/workflows/promote-release.yml").read_text()
     rollback = Path(".github/workflows/rollback-release.yml").read_text()
-    promotion_sync = workflow_step(
+    promotion_worker_check = workflow_step(
         promotion,
-        "Synchronize the production-operations worker with the verified production image",
+        "Verify the independently pinned production-operations worker",
     )
-    rollback_sync = workflow_step(
+    rollback_worker_check = workflow_step(
         rollback,
-        "Synchronize the production-operations worker with the rollback image",
+        "Verify the independently pinned production-operations worker",
     )
 
-    assert promotion.index("Synchronize the production-operations worker") < promotion.index(
+    assert promotion.index("Verify the independently pinned production-operations worker") < promotion.index(
         "Enable the approved production Rivermere startup runner"
     )
-    assert rollback.index("Synchronize the production-operations worker") < rollback.index(
+    assert rollback.index("Verify the independently pinned production-operations worker") < rollback.index(
         "Verify rollback readiness"
     )
 
-    for sync, digest_name, mismatch_message in (
-        (promotion_sync, "IMAGE_DIGEST", "promoted immutable digest"),
-        (rollback_sync, "ROLLBACK_DIGEST", "rollback immutable digest"),
-    ):
+    for worker_check in (promotion_worker_check, rollback_worker_check):
         # Disabled/not-yet-provisioned infrastructure remains an explicit,
         # backwards-compatible skip. Enabled infrastructure fails closed.
-        assert 'case "${PRODUCTION_OPERATIONS_ENABLED:-false}" in' in sync
-        assert "''|false)" in sync
-        assert "worker digest synchronization skipped" in sync
-        assert "true)" in sync
-        assert "PCIP_PRODUCTION_OPERATIONS_ENABLED must be true or false." in sync
-        assert 'test -n "${!value}"' in sync
-        assert f'[[ "${digest_name}" =~ ^sha256:[0-9a-f]{{64}}$ ]]' in sync
-        assert f'expected_image="$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@${digest_name}"' in sync
-
-        # A patch update is preceded by a safety check and followed by a
-        # read-back check. A command error or mismatch cannot be ignored.
-        assert sync.count("az containerapp job show") == 2
-        assert sync.index("az containerapp job show") < sync.index("az containerapp job update")
-        assert sync.index("az containerapp job update") < sync.rindex("az containerapp job show")
-        assert 'az containerapp job update -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" --image "$expected_image" >/dev/null' in sync
-        assert ".properties.template.containers[0].image == $image" in sync
-        assert mismatch_message in sync
-        assert "|| true" not in sync
-        assert "--command" not in sync
-        assert "--args" not in sync
+        assert 'case "${PRODUCTION_OPERATIONS_ENABLED:-false}" in' in worker_check
+        assert "''|false)" in worker_check
+        assert "worker artifact verification skipped" in worker_check
+        assert "true)" in worker_check
+        assert "PCIP_PRODUCTION_OPERATIONS_ENABLED must be true or false." in worker_check
+        assert 'test -n "${!value}"' in worker_check
+        assert '[[ "$OPERATIONS_WORKER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]' in worker_check
+        assert '[[ "$OPERATIONS_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]]' in worker_check
+        assert 'expected_image="$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST"' in worker_check
+        assert "contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')" in worker_check
+        assert ".properties.template.containers[0].image == $image" in worker_check
+        assert '"PCIP_OPERATIONS_WORKER_PROVENANCE" and .value == $provenance' in worker_check
+        assert "az containerapp job update" not in worker_check
+        assert "az containerapp job start" not in worker_check
+        assert "|| true" not in worker_check
 
         # The fixed event-driven worker and its security-critical template
-        # survive an image-only update; a replace-style surprise fails closed.
-        assert '.identity.type == "SystemAssigned"' in sync
-        assert '.properties.configuration.triggerType == "Event"' in sync
-        assert '"scripts.production_operation_worker"' in sync
-        assert '"DATABASE_URL" and .secretRef == "database-url"' in sync
-        assert '.type == "azure-servicebus" and .identity == "system"' in sync
+        # are proven without coupling the worker digest to App Service.
+        assert '.identity.type == "SystemAssigned"' in worker_check
+        assert '.properties.configuration.triggerType == "Event"' in worker_check
+        assert '"scripts.production_operation_worker"' in worker_check
+        assert '"DATABASE_URL" and .secretRef == "database-url"' in worker_check
+        assert '.type == "azure-servicebus" and .identity == "system"' in worker_check
+
+    # Historical application rollbacks keep the approved worker, rather than
+    # replacing it with a possibly pre-worker application image.
+    assert "historical App" in rollback_worker_check
+    assert "ROLLBACK_DIGEST" not in rollback_worker_check
+    assert "IMAGE_DIGEST" not in promotion_worker_check
 
 
-def test_operations_workflow_keeps_digest_equality_and_has_no_worker_write_privilege_expansion():
+def test_all_production_control_paths_serialize_at_job_scope_without_blocking_staging():
+    promotion = Path(".github/workflows/promote-release.yml").read_text()
+    rollback = Path(".github/workflows/rollback-release.yml").read_text()
+    operation = Path(".github/workflows/production-operation.yml").read_text()
+
+    for workflow in (promotion, rollback, operation):
+        assert "group: pcip-production-control" in workflow
+        assert "cancel-in-progress: false" in workflow
+    assert "group: pcip-release-promotion" not in promotion
+    assert "group: pcip-production-operations" not in operation
+    assert "group: pcip-staging-release" in promotion
+    assert promotion.index("group: pcip-staging-release") < promotion.index("group: pcip-production-control")
+    assert operation.index("group: pcip-production-control") < operation.index(
+        "Validate the fixed operation and deployed release evidence"
+    )
+
+
+def test_operations_worker_provenance_is_immutable_and_caller_cannot_select_it():
+    workflow = Path(".github/workflows/production-operation.yml").read_text()
+    bicep = Path("infra/production-operations.bicep").read_text()
+
+    assert "PCIP_PRODUCTION_OPERATIONS_WORKER_DIGEST" in workflow
+    assert "PCIP_PRODUCTION_OPERATIONS_WORKER_REVISION" in workflow
+    assert "contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')" in workflow
+    assert "workerProvenanceRevision" in bicep
+    assert "PCIP_OPERATIONS_WORKER_PROVENANCE" in bicep
+    assert "operationsWorkerDigest" in bicep
+    assert "operationsWorkerProvenanceRevision" in bicep
+    assert "worker_image" not in workflow
+    assert "az containerapp job update" not in workflow
+    assert "az containerapp job start" not in workflow
+
+
+def test_operations_workflow_keeps_independent_worker_validation_and_no_write_privilege_expansion():
     workflow = Path(".github/workflows/production-operation.yml").read_text()
     bicep = Path("infra/production-operations.bicep").read_text()
 

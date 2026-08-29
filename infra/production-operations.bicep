@@ -30,9 +30,14 @@ param operationsServiceBusName string = 'pcip-production-operations'
 @description('Dedicated Service Bus queue name.')
 param operationsQueueName string = 'approved-operations'
 
-@description('Digest-pinned production image that contains scripts.production_operation_worker.')
+@description('Immutable approved operations-worker image; independent of the App Service rollback image.')
 @minLength(71)
 param imageDigest string
+
+@description('Full source revision used to build and approve the immutable operations-worker image.')
+@minLength(40)
+@maxLength(40)
+param workerProvenanceRevision string
 
 @description('Object ID of the dedicated GitHub OIDC service principal for approved operations.')
 param operationsWorkflowPrincipalId string
@@ -188,6 +193,10 @@ resource operationsJob 'Microsoft.App/jobs@2025-01-01' = {
               name: 'PCIP_OPERATIONS_QUEUE'
               value: operationsQueue.name
             }
+            {
+              name: 'PCIP_OPERATIONS_WORKER_PROVENANCE'
+              value: workerProvenanceRevision
+            }
           ]
           resources: {
             cpu: json('0.25')
@@ -286,3 +295,5 @@ output operationsJobResourceId string = operationsJob.id
 output operationsLogWorkspaceId string = operationsLog.properties.customerId
 output operationsServiceBusNamespace string = serviceBusNamespace
 output operationsQueueName string = operationsQueue.name
+output operationsWorkerDigest string = imageDigest
+output operationsWorkerProvenanceRevision string = workerProvenanceRevision

@@ -17,24 +17,27 @@ path is the protected **Run approved PCIP production operation** GitHub Actions
 workflow. It submits a validated request to a dedicated Azure Service Bus queue
 after the `production` environment approval. The event-driven Container Apps
 job has its own managed identity, can read only the existing `database-url` Key
-Vault secret, and runs the digest-pinned deployed image. The workflow must use
+Vault secret, and runs its separately approved digest-pinned worker image. The workflow must use
 the dedicated `AZURE_PRODUCTION_OPERATIONS_CLIENT_ID` OIDC identity; it must
 never fall back to the broader release-promotion identity.
 
 The workflow accepts one enumerated operation only: `lookup-user-identity`.
 It does not accept an arbitrary shell command, Python module, CLI flags, or SQL.
 It verifies the supplied release SHA against three consecutive production
-readiness responses and verifies the supplied immutable digest is configured on
-both App Service and the worker. The supplied email is masked, is not written to
+readiness responses, the supplied immutable application digest on App Service,
+and the separately approved immutable worker digest and source provenance on
+the Container Apps job. The supplied email is masked, is not written to
 the step summary, and is carried only in the short-lived queue message; the
 worker does not log it or persist it in application data.
 
 Before first use, an infrastructure owner must separately approve and deploy
 `infra/production-operations.bicep` with the digest of a release that contains
-`scripts.production_operation_worker`. That image is bootstrap state only: the
-protected production promotion and rollback workflows subsequently update the
-worker to the same immutable digest as App Service and read its configuration
-back before they complete. This is a one-time provisioning change:
+`scripts.production_operation_worker`. `imageDigest` is the independently
+approved worker artifact, not the App Service image. Supply
+`workerProvenanceRevision` as the full commit SHA that built it, and record the
+two Bicep outputs as protected environment variables
+`PCIP_PRODUCTION_OPERATIONS_WORKER_DIGEST` and
+`PCIP_PRODUCTION_OPERATIONS_WORKER_REVISION`. This is a one-time provisioning change:
 it requires the `Microsoft.App` and `Microsoft.ServiceBus` providers, creates
 an event-driven job with no ingress, a dedicated queue with local/SAS
 authentication disabled, and grants the job identity `AcrPull`, Service Bus
@@ -62,13 +65,23 @@ Set the protected-environment variable `PCIP_PRODUCTION_OPERATIONS_ENABLED` to
 `true` only after that infrastructure and its variables are fully provisioned.
 Until then, leave it unset or set it to `false`: promotion and rollback log an
 explicit skip so existing releases remain unaffected. When it is `true`, a
-missing worker, failed image update, or read-back mismatch fails the release or
-rollback as incomplete; it is never silently ignored. The release identity,
-not the dedicated operations identity, performs this fixed image-only update.
-It validates the event-driven trigger, fixed worker command, database-secret
-reference, managed identity, and resource limits before and after the update.
-The operations workflow continues to refuse an operation unless the worker and
-App Service report the identical immutable digest.
+missing worker, failed worker-artifact/provenance check, or read-back mismatch
+fails the release or rollback as incomplete; it is never silently ignored.
+Promotion and rollback deliberately retain the approved worker artifact rather
+than replacing it with an application digest that may predate the worker. They
+validate its ACR digest, its immutable `sha-<revision>` provenance tag, and the
+fixed event-driven template. The operations workflow uses the same checks.
+
+Production promotion, rollback, and the operations workflow share the GitHub
+Actions `pcip-production-control` concurrency group with cancellation disabled.
+The promotion job acquires it only after staging has completed, so staging work
+does not block a lookup. A lookup queued while a release or rollback is running
+does not validate or enqueue until it acquires that slot, then rechecks the live
+application and worker evidence. Conversely, a release or rollback waits for a
+running lookup to finish. A failed release leaves the control group available
+only after its cleanup has completed; any subsequent lookup performs fresh
+validation. There is no Azure-side lock and the operations identity still has
+no permission to alter or start the worker.
 
 The execution sequence is:
 

@@ -18,7 +18,7 @@ on:
         required: true
         type: string
       production_image_digest:
-        description: Immutable digest configured on the currently deployed production App Service and operations worker.
+        description: Immutable digest configured on the currently deployed production App Service.
         required: true
         type: string
       operation_operator:
@@ -30,14 +30,15 @@ permissions:
   contents: read
   id-token: write
 
-concurrency:
-  group: pcip-production-operations
-  cancel-in-progress: false
-
 jobs:
   run-approved-operation:
     runs-on: ubuntu-latest
     environment: production
+    # Acquired before validation, so a queued request revalidates the actual
+    # production state after a release or rollback has finished.
+    concurrency:
+      group: pcip-production-control
+      cancel-in-progress: false
     env:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
       PRODUCTION_APP: ${{ vars.PCIP_PRODUCTION_APP }}
@@ -47,6 +48,8 @@ jobs:
       OPERATIONS_SERVICEBUS_NAMESPACE: ${{ vars.PCIP_PRODUCTION_OPERATIONS_SERVICEBUS_NAMESPACE }}
       OPERATIONS_QUEUE: ${{ vars.PCIP_PRODUCTION_OPERATIONS_QUEUE }}
       OPERATIONS_LOG_WORKSPACE: ${{ vars.PCIP_PRODUCTION_OPERATIONS_LOG_WORKSPACE }}
+      OPERATIONS_WORKER_DIGEST: ${{ vars.PCIP_PRODUCTION_OPERATIONS_WORKER_DIGEST }}
+      OPERATIONS_WORKER_REVISION: ${{ vars.PCIP_PRODUCTION_OPERATIONS_WORKER_REVISION }}
       OPERATION: ${{ inputs.operation }}
       OPERATION_EMAIL: ${{ inputs.email }}
       RELEASE_SHA: ${{ inputs.release_sha }}
@@ -68,29 +71,34 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/main" || { echo "Production operations must be dispatched from main." >&2; exit 1; }
-          for value in AZURE_RESOURCE_GROUP PRODUCTION_APP PRODUCTION_ACR OPERATIONS_AZURE_CLIENT_ID OPERATIONS_JOB OPERATIONS_SERVICEBUS_NAMESPACE OPERATIONS_QUEUE OPERATIONS_LOG_WORKSPACE RELEASE_SHA PRODUCTION_IMAGE_DIGEST OPERATION_OPERATOR; do
+          for value in AZURE_RESOURCE_GROUP PRODUCTION_APP PRODUCTION_ACR OPERATIONS_AZURE_CLIENT_ID OPERATIONS_JOB OPERATIONS_SERVICEBUS_NAMESPACE OPERATIONS_QUEUE OPERATIONS_LOG_WORKSPACE OPERATIONS_WORKER_DIGEST OPERATIONS_WORKER_REVISION RELEASE_SHA PRODUCTION_IMAGE_DIGEST OPERATION_OPERATOR; do
             test -n "${!value}" || { echo "$value is required." >&2; exit 1; }
           done
           test "$OPERATION" = "lookup-user-identity" || { echo "The requested operation is not approved." >&2; exit 1; }
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full lowercase commit SHA." >&2; exit 1; }
           [[ "$PRODUCTION_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "production_image_digest must be immutable." >&2; exit 1; }
+          [[ "$OPERATIONS_WORKER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "operations worker digest must be immutable." >&2; exit 1; }
+          [[ "$OPERATIONS_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "operations worker provenance revision is invalid." >&2; exit 1; }
           test "${#OPERATION_EMAIL}" -le 254 || { echo "The approved operation input was rejected." >&2; exit 1; }
           [[ "$OPERATION_EMAIL" != *$'\n'* && "$OPERATION_EMAIL" != *$'\r'* && "$OPERATION_EMAIL" == *@* ]] || { echo "The approved operation input was rejected." >&2; exit 1; }
           echo "::add-mask::$OPERATION_EMAIL"
           git cat-file -e "${RELEASE_SHA}^{commit}"
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo "The target release must be merged into main." >&2; exit 1; }
           az acr manifest show-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY@$PRODUCTION_IMAGE_DIGEST" --query digest -o tsv | grep -qx "$PRODUCTION_IMAGE_DIGEST"
+          az acr manifest show-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST" --query digest -o tsv | grep -qx "$OPERATIONS_WORKER_DIGEST"
+          az acr manifest list-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY" --query "[?digest=='$OPERATIONS_WORKER_DIGEST' && tags && contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')].digest | [0]" -o tsv | grep -qx "$OPERATIONS_WORKER_DIGEST"
           configured_image=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query siteConfig.linuxFxVersion -o tsv)
           expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$PRODUCTION_IMAGE_DIGEST"
           test "$configured_image" = "$expected_image" || { echo "Production is not configured for the supplied immutable image." >&2; exit 1; }
           job=$(az containerapp job show -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" -o json)
-          jq -e --arg image "$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$PRODUCTION_IMAGE_DIGEST" '
+          jq -e --arg image "$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST" --arg provenance "$OPERATIONS_WORKER_REVISION" '
             .properties.configuration.triggerType == "Event" and
             (.properties.template.containers | length == 1) and
             .properties.template.containers[0].name == "production-operation" and
             .properties.template.containers[0].image == $image and
             .properties.template.containers[0].command == ["python", "-m", "scripts.production_operation_worker"] and
             ([.properties.template.containers[0].env[] | select(.name == "DATABASE_URL" and .secretRef == "database-url")] | length) == 1 and
+            ([.properties.template.containers[0].env[] | select(.name == "PCIP_OPERATIONS_WORKER_PROVENANCE" and .value == $provenance)] | length) == 1 and
             ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and .identity == "system")] | length) == 1
           ' >/dev/null <<<"$job"
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
