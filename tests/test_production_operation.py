@@ -302,7 +302,8 @@ def test_release_and_rollback_retain_an_independently_approved_worker_artifact()
         assert '[[ "$OPERATIONS_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]]' in worker_check
         assert "OPERATIONS_WORKER_IDENTITY" in worker_check
         assert 'expected_image="$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST"' in worker_check
-        assert "contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')" in worker_check
+        assert "contains(tags, 'operations-worker-sha-$OPERATIONS_WORKER_REVISION')" in worker_check
+        assert "contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')" not in worker_check
         assert ".properties.template.containers[0].image == $image" in worker_check
         assert '"PCIP_OPERATIONS_WORKER_PROVENANCE" and .value == $provenance' in worker_check
         assert "az containerapp job update" not in worker_check
@@ -356,7 +357,8 @@ def test_operations_worker_provenance_is_immutable_and_caller_cannot_select_it()
     assert "PCIP_PRODUCTION_OPERATIONS_WORKER_DIGEST" in workflow
     assert "PCIP_PRODUCTION_OPERATIONS_WORKER_REVISION" in workflow
     assert "PCIP_PRODUCTION_OPERATIONS_WORKER_IDENTITY" in workflow
-    assert "contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')" in workflow
+    assert "contains(tags, 'operations-worker-sha-$OPERATIONS_WORKER_REVISION')" in workflow
+    assert "contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')" not in workflow
     assert "workerProvenanceRevision" in bicep
     assert "PCIP_OPERATIONS_WORKER_PROVENANCE" in bicep
     assert "operationsWorkerDigest" in bicep
