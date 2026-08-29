@@ -38,6 +38,11 @@ jobs:
       PRODUCTION_ACR: ${{ vars.PCIP_PRODUCTION_ACR }}
       IMAGE_REPOSITORY: pcip
       ROLLBACK_DIGEST: ${{ inputs.rollback_digest }}
+      # Absent/false keeps rollback compatible until the isolated operations
+      # infrastructure is deliberately provisioned.  Once enabled, rollback
+      # cannot complete with a worker on a different image than App Service.
+      PRODUCTION_OPERATIONS_ENABLED: ${{ vars.PCIP_PRODUCTION_OPERATIONS_ENABLED }}
+      OPERATIONS_JOB: ${{ vars.PCIP_PRODUCTION_OPERATIONS_JOB }}
     steps:
       - uses: azure/login@v2
         with:
@@ -56,6 +61,69 @@ jobs:
           az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --settings RUN_MIGRATIONS=false >/dev/null
           az webapp config set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --linux-fx-version "DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$ROLLBACK_DIGEST" >/dev/null
           az webapp restart -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP"
+      - name: Synchronize the production-operations worker with the rollback image
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${PRODUCTION_OPERATIONS_ENABLED:-false}" in
+            ''|false)
+              echo "Production operations infrastructure is disabled; worker digest synchronization skipped."
+              exit 0
+              ;;
+            true)
+              ;;
+            *)
+              echo "PCIP_PRODUCTION_OPERATIONS_ENABLED must be true or false." >&2
+              exit 1
+              ;;
+          esac
+          for value in AZURE_RESOURCE_GROUP PRODUCTION_ACR OPERATIONS_JOB ROLLBACK_DIGEST; do
+            test -n "${!value}" || { echo "$value is required when production operations are enabled." >&2; exit 1; }
+          done
+          [[ "$ROLLBACK_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Operations worker image must be an immutable sha256 digest." >&2; exit 1; }
+          expected_image="$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$ROLLBACK_DIGEST"
+          job_before=$(az containerapp job show -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" -o json)
+          jq -e '
+            .identity.type == "SystemAssigned" and
+            .properties.configuration.triggerType == "Event" and
+            .properties.configuration.replicaTimeout == 300 and
+            .properties.configuration.replicaRetryLimit == 0 and
+            .properties.configuration.eventTriggerConfig.scale.minExecutions == 0 and
+            .properties.configuration.eventTriggerConfig.scale.maxExecutions == 1 and
+            .properties.configuration.eventTriggerConfig.scale.pollingInterval == 15 and
+            ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and .identity == "system")] | length) == 1 and
+            (.properties.template.containers | length == 1) and
+            .properties.template.containers[0].name == "production-operation" and
+            .properties.template.containers[0].command == ["python", "-m", "scripts.production_operation_worker"] and
+            ([.properties.template.containers[0].env[] | select(.name == "DATABASE_URL" and .secretRef == "database-url")] | length) == 1 and
+            .properties.template.containers[0].resources.cpu == 0.25 and
+            .properties.template.containers[0].resources.memory == "0.5Gi"
+          ' >/dev/null <<<"$job_before" || {
+            echo "The enabled production-operations worker does not have the approved fixed configuration." >&2
+            exit 1
+          }
+          az containerapp job update -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" --image "$expected_image" >/dev/null
+          job_after=$(az containerapp job show -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" -o json)
+          jq -e --arg image "$expected_image" '
+            .identity.type == "SystemAssigned" and
+            .properties.configuration.triggerType == "Event" and
+            .properties.configuration.replicaTimeout == 300 and
+            .properties.configuration.replicaRetryLimit == 0 and
+            .properties.configuration.eventTriggerConfig.scale.minExecutions == 0 and
+            .properties.configuration.eventTriggerConfig.scale.maxExecutions == 1 and
+            .properties.configuration.eventTriggerConfig.scale.pollingInterval == 15 and
+            ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and .identity == "system")] | length) == 1 and
+            (.properties.template.containers | length == 1) and
+            .properties.template.containers[0].name == "production-operation" and
+            .properties.template.containers[0].image == $image and
+            .properties.template.containers[0].command == ["python", "-m", "scripts.production_operation_worker"] and
+            ([.properties.template.containers[0].env[] | select(.name == "DATABASE_URL" and .secretRef == "database-url")] | length) == 1 and
+            .properties.template.containers[0].resources.cpu == 0.25 and
+            .properties.template.containers[0].resources.memory == "0.5Gi"
+          ' >/dev/null <<<"$job_after" || {
+            echo "Production-operations worker configuration did not match the rollback immutable digest." >&2
+            exit 1
+          }
       - name: Verify rollback readiness
         shell: bash
         run: |

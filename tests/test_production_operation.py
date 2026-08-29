@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -9,6 +10,14 @@ import pytest
 import yaml
 
 import scripts.production_operation_worker as worker
+
+
+def workflow_step(workflow: str, name: str) -> str:
+    """Return one named GitHub Actions step without coupling tests to offsets."""
+    marker = f"      - name: {name}\n"
+    _, found, remainder = workflow.partition(marker)
+    assert found, f"workflow step {name!r} is missing"
+    return remainder.partition("      - name: ")[0]
 
 
 def production_environment(**overrides: str) -> dict[str, str]:
@@ -162,6 +171,74 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "Production is not configured for the supplied immutable image." in workflow
     assert "scripts.production_operation_worker" in workflow
     assert "ContainerAppConsoleLogs_CL" in workflow
+
+
+def test_release_and_rollback_synchronize_only_an_enabled_worker_to_the_exact_immutable_digest():
+    promotion = Path(".github/workflows/promote-release.yml").read_text()
+    rollback = Path(".github/workflows/rollback-release.yml").read_text()
+    promotion_sync = workflow_step(
+        promotion,
+        "Synchronize the production-operations worker with the verified production image",
+    )
+    rollback_sync = workflow_step(
+        rollback,
+        "Synchronize the production-operations worker with the rollback image",
+    )
+
+    assert promotion.index("Synchronize the production-operations worker") < promotion.index(
+        "Enable the approved production Rivermere startup runner"
+    )
+    assert rollback.index("Synchronize the production-operations worker") < rollback.index(
+        "Verify rollback readiness"
+    )
+
+    for sync, digest_name, mismatch_message in (
+        (promotion_sync, "IMAGE_DIGEST", "promoted immutable digest"),
+        (rollback_sync, "ROLLBACK_DIGEST", "rollback immutable digest"),
+    ):
+        # Disabled/not-yet-provisioned infrastructure remains an explicit,
+        # backwards-compatible skip. Enabled infrastructure fails closed.
+        assert 'case "${PRODUCTION_OPERATIONS_ENABLED:-false}" in' in sync
+        assert "''|false)" in sync
+        assert "worker digest synchronization skipped" in sync
+        assert "true)" in sync
+        assert "PCIP_PRODUCTION_OPERATIONS_ENABLED must be true or false." in sync
+        assert 'test -n "${!value}"' in sync
+        assert f'[[ "${digest_name}" =~ ^sha256:[0-9a-f]{{64}}$ ]]' in sync
+        assert f'expected_image="$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@${digest_name}"' in sync
+
+        # A patch update is preceded by a safety check and followed by a
+        # read-back check. A command error or mismatch cannot be ignored.
+        assert sync.count("az containerapp job show") == 2
+        assert sync.index("az containerapp job show") < sync.index("az containerapp job update")
+        assert sync.index("az containerapp job update") < sync.rindex("az containerapp job show")
+        assert 'az containerapp job update -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" --image "$expected_image" >/dev/null' in sync
+        assert ".properties.template.containers[0].image == $image" in sync
+        assert mismatch_message in sync
+        assert "|| true" not in sync
+        assert "--command" not in sync
+        assert "--args" not in sync
+
+        # The fixed event-driven worker and its security-critical template
+        # survive an image-only update; a replace-style surprise fails closed.
+        assert '.identity.type == "SystemAssigned"' in sync
+        assert '.properties.configuration.triggerType == "Event"' in sync
+        assert '"scripts.production_operation_worker"' in sync
+        assert '"DATABASE_URL" and .secretRef == "database-url"' in sync
+        assert '.type == "azure-servicebus" and .identity == "system"' in sync
+
+
+def test_operations_workflow_keeps_digest_equality_and_has_no_worker_write_privilege_expansion():
+    workflow = Path(".github/workflows/production-operation.yml").read_text()
+    bicep = Path("infra/production-operations.bicep").read_text()
+
+    assert ".properties.template.containers[0].image == $image" in workflow
+    assert 'expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$PRODUCTION_IMAGE_DIGEST"' in workflow
+    assert "az containerapp job update" not in workflow
+    assert "az containerapp job start" not in workflow
+    assert "Contributor" not in bicep
+    assert "operationsWorkflowJobReader" in bicep
+    assert "operationsWorkflowQueueSender" in bicep
 
 
 def test_workflow_result_contract_is_limited_to_approved_non_sensitive_fields():

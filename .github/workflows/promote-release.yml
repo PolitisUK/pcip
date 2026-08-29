@@ -303,6 +303,12 @@ jobs:
     env:
       SOURCE_ACR: ${{ needs.stage.outputs.source_acr }}
       SOURCE_LOGIN_SERVER: ${{ needs.stage.outputs.source_login_server }}
+      # This protected-environment variable remains false until the isolated
+      # event-driven operations infrastructure has been provisioned.  Once it
+      # is true, every successful production image transition must update the
+      # worker too; a missing or stale worker is a release failure.
+      PRODUCTION_OPERATIONS_ENABLED: ${{ vars.PCIP_PRODUCTION_OPERATIONS_ENABLED }}
+      OPERATIONS_JOB: ${{ vars.PCIP_PRODUCTION_OPERATIONS_JOB }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -416,6 +422,73 @@ jobs:
           for route in privacy support terms cookies accessibility acceptable-use legal contact; do
             curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://citizencentric.co.uk/$route" >/dev/null
           done
+      - name: Synchronize the production-operations worker with the verified production image
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ needs.stage.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          case "${PRODUCTION_OPERATIONS_ENABLED:-false}" in
+            ''|false)
+              echo "Production operations infrastructure is disabled; worker digest synchronization skipped."
+              exit 0
+              ;;
+            true)
+              ;;
+            *)
+              echo "PCIP_PRODUCTION_OPERATIONS_ENABLED must be true or false." >&2
+              exit 1
+              ;;
+          esac
+          for value in AZURE_RESOURCE_GROUP PRODUCTION_ACR OPERATIONS_JOB IMAGE_DIGEST; do
+            test -n "${!value}" || { echo "$value is required when production operations are enabled." >&2; exit 1; }
+          done
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Operations worker image must be an immutable sha256 digest." >&2; exit 1; }
+          expected_image="$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          job_before=$(az containerapp job show -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" -o json)
+          jq -e '
+            .identity.type == "SystemAssigned" and
+            .properties.configuration.triggerType == "Event" and
+            .properties.configuration.replicaTimeout == 300 and
+            .properties.configuration.replicaRetryLimit == 0 and
+            .properties.configuration.eventTriggerConfig.scale.minExecutions == 0 and
+            .properties.configuration.eventTriggerConfig.scale.maxExecutions == 1 and
+            .properties.configuration.eventTriggerConfig.scale.pollingInterval == 15 and
+            ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and .identity == "system")] | length) == 1 and
+            (.properties.template.containers | length == 1) and
+            .properties.template.containers[0].name == "production-operation" and
+            .properties.template.containers[0].command == ["python", "-m", "scripts.production_operation_worker"] and
+            ([.properties.template.containers[0].env[] | select(.name == "DATABASE_URL" and .secretRef == "database-url")] | length) == 1 and
+            .properties.template.containers[0].resources.cpu == 0.25 and
+            .properties.template.containers[0].resources.memory == "0.5Gi"
+          ' >/dev/null <<<"$job_before" || {
+            echo "The enabled production-operations worker does not have the approved fixed configuration." >&2
+            exit 1
+          }
+          # az containerapp job update patches only the image. The full fixed
+          # template is re-read below so a replace-style update fails closed.
+          az containerapp job update -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" --image "$expected_image" >/dev/null
+          job_after=$(az containerapp job show -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" -o json)
+          jq -e --arg image "$expected_image" '
+            .identity.type == "SystemAssigned" and
+            .properties.configuration.triggerType == "Event" and
+            .properties.configuration.replicaTimeout == 300 and
+            .properties.configuration.replicaRetryLimit == 0 and
+            .properties.configuration.eventTriggerConfig.scale.minExecutions == 0 and
+            .properties.configuration.eventTriggerConfig.scale.maxExecutions == 1 and
+            .properties.configuration.eventTriggerConfig.scale.pollingInterval == 15 and
+            ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and .identity == "system")] | length) == 1 and
+            (.properties.template.containers | length == 1) and
+            .properties.template.containers[0].name == "production-operation" and
+            .properties.template.containers[0].image == $image and
+            .properties.template.containers[0].command == ["python", "-m", "scripts.production_operation_worker"] and
+            ([.properties.template.containers[0].env[] | select(.name == "DATABASE_URL" and .secretRef == "database-url")] | length) == 1 and
+            .properties.template.containers[0].resources.cpu == 0.25 and
+            .properties.template.containers[0].resources.memory == "0.5Gi"
+          ' >/dev/null <<<"$job_after" || {
+            echo "Production-operations worker configuration did not match the promoted immutable digest." >&2
+            exit 1
+          }
       - name: Enable the approved production Rivermere startup runner
         if: ${{ inputs.seed_rivermere_demo }}
         id: rivermere_seed_control

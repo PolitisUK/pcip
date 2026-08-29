@@ -31,7 +31,10 @@ worker does not log it or persist it in application data.
 
 Before first use, an infrastructure owner must separately approve and deploy
 `infra/production-operations.bicep` with the digest of a release that contains
-`scripts.production_operation_worker`. This is a one-time provisioning change:
+`scripts.production_operation_worker`. That image is bootstrap state only: the
+protected production promotion and rollback workflows subsequently update the
+worker to the same immutable digest as App Service and read its configuration
+back before they complete. This is a one-time provisioning change:
 it requires the `Microsoft.App` and `Microsoft.ServiceBus` providers, creates
 an event-driven job with no ingress, a dedicated queue with local/SAS
 authentication disabled, and grants the job identity `AcrPull`, Service Bus
@@ -54,6 +57,18 @@ reuse `AZURE_CLIENT_ID`, and do not give the operations identity the existing
 resource-group Contributor role. Configure the protected-environment variables
 for the queue namespace, queue name, worker job name, and dedicated Log
 Analytics workspace ID from the Bicep outputs; none is a secret.
+
+Set the protected-environment variable `PCIP_PRODUCTION_OPERATIONS_ENABLED` to
+`true` only after that infrastructure and its variables are fully provisioned.
+Until then, leave it unset or set it to `false`: promotion and rollback log an
+explicit skip so existing releases remain unaffected. When it is `true`, a
+missing worker, failed image update, or read-back mismatch fails the release or
+rollback as incomplete; it is never silently ignored. The release identity,
+not the dedicated operations identity, performs this fixed image-only update.
+It validates the event-driven trigger, fixed worker command, database-secret
+reference, managed identity, and resource limits before and after the update.
+The operations workflow continues to refuse an operation unless the worker and
+App Service report the identical immutable digest.
 
 The execution sequence is:
 
