@@ -84,6 +84,7 @@ jobs:
       - name: Verify the packaged production-operations worker boundary
         run: |
           docker run --rm --entrypoint sh pcip:${{ github.sha }} -c '
+            set -e
             test -f /app/scripts/production_operation_worker.py
             test -f /app/scripts/lookup_user_identity.py
             python -c "import scripts.production_operation_worker"
