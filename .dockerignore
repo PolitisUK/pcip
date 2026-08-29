@@ -21,4 +21,6 @@ scripts/*
 !scripts/__init__.py
 !scripts/bootstrap_admin.py
 !scripts/seed_rivermere_demo.py
+!scripts/lookup_user_identity.py
+!scripts/production_operation_worker.py
 *.md

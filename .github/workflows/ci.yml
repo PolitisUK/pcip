@@ -81,6 +81,14 @@ jobs:
           load: true
           push: false
           tags: pcip:${{ github.sha }}
+      - name: Verify the packaged production-operations worker boundary
+        run: |
+          docker run --rm --entrypoint sh pcip:${{ github.sha }} -c '
+            test -f /app/scripts/production_operation_worker.py
+            test -f /app/scripts/lookup_user_identity.py
+            python -c "import scripts.production_operation_worker"
+            test ! -e /app/scripts/set_platform_admin.py
+          '
       - name: Release image smoke check
         run: |
           docker run -d --name pcip-smoke -p 18000:8000 -e RUN_MIGRATIONS=false -e SEED_DEMO_DATA=false pcip:${{ github.sha }}
