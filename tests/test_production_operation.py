@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import copy
 import json
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +22,99 @@ def workflow_step(workflow: str, name: str) -> str:
     _, found, remainder = workflow.partition(marker)
     assert found, f"workflow step {name!r} is missing"
     return remainder.partition("      - name: ")[0]
+
+
+def worker_identity_filters(workflow: str) -> list[str]:
+    """Extract the jq worker-template checks that receive the identity input."""
+    return re.findall(
+        r'jq -e --arg image [^\n]*--arg identity "\$OPERATIONS_WORKER_IDENTITY"[^\n]* \'\n(.*?)\n\s*\' >/dev/null',
+        workflow,
+        flags=re.DOTALL,
+    )
+
+
+EXPECTED_WORKER_IDENTITY = (
+    "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-pcip-prod/"
+    "providers/Microsoft.ManagedIdentity/userAssignedIdentities/pcip-production-operations-identity"
+)
+OBSERVED_WORKER_IDENTITY = EXPECTED_WORKER_IDENTITY.replace("resourceGroups", "resourcegroups")
+WORKER_IMAGE = "pcipproductionnevsxrlbacr.azurecr.io/pcip@sha256:" + "a" * 64
+WORKER_PROVENANCE = "b" * 40
+
+
+def approved_worker_job(identity: str = OBSERVED_WORKER_IDENTITY) -> dict:
+    return {
+        "identity": {"type": "UserAssigned", "userAssignedIdentities": {identity: {}}},
+        "properties": {
+            "provisioningState": "Succeeded",
+            "configuration": {
+                "triggerType": "Event",
+                "replicaTimeout": 300,
+                "replicaRetryLimit": 0,
+                "eventTriggerConfig": {
+                    "scale": {
+                        "minExecutions": 0,
+                        "maxExecutions": 1,
+                        "pollingInterval": 15,
+                        "rules": [
+                            {
+                                "type": "azure-servicebus",
+                                "identity": identity,
+                                "metadata": {
+                                    "queueName": "approved-operations",
+                                    "namespace": "pcip-production-operations.servicebus.windows.net",
+                                },
+                            }
+                        ],
+                    }
+                },
+                "registries": [{"server": "pcipproductionnevsxrlbacr.azurecr.io", "identity": identity}],
+                "secrets": [{"name": "database-url", "identity": identity, "keyVaultUrl": "https://example.test/secret"}],
+            },
+            "template": {
+                "containers": [
+                    {
+                        "name": "production-operation",
+                        "image": WORKER_IMAGE,
+                        "command": ["python", "-m", "scripts.production_operation_worker"],
+                        "env": [
+                            {"name": "DATABASE_URL", "secretRef": "database-url"},
+                            {"name": "PCIP_OPERATIONS_WORKER_PROVENANCE", "value": WORKER_PROVENANCE},
+                        ],
+                        "resources": {"cpu": 0.25, "memory": "0.5Gi"},
+                    }
+                ]
+            },
+        },
+    }
+
+
+def worker_filter_accepts(jq_filter: str, job: dict) -> bool:
+    assert shutil.which("jq"), "jq is required by the protected workflow checks"
+    result = subprocess.run(
+        [
+            "jq",
+            "-e",
+            "--arg",
+            "image",
+            WORKER_IMAGE,
+            "--arg",
+            "provenance",
+            WORKER_PROVENANCE,
+            "--arg",
+            "identity",
+            EXPECTED_WORKER_IDENTITY,
+            "--arg",
+            "registry",
+            "pcipproductionnevsxrlbacr.azurecr.io",
+            jq_filter,
+        ],
+        input=json.dumps(job),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def production_environment(**overrides: str) -> dict[str, str]:
@@ -215,15 +312,18 @@ def test_release_and_rollback_retain_an_independently_approved_worker_artifact()
         # The fixed event-driven worker and its security-critical template
         # are proven without coupling the worker digest to App Service.
         assert '.identity.type == "UserAssigned"' in worker_check
-        assert '(.identity.userAssignedIdentities | keys == [$identity])' in worker_check
+        assert "def same_resource_id($expected):" in worker_check
+        assert "ascii_downcase" in worker_check
+        assert "map(ascii_downcase)" in worker_check
+        assert "same_resource_id($identity)" in worker_check
         assert '--arg identity "$OPERATIONS_WORKER_IDENTITY"' in worker_check
         assert '(.properties.configuration.registries | length) == 1' in worker_check
-        assert '.server == $registry and .identity == $identity' in worker_check
-        assert '.name == "database-url" and .identity == $identity' in worker_check
+        assert '.server == $registry and (.identity | same_resource_id($identity))' in worker_check
+        assert '.name == "database-url" and (.identity | same_resource_id($identity))' in worker_check
         assert '.properties.configuration.triggerType == "Event"' in worker_check
         assert '"scripts.production_operation_worker"' in worker_check
         assert '"DATABASE_URL" and .secretRef == "database-url"' in worker_check
-        assert '.type == "azure-servicebus" and .identity == $identity' in worker_check
+        assert '.type == "azure-servicebus" and (.identity | same_resource_id($identity))' in worker_check
 
     # Historical application rollbacks keep the approved worker, rather than
     # replacing it with a possibly pre-worker application image.
@@ -272,14 +372,64 @@ def test_operations_workflow_keeps_independent_worker_validation_and_no_write_pr
 
     assert ".properties.template.containers[0].image == $image" in workflow
     assert '.identity.type == "UserAssigned"' in workflow
-    assert '(.identity.userAssignedIdentities | keys == [$identity])' in workflow
-    assert '.identity == $identity' in workflow
+    assert "def same_resource_id($expected):" in workflow
+    assert "map(ascii_downcase)" in workflow
+    assert "same_resource_id($identity)" in workflow
     assert 'expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$PRODUCTION_IMAGE_DIGEST"' in workflow
     assert "az containerapp job update" not in workflow
     assert "az containerapp job start" not in workflow
     assert "Contributor" not in bicep
     assert "operationsWorkflowJobReader" in bicep
     assert "operationsWorkflowQueueSender" in bicep
+
+
+def test_worker_identity_checks_accept_casing_only_differences_and_reject_other_resource_ids():
+    workflows = [
+        Path(".github/workflows/production-operation.yml").read_text(),
+        Path(".github/workflows/promote-release.yml").read_text(),
+        Path(".github/workflows/rollback-release.yml").read_text(),
+    ]
+    filters = [jq_filter for workflow in workflows for jq_filter in worker_identity_filters(workflow)]
+    assert len(filters) == 5
+    assert all(worker_filter_accepts(jq_filter, approved_worker_job()) for jq_filter in filters)
+
+    for replacement in (
+        EXPECTED_WORKER_IDENTITY.replace("rg-pcip-prod", "rg-other"),
+        EXPECTED_WORKER_IDENTITY.replace("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"),
+        EXPECTED_WORKER_IDENTITY.replace("pcip-production-operations-identity", "same-basename-in-a-different-path"),
+    ):
+        assert all(not worker_filter_accepts(jq_filter, approved_worker_job(replacement)) for jq_filter in filters)
+
+
+def test_worker_identity_checks_reject_multiple_or_mismatched_identity_references():
+    filters = [
+        jq_filter
+        for workflow in (
+            Path(".github/workflows/production-operation.yml").read_text(),
+            Path(".github/workflows/promote-release.yml").read_text(),
+            Path(".github/workflows/rollback-release.yml").read_text(),
+        )
+        for jq_filter in worker_identity_filters(workflow)
+    ]
+    different_identity = EXPECTED_WORKER_IDENTITY.replace(
+        "pcip-production-operations-identity", "pcip-production-operations-other"
+    )
+
+    multiple = approved_worker_job()
+    multiple["identity"]["userAssignedIdentities"][different_identity] = {}
+    assert all(not worker_filter_accepts(jq_filter, multiple) for jq_filter in filters)
+
+    for path in (
+        ("properties", "configuration", "registries", 0, "identity"),
+        ("properties", "configuration", "secrets", 0, "identity"),
+        ("properties", "configuration", "eventTriggerConfig", "scale", "rules", 0, "identity"),
+    ):
+        mismatched = copy.deepcopy(approved_worker_job())
+        target = mismatched
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = different_identity
+        assert all(not worker_filter_accepts(jq_filter, mismatched) for jq_filter in filters)
 
 
 def test_workflow_result_contract_is_limited_to_approved_non_sensitive_fields():
