@@ -45,6 +45,7 @@ jobs:
       PRODUCTION_ACR: ${{ vars.PCIP_PRODUCTION_ACR }}
       OPERATIONS_AZURE_CLIENT_ID: ${{ vars.AZURE_PRODUCTION_OPERATIONS_CLIENT_ID }}
       OPERATIONS_JOB: ${{ vars.PCIP_PRODUCTION_OPERATIONS_JOB }}
+      OPERATIONS_WORKER_IDENTITY: ${{ vars.PCIP_PRODUCTION_OPERATIONS_WORKER_IDENTITY }}
       OPERATIONS_SERVICEBUS_NAMESPACE: ${{ vars.PCIP_PRODUCTION_OPERATIONS_SERVICEBUS_NAMESPACE }}
       OPERATIONS_QUEUE: ${{ vars.PCIP_PRODUCTION_OPERATIONS_QUEUE }}
       OPERATIONS_LOG_WORKSPACE: ${{ vars.PCIP_PRODUCTION_OPERATIONS_LOG_WORKSPACE }}
@@ -71,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/main" || { echo "Production operations must be dispatched from main." >&2; exit 1; }
-          for value in AZURE_RESOURCE_GROUP PRODUCTION_APP PRODUCTION_ACR OPERATIONS_AZURE_CLIENT_ID OPERATIONS_JOB OPERATIONS_SERVICEBUS_NAMESPACE OPERATIONS_QUEUE OPERATIONS_LOG_WORKSPACE OPERATIONS_WORKER_DIGEST OPERATIONS_WORKER_REVISION RELEASE_SHA PRODUCTION_IMAGE_DIGEST OPERATION_OPERATOR; do
+          for value in AZURE_RESOURCE_GROUP PRODUCTION_APP PRODUCTION_ACR OPERATIONS_AZURE_CLIENT_ID OPERATIONS_JOB OPERATIONS_WORKER_IDENTITY OPERATIONS_SERVICEBUS_NAMESPACE OPERATIONS_QUEUE OPERATIONS_LOG_WORKSPACE OPERATIONS_WORKER_DIGEST OPERATIONS_WORKER_REVISION RELEASE_SHA PRODUCTION_IMAGE_DIGEST OPERATION_OPERATOR; do
             test -n "${!value}" || { echo "$value is required." >&2; exit 1; }
           done
           test "$OPERATION" = "lookup-user-identity" || { echo "The requested operation is not approved." >&2; exit 1; }
@@ -91,15 +92,20 @@ jobs:
           expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$PRODUCTION_IMAGE_DIGEST"
           test "$configured_image" = "$expected_image" || { echo "Production is not configured for the supplied immutable image." >&2; exit 1; }
           job=$(az containerapp job show -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" -o json)
-          jq -e --arg image "$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST" --arg provenance "$OPERATIONS_WORKER_REVISION" '
+          jq -e --arg image "$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST" --arg provenance "$OPERATIONS_WORKER_REVISION" --arg identity "$OPERATIONS_WORKER_IDENTITY" --arg registry "$PRODUCTION_ACR.azurecr.io" '
+            .identity.type == "UserAssigned" and
+            (.identity.userAssignedIdentities | keys == [$identity]) and
             .properties.configuration.triggerType == "Event" and
+            (.properties.configuration.registries | length) == 1 and
+            ([.properties.configuration.registries[] | select(.server == $registry and .identity == $identity)] | length) == 1 and
+            ([.properties.configuration.secrets[] | select(.name == "database-url" and .identity == $identity)] | length) == 1 and
             (.properties.template.containers | length == 1) and
             .properties.template.containers[0].name == "production-operation" and
             .properties.template.containers[0].image == $image and
             .properties.template.containers[0].command == ["python", "-m", "scripts.production_operation_worker"] and
             ([.properties.template.containers[0].env[] | select(.name == "DATABASE_URL" and .secretRef == "database-url")] | length) == 1 and
             ([.properties.template.containers[0].env[] | select(.name == "PCIP_OPERATIONS_WORKER_PROVENANCE" and .value == $provenance)] | length) == 1 and
-            ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and .identity == "system")] | length) == 1
+            ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and .identity == $identity)] | length) == 1
           ' >/dev/null <<<"$job"
           host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" --query defaultHostName -o tsv)
           consecutive_ready=0

@@ -203,6 +203,7 @@ def test_release_and_rollback_retain_an_independently_approved_worker_artifact()
         assert 'test -n "${!value}"' in worker_check
         assert '[[ "$OPERATIONS_WORKER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]' in worker_check
         assert '[[ "$OPERATIONS_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]]' in worker_check
+        assert "OPERATIONS_WORKER_IDENTITY" in worker_check
         assert 'expected_image="$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST"' in worker_check
         assert "contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')" in worker_check
         assert ".properties.template.containers[0].image == $image" in worker_check
@@ -213,11 +214,16 @@ def test_release_and_rollback_retain_an_independently_approved_worker_artifact()
 
         # The fixed event-driven worker and its security-critical template
         # are proven without coupling the worker digest to App Service.
-        assert '.identity.type == "SystemAssigned"' in worker_check
+        assert '.identity.type == "UserAssigned"' in worker_check
+        assert '(.identity.userAssignedIdentities | keys == [$identity])' in worker_check
+        assert '--arg identity "$OPERATIONS_WORKER_IDENTITY"' in worker_check
+        assert '(.properties.configuration.registries | length) == 1' in worker_check
+        assert '.server == $registry and .identity == $identity' in worker_check
+        assert '.name == "database-url" and .identity == $identity' in worker_check
         assert '.properties.configuration.triggerType == "Event"' in worker_check
         assert '"scripts.production_operation_worker"' in worker_check
         assert '"DATABASE_URL" and .secretRef == "database-url"' in worker_check
-        assert '.type == "azure-servicebus" and .identity == "system"' in worker_check
+        assert '.type == "azure-servicebus" and .identity == $identity' in worker_check
 
     # Historical application rollbacks keep the approved worker, rather than
     # replacing it with a possibly pre-worker application image.
@@ -249,6 +255,7 @@ def test_operations_worker_provenance_is_immutable_and_caller_cannot_select_it()
 
     assert "PCIP_PRODUCTION_OPERATIONS_WORKER_DIGEST" in workflow
     assert "PCIP_PRODUCTION_OPERATIONS_WORKER_REVISION" in workflow
+    assert "PCIP_PRODUCTION_OPERATIONS_WORKER_IDENTITY" in workflow
     assert "contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')" in workflow
     assert "workerProvenanceRevision" in bicep
     assert "PCIP_OPERATIONS_WORKER_PROVENANCE" in bicep
@@ -264,6 +271,9 @@ def test_operations_workflow_keeps_independent_worker_validation_and_no_write_pr
     bicep = Path("infra/production-operations.bicep").read_text()
 
     assert ".properties.template.containers[0].image == $image" in workflow
+    assert '.identity.type == "UserAssigned"' in workflow
+    assert '(.identity.userAssignedIdentities | keys == [$identity])' in workflow
+    assert '.identity == $identity' in workflow
     assert 'expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$PRODUCTION_IMAGE_DIGEST"' in workflow
     assert "az containerapp job update" not in workflow
     assert "az containerapp job start" not in workflow
@@ -298,10 +308,26 @@ def test_operation_result_polling_orders_by_time_and_fails_on_query_errors_but_t
     assert "[\"active\", \"is_platform_admin\", \"memberships\", \"user_id\"]" in result_step
 
 
-def test_operations_infrastructure_is_event_driven_and_least_privilege():
+def test_operations_infrastructure_bootstraps_a_user_assigned_identity_before_the_job():
     bicep = open("infra/production-operations.bicep", encoding="utf-8").read()
 
     assert "targetScope = 'resourceGroup'" in bicep
+    assert "resource operationsWorkerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31'" in bicep
+    assert "name: operationsWorkerIdentityName" in bicep
+    assert "resource operationsJob 'Microsoft.App/jobs@2025-01-01'" in bicep
+    assert bicep.index("resource operationsWorkerIdentity") < bicep.index("resource operationsJob")
+    assert "dependsOn: [\n    operationsAcrPull\n    operationsDatabaseSecretReader\n    operationsQueueReceiver\n  ]" in bicep
+    assert "type: 'UserAssigned'" in bicep
+    assert "'${operationsWorkerIdentity.id}': {}" in bicep
+    assert bicep.count("identity: operationsWorkerIdentity.id") == 3
+    assert "operationsJob.identity.principalId" not in bicep
+    assert "SystemAssigned" not in bicep
+    assert "identity: 'system'" not in bicep
+
+
+def test_operations_infrastructure_is_event_driven_and_least_privilege():
+    bicep = open("infra/production-operations.bicep", encoding="utf-8").read()
+
     assert "resource operationsServiceBus" in bicep
     assert "disableLocalAuth: true" in bicep
     assert "resource operationsQueue" in bicep
@@ -312,6 +338,9 @@ def test_operations_infrastructure_is_event_driven_and_least_privilege():
     assert "keyVaultUrl: databaseUrlSecret.properties.secretUriWithVersion" in bicep
     assert "scope: databaseUrlSecret" in bicep
     assert "scope: operationsQueue" in bicep
+    assert bicep.count("principalId: operationsWorkerIdentity.properties.principalId") == 3
+    assert "4633458b-17de-408a-b874-0445c86b69e6" in bicep
+    assert "7f951dda-4ed3-4680-a7ca-43fe172d538d" in bicep
     assert "69a216fc-b8fb-44d8-bc22-1f3c2cd27a39" in bicep
     assert "4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0" in bicep
     assert "az containerapp job start" not in bicep
