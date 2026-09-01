@@ -267,7 +267,7 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "Production operations must be dispatched from main." in workflow
     assert "Production is not configured for the supplied immutable image." in workflow
     assert "scripts.production_operation_worker" in workflow
-    assert "ContainerAppConsoleLogs_CL" in workflow
+    assert "ContainerAppConsoleLogs" in workflow
 
 
 def test_operations_workflow_reads_app_metadata_without_publishing_access():
@@ -477,6 +477,12 @@ def test_operation_result_polling_orders_by_time_and_fails_on_query_errors_but_t
     workflow = Path(".github/workflows/production-operation.yml").read_text()
     result_step = workflow_step(workflow, "Retrieve the approved non-sensitive result")
 
+    assert "ContainerAppConsoleLogs" in result_step
+    assert "ContainerAppConsoleLogs_CL" not in result_step
+    assert "TimeGenerated:datetime, Log:string" in result_step
+    assert "where Log has '$CORRELATION_ID'" in result_step
+    assert "project Log" in result_step
+    assert "--query '[].Log'" in result_step
     assert "order by TimeGenerated asc" in result_step
     assert "_timestamp_d" not in result_step
     assert "logs=$(az monitor log-analytics query" in result_step
@@ -485,9 +491,13 @@ def test_operation_result_polling_orders_by_time_and_fails_on_query_errors_but_t
     # A successful empty log result is polled for propagation delay; only a
     # genuine Azure query error exits under the step's set -euo pipefail.
     assert "set -euo pipefail" in result_step
+    assert "union isfuzzy=true" in result_step
+    assert "datatable(TimeGenerated:datetime, Log:string)[]" in result_step
     assert "for attempt in {1..30}; do" in result_step
     assert "sleep 10" in result_step
+    assert ".correlation_id == $correlation" in result_step
     assert "[\"active\", \"is_platform_admin\", \"memberships\", \"user_id\"]" in result_step
+    assert "OPERATION_EMAIL" not in result_step
 
 
 def test_operations_infrastructure_bootstraps_a_user_assigned_identity_before_the_job():
