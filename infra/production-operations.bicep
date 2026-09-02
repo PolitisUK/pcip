@@ -213,6 +213,12 @@ resource operationsJob 'Microsoft.App/jobs@2025-01-01' = {
               value: operationsQueue.name
             }
             {
+              // DefaultAzureCredential otherwise attempts a nonexistent
+              // system-assigned identity instead of this job's UAMI.
+              name: 'AZURE_CLIENT_ID'
+              value: operationsWorkerIdentity.properties.clientId
+            }
+            {
               name: 'PCIP_OPERATIONS_WORKER_PROVENANCE'
               value: workerProvenanceRevision
             }

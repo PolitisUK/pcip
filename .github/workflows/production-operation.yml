@@ -101,6 +101,7 @@ jobs:
           jq -e --arg image "$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST" --arg provenance "$OPERATIONS_WORKER_REVISION" --arg identity "$OPERATIONS_WORKER_IDENTITY" --arg registry "$PRODUCTION_ACR.azurecr.io" '
             def same_resource_id($expected):
               (type == "string") and (ascii_downcase == ($expected | ascii_downcase));
+            (.identity.userAssignedIdentities | to_entries | .[0].value.clientId // "") as $identity_client_id |
             .identity.type == "UserAssigned" and
             ((.identity.userAssignedIdentities | keys | map(ascii_downcase)) == [($identity | ascii_downcase)]) and
             .properties.configuration.triggerType == "Event" and
@@ -112,6 +113,7 @@ jobs:
             .properties.template.containers[0].image == $image and
             .properties.template.containers[0].command == ["python", "-m", "scripts.production_operation_worker"] and
             ([.properties.template.containers[0].env[] | select(.name == "DATABASE_URL" and .secretRef == "database-url")] | length) == 1 and
+            ([.properties.template.containers[0].env[] | select(.name == "AZURE_CLIENT_ID" and .value == $identity_client_id)] | length) == 1 and
             ([.properties.template.containers[0].env[] | select(.name == "PCIP_OPERATIONS_WORKER_PROVENANCE" and .value == $provenance)] | length) == 1 and
             ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and (.identity | same_resource_id($identity)))] | length) == 1
           ' >/dev/null <<<"$job"
