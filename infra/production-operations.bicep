@@ -45,7 +45,7 @@ param operationsWorkflowPrincipalId string
 var operationsLogName = '${operationsEnvironmentName}-log'
 var operationsWorkerIdentityName = '${operationsJobName}-identity'
 var imageReference = '${productionRegistry.properties.loginServer}/pcip@${imageDigest}'
-var serviceBusNamespace = '${operationsServiceBus.name}.servicebus.windows.net'
+var serviceBusNamespaceFqdn = '${operationsServiceBus.name}.servicebus.windows.net'
 
 resource operationsLog 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: operationsLogName
@@ -154,7 +154,9 @@ resource operationsJob 'Microsoft.App/jobs@2025-01-01' = {
               identity: operationsWorkerIdentity.id
               metadata: {
                 queueName: operationsQueue.name
-                namespace: serviceBusNamespace
+                // The KEDA Azure Service Bus scaler accepts the namespace
+                // resource name, while the worker SDK uses the full hostname.
+                namespace: operationsServiceBus.name
                 messageCount: '1'
               }
             }
@@ -204,7 +206,7 @@ resource operationsJob 'Microsoft.App/jobs@2025-01-01' = {
             }
             {
               name: 'PCIP_OPERATIONS_SERVICEBUS_NAMESPACE'
-              value: serviceBusNamespace
+              value: serviceBusNamespaceFqdn
             }
             {
               name: 'PCIP_OPERATIONS_QUEUE'
@@ -311,7 +313,7 @@ resource operationsWorkflowLogReader 'Microsoft.Authorization/roleAssignments@20
 output operationsJobResourceId string = operationsJob.id
 output operationsWorkerIdentityResourceId string = operationsWorkerIdentity.id
 output operationsLogWorkspaceId string = operationsLog.properties.customerId
-output operationsServiceBusNamespace string = serviceBusNamespace
+output operationsServiceBusNamespace string = serviceBusNamespaceFqdn
 output operationsQueueName string = operationsQueue.name
 output operationsWorkerDigest string = imageDigest
 output operationsWorkerProvenanceRevision string = workerProvenanceRevision

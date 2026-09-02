@@ -526,6 +526,11 @@ def test_operations_infrastructure_is_event_driven_and_least_privilege():
     assert "resource operationsEnvironment" in bicep
     assert "triggerType: 'Event'" in bicep
     assert "type: 'azure-servicebus'" in bicep
+    assert "namespace: operationsServiceBus.name" in bicep
+    assert "namespace: serviceBusNamespaceFqdn" not in bicep
+    assert "var serviceBusNamespaceFqdn = '${operationsServiceBus.name}.servicebus.windows.net'" in bicep
+    assert "value: serviceBusNamespaceFqdn" in bicep
+    assert "output operationsServiceBusNamespace string = serviceBusNamespaceFqdn" in bicep
     assert "scripts.production_operation_worker" in bicep
     assert "keyVaultUrl: databaseUrlSecret.properties.secretUriWithVersion" in bicep
     assert "scope: databaseUrlSecret" in bicep
