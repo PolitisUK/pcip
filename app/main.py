@@ -532,6 +532,9 @@ ACTIVITY_TYPES = {
     "file",
 }
 COMMUNICATION_PREFERENCES = {"email", "sms", "phone", "none"}
+ORGANISATION_NAME_MAX_LENGTH = 200
+ORGANISATION_SLUG_MAX_LENGTH = 100
+ORGANISATION_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_CSV_IMPORT_BYTES = 2 * 1024 * 1024
 MAX_CSV_IMPORT_ROWS = 10_000
 UPLOAD_CONTENT_TYPES = {
@@ -2451,6 +2454,134 @@ def platform_admin_dashboard(
             "cross_customer_learning": settings.cross_customer_learning_allowed,
         },
     )
+
+
+def customer_organisation_input(
+    name: str,
+    slug: str,
+) -> tuple[str, str, dict[str, str]]:
+    """Validate an explicitly supplied customer workspace identity."""
+    cleaned_name = name.strip()
+    cleaned_slug = slug.strip()
+    errors: dict[str, str] = {}
+    if not cleaned_name:
+        errors["name"] = "Enter an organisation name."
+    elif len(cleaned_name) > ORGANISATION_NAME_MAX_LENGTH:
+        errors["name"] = (
+            f"Organisation names must be {ORGANISATION_NAME_MAX_LENGTH} characters or fewer."
+        )
+    if not cleaned_slug:
+        errors["slug"] = "Enter an organisation slug."
+    elif len(cleaned_slug) > ORGANISATION_SLUG_MAX_LENGTH:
+        errors["slug"] = (
+            f"Organisation slugs must be {ORGANISATION_SLUG_MAX_LENGTH} characters or fewer."
+        )
+    elif not ORGANISATION_SLUG_RE.fullmatch(cleaned_slug):
+        errors["slug"] = (
+            "Use lowercase letters and numbers separated by single hyphens."
+        )
+    return cleaned_name, cleaned_slug, errors
+
+
+def render_customer_organisation_form(
+    request: Request,
+    user,
+    *,
+    name: str = "",
+    slug: str = "",
+    errors: dict[str, str] | None = None,
+    status_code: int = 200,
+):
+    response = render(
+        request,
+        "platform_organisation_create.html",
+        user=user,
+        organisation_name=name,
+        organisation_slug=slug,
+        errors=errors or {},
+    )
+    response.status_code = status_code
+    return response
+
+
+@app.get("/admin/organisations/new", response_class=HTMLResponse)
+def new_customer_organisation(
+    request: Request,
+    u=Depends(platform_admin),
+):
+    return render_customer_organisation_form(request, u)
+
+
+@app.post("/admin/organisations", response_class=HTMLResponse)
+def create_customer_organisation(
+    request: Request,
+    name: str = Form(""),
+    slug: str = Form(""),
+    u=Depends(platform_admin),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    cleaned_name, cleaned_slug, errors = customer_organisation_input(name, slug)
+    if errors:
+        return render_customer_organisation_form(
+            request,
+            u,
+            name=cleaned_name,
+            slug=cleaned_slug,
+            errors=errors,
+            status_code=400,
+        )
+
+    if db.scalar(select(Organisation.id).where(Organisation.name == cleaned_name)):
+        errors["name"] = "An organisation with this name already exists."
+    if db.scalar(select(Organisation.id).where(Organisation.slug == cleaned_slug)):
+        errors["slug"] = "An organisation with this slug already exists."
+    if errors:
+        return render_customer_organisation_form(
+            request,
+            u,
+            name=cleaned_name,
+            slug=cleaned_slug,
+            errors=errors,
+            status_code=409,
+        )
+
+    try:
+        organisation = Organisation(name=cleaned_name, slug=cleaned_slug)
+        db.add(organisation)
+        db.flush()
+        add_organisation_membership(
+            db,
+            u.identity,
+            organisation.id,
+            Role.owner.value,
+        )
+        db.flush()
+        audit(
+            db,
+            organisation.id,
+            u.id,
+            "platform_admin.organisation_created",
+            "organisation",
+            organisation.id,
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return render_customer_organisation_form(
+            request,
+            u,
+            name=cleaned_name,
+            slug=cleaned_slug,
+            errors={"form": "An organisation with this name or slug already exists."},
+            status_code=409,
+        )
+    except Exception:
+        db.rollback()
+        raise
+
+    set_flash(request, "success", "Customer organisation created.")
+    return RedirectResponse("/admin", 303)
 
 
 @app.get("/admin/participant-invitation-integrity", response_class=HTMLResponse)
