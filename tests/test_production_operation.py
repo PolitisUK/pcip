@@ -370,9 +370,15 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "- set-platform-admin-dry-run" in workflow
     assert 'case "$OPERATION" in' in workflow
     assert "set-platform-admin-dry-run)" in workflow
+    assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/platform_admin_dry_run.py"' in workflow
+    assert 'git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py"' in workflow
+    assert 'PLATFORM_ADMIN_DRY_RUN_OPERATION = "set-platform-admin-dry-run"' in workflow
+    assert "platform_admin_dry_run.main" in workflow
+    assert "The approved worker does not support this operation." in workflow
     assert '--argjson user_id "$OPERATION_USER_ID"' in workflow
     assert "{correlation_id: $correlation_id, operation: $operation, email: $email, user_id: $user_id}" in workflow
-    assert "dry_run" not in workflow
+    assert "--dry-run" not in workflow
+    assert "dry_run:" not in workflow
     assert "confirm-production-change" not in workflow
     assert "https://servicebus.azure.net" in workflow
     assert "PCIP_OPERATION_EMAIL" not in workflow

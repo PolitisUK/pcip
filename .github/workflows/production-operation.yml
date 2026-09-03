@@ -87,6 +87,10 @@ jobs:
               ;;
             set-platform-admin-dry-run)
               [[ "$OPERATION_USER_ID" =~ ^[1-9][0-9]*$ ]] || { echo "The approved operation input was rejected." >&2; exit 1; }
+              git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/platform_admin_dry_run.py" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              worker_source=$(git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py")
+              grep -Fq 'PLATFORM_ADMIN_DRY_RUN_OPERATION = "set-platform-admin-dry-run"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              grep -Fq 'platform_admin_dry_run.main' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
               ;;
             *)
               echo "The requested operation is not approved." >&2

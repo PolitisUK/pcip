@@ -137,6 +137,17 @@ fields remained unchanged. The exact correlation ID and result schema are
 validated before anything is displayed. The equivalent local command is shown
 for implementation reference only and is not the authorised production path:
 
+Before this operation is exposed in production, build and approve a new worker
+image from a merged revision containing both `scripts.platform_admin_dry_run`
+and its fixed worker dispatch. Attach the dedicated
+`operations-worker-sha-<revision>` provenance tag to that immutable digest,
+reconcile the existing Container Apps job through the approved Bicep process,
+and update the protected worker digest/revision variables after read-back. The
+workflow checks the exact pinned provenance commit for both implementation
+paths and refuses the dry run when the older lookup-only worker remains pinned.
+Promotion and rollback continue to preserve whichever worker digest was
+separately approved; they do not upgrade it implicitly.
+
 ```bash
 python -m scripts.platform_admin_dry_run \
   --email <email> \
