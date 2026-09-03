@@ -134,6 +134,12 @@ jobs:
             .identity.type == "UserAssigned" and
             ((.identity.userAssignedIdentities | keys | map(ascii_downcase)) == [($identity | ascii_downcase)]) and
             .properties.configuration.triggerType == "Event" and
+            .properties.configuration.replicaTimeout == 300 and
+            .properties.configuration.replicaRetryLimit == 0 and
+            .properties.configuration.eventTriggerConfig.scale.minExecutions == 0 and
+            .properties.configuration.eventTriggerConfig.scale.maxExecutions == 1 and
+            .properties.configuration.eventTriggerConfig.scale.pollingInterval == 15 and
+            (.properties.configuration | has("ingress") | not) and
             (.properties.configuration.registries | length) == 1 and
             ([.properties.configuration.registries[] | select(.server == $registry and (.identity | same_resource_id($identity)))] | length) == 1 and
             ([.properties.configuration.secrets[] | select(.name == "database-url" and (.identity | same_resource_id($identity)))] | length) == 1 and
@@ -144,7 +150,9 @@ jobs:
             ([.properties.template.containers[0].env[] | select(.name == "DATABASE_URL" and .secretRef == "database-url")] | length) == 1 and
             ([.properties.template.containers[0].env[] | select(.name == "AZURE_CLIENT_ID" and .value == $identity_client_id)] | length) == 1 and
             ([.properties.template.containers[0].env[] | select(.name == "PCIP_OPERATIONS_WORKER_PROVENANCE" and .value == $provenance)] | length) == 1 and
-            ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and (.identity | same_resource_id($identity)))] | length) == 1
+            ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and (.identity | same_resource_id($identity)))] | length) == 1 and
+            .properties.template.containers[0].resources.cpu == 0.25 and
+            .properties.template.containers[0].resources.memory == "0.5Gi"
           ' >/dev/null <<<"$job"
           host=$(jq -r '.properties.defaultHostName // empty' <<<"$app_resource")
           test -n "$host" || { echo "Production public hostname is unavailable." >&2; exit 1; }

@@ -489,22 +489,22 @@ def test_operations_workflow_reads_app_metadata_without_publishing_access():
     assert "acdd72a7-3385-48ef-bd42-f606fba81ae7" in app_reader  # Azure Reader
 
 
-def test_release_and_rollback_retain_an_independently_approved_worker_artifact():
+def test_release_and_rollback_verify_worker_artifact_without_crossing_operations_boundary():
     promotion = Path(".github/workflows/promote-release.yml").read_text()
     rollback = Path(".github/workflows/rollback-release.yml").read_text()
     promotion_worker_check = workflow_step(
         promotion,
-        "Verify the independently pinned production-operations worker",
+        "Verify the independently pinned production-operations worker artifact",
     )
     rollback_worker_check = workflow_step(
         rollback,
-        "Verify the independently pinned production-operations worker",
+        "Verify the independently pinned production-operations worker artifact",
     )
 
-    assert promotion.index("Verify the independently pinned production-operations worker") < promotion.index(
+    assert promotion.index("Verify the independently pinned production-operations worker artifact") < promotion.index(
         "Enable the approved production Rivermere startup runner"
     )
-    assert rollback.index("Verify the independently pinned production-operations worker") < rollback.index(
+    assert rollback.index("Verify the independently pinned production-operations worker artifact") < rollback.index(
         "Verify rollback readiness"
     )
 
@@ -519,37 +519,54 @@ def test_release_and_rollback_retain_an_independently_approved_worker_artifact()
         assert 'test -n "${!value}"' in worker_check
         assert '[[ "$OPERATIONS_WORKER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]' in worker_check
         assert '[[ "$OPERATIONS_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]]' in worker_check
-        assert "OPERATIONS_WORKER_IDENTITY" in worker_check
-        assert 'expected_image="$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST"' in worker_check
+        assert "az acr manifest show-metadata" in worker_check
+        assert '"$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST"' in worker_check
+        assert '--query digest -o tsv | grep -qx "$OPERATIONS_WORKER_DIGEST"' in worker_check
+        assert "az acr manifest list-metadata" in worker_check
         assert "contains(tags, 'operations-worker-sha-$OPERATIONS_WORKER_REVISION')" in worker_check
         assert "contains(tags, 'sha-$OPERATIONS_WORKER_REVISION')" not in worker_check
-        assert ".properties.template.containers[0].image == $image" in worker_check
-        assert '"PCIP_OPERATIONS_WORKER_PROVENANCE" and .value == $provenance' in worker_check
-        assert "az containerapp job update" not in worker_check
-        assert "az containerapp job start" not in worker_check
         assert "|| true" not in worker_check
 
-        # The fixed event-driven worker and its security-critical template
-        # are proven without coupling the worker digest to App Service.
-        assert '.identity.type == "UserAssigned"' in worker_check
-        assert "def same_resource_id($expected):" in worker_check
-        assert "ascii_downcase" in worker_check
-        assert "map(ascii_downcase)" in worker_check
-        assert "same_resource_id($identity)" in worker_check
-        assert "to_entries | .[0].value.clientId" in worker_check
-        assert 'select(.name == "AZURE_CLIENT_ID" and .value == $identity_client_id)' in worker_check
-        assert '--arg identity "$OPERATIONS_WORKER_IDENTITY"' in worker_check
-        assert '(.properties.configuration.registries | length) == 1' in worker_check
-        assert '.server == $registry and (.identity | same_resource_id($identity))' in worker_check
-        assert '.name == "database-url" and (.identity | same_resource_id($identity))' in worker_check
-        assert '.properties.configuration.triggerType == "Event"' in worker_check
-        assert '"scripts.production_operation_worker"' in worker_check
-        assert '"DATABASE_URL" and .secretRef == "database-url"' in worker_check
-        assert '.type == "azure-servicebus" and (.identity | same_resource_id($identity))' in worker_check
+        # Release and rollback identities may prove the pre-approved artifact
+        # in ACR, but live job configuration belongs to the separately scoped
+        # production-operations identity and its own mandatory preflight.
+        forbidden = (
+            "OPERATIONS_JOB",
+            "OPERATIONS_WORKER_IDENTITY",
+            "az containerapp",
+            "Microsoft.App/jobs",
+            "jobs/start/action",
+            "--command",
+            "--args",
+            "servicebus.azure.net",
+            "approved-operations",
+            "DATABASE_URL",
+            "database-url",
+            "postgresql://",
+            "psql",
+            "key vault",
+            "keyvault",
+            "list-publishing-profiles",
+            "publishxml",
+            "publishing-credentials",
+            "kudu",
+            "ssh",
+            "az role assignment",
+            "Contributor",
+            "Website Contributor",
+        )
+        assert all(value.lower() not in worker_check.lower() for value in forbidden)
 
-    # Historical application rollbacks keep the approved worker, rather than
-    # replacing it with a possibly pre-worker application image.
-    assert "historical App" in rollback_worker_check
+    # Application release and rollback keep the approved worker independent;
+    # they never log in as the production-operations principal.
+    for workflow in (promotion, rollback):
+        assert "AZURE_PRODUCTION_OPERATIONS_CLIENT_ID" not in workflow
+        assert "az containerapp" not in workflow
+        assert "Microsoft.App/jobs" not in workflow
+        assert "servicebus.azure.net" not in workflow
+        assert "DATABASE_URL" not in workflow
+        assert "database-url" not in workflow
+        assert "az role assignment" not in workflow
     assert "ROLLBACK_DIGEST" not in rollback_worker_check
     assert "IMAGE_DIGEST" not in promotion_worker_check
 
@@ -601,19 +618,68 @@ def test_operations_workflow_keeps_independent_worker_validation_and_no_write_pr
     assert 'expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$PRODUCTION_IMAGE_DIGEST"' in workflow
     assert "az containerapp job update" not in workflow
     assert "az containerapp job start" not in workflow
+    assert "--command" not in workflow
+    assert "--args" not in workflow
     assert "Contributor" not in bicep
     assert "operationsWorkflowJobReader" in bicep
     assert "operationsWorkflowQueueSender" in bicep
 
 
+def test_operations_preflight_rejects_runtime_or_resource_drift_from_bicep_contract():
+    workflow = Path(".github/workflows/production-operation.yml").read_text()
+    bicep = Path("infra/production-operations.bicep").read_text()
+    filters = worker_identity_filters(workflow)
+
+    assert len(filters) == 1
+    worker_filter = filters[0]
+    assert worker_filter_accepts(worker_filter, approved_worker_job())
+
+    expected_checks = (
+        '.properties.configuration.replicaTimeout == 300',
+        '.properties.configuration.replicaRetryLimit == 0',
+        '.properties.configuration.eventTriggerConfig.scale.minExecutions == 0',
+        '.properties.configuration.eventTriggerConfig.scale.maxExecutions == 1',
+        '.properties.configuration.eventTriggerConfig.scale.pollingInterval == 15',
+        '(.properties.configuration | has("ingress") | not)',
+        '.properties.template.containers[0].resources.cpu == 0.25',
+        '.properties.template.containers[0].resources.memory == "0.5Gi"',
+    )
+    assert all(check in worker_filter for check in expected_checks)
+
+    for bicep_value in (
+        "replicaTimeout: 300",
+        "replicaRetryLimit: 0",
+        "minExecutions: 0",
+        "maxExecutions: 1",
+        "pollingInterval: 15",
+        "cpu: json('0.25')",
+        "memory: '0.5Gi'",
+    ):
+        assert bicep_value in bicep
+
+    drift_cases = (
+        (("properties", "configuration", "replicaTimeout"), 600),
+        (("properties", "configuration", "replicaRetryLimit"), 1),
+        (("properties", "configuration", "eventTriggerConfig", "scale", "minExecutions"), 1),
+        (("properties", "configuration", "eventTriggerConfig", "scale", "maxExecutions"), 2),
+        (("properties", "configuration", "eventTriggerConfig", "scale", "pollingInterval"), 30),
+        (("properties", "configuration", "ingress"), {"external": True}),
+        (("properties", "template", "containers", 0, "resources", "cpu"), 0.5),
+        (("properties", "template", "containers", 0, "resources", "memory"), "1Gi"),
+    )
+    for path, replacement in drift_cases:
+        job = approved_worker_job()
+        target = job
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = replacement
+        assert not worker_filter_accepts(worker_filter, job), path
+
+
 def test_worker_identity_checks_accept_casing_only_differences_and_reject_other_resource_ids():
-    workflows = [
-        Path(".github/workflows/production-operation.yml").read_text(),
-        Path(".github/workflows/promote-release.yml").read_text(),
-        Path(".github/workflows/rollback-release.yml").read_text(),
-    ]
-    filters = [jq_filter for workflow in workflows for jq_filter in worker_identity_filters(workflow)]
-    assert len(filters) == 5
+    workflow = Path(".github/workflows/production-operation.yml").read_text()
+    filters = worker_identity_filters(workflow)
+    assert len(filters) == 1
     assert all(worker_filter_accepts(jq_filter, approved_worker_job()) for jq_filter in filters)
 
     for replacement in (
@@ -625,15 +691,8 @@ def test_worker_identity_checks_accept_casing_only_differences_and_reject_other_
 
 
 def test_worker_identity_checks_reject_multiple_or_mismatched_identity_references():
-    filters = [
-        jq_filter
-        for workflow in (
-            Path(".github/workflows/production-operation.yml").read_text(),
-            Path(".github/workflows/promote-release.yml").read_text(),
-            Path(".github/workflows/rollback-release.yml").read_text(),
-        )
-        for jq_filter in worker_identity_filters(workflow)
-    ]
+    filters = worker_identity_filters(Path(".github/workflows/production-operation.yml").read_text())
+    assert len(filters) == 1
     different_identity = EXPECTED_WORKER_IDENTITY.replace(
         "pcip-production-operations-identity", "pcip-production-operations-other"
     )
@@ -656,15 +715,8 @@ def test_worker_identity_checks_reject_multiple_or_mismatched_identity_reference
 
 
 def test_worker_identity_checks_reject_missing_or_mismatched_runtime_client_id():
-    filters = [
-        jq_filter
-        for workflow in (
-            Path(".github/workflows/production-operation.yml").read_text(),
-            Path(".github/workflows/promote-release.yml").read_text(),
-            Path(".github/workflows/rollback-release.yml").read_text(),
-        )
-        for jq_filter in worker_identity_filters(workflow)
-    ]
+    filters = worker_identity_filters(Path(".github/workflows/production-operation.yml").read_text())
+    assert len(filters) == 1
 
     for replacement in (None, "44444444-4444-4444-4444-444444444444"):
         job = approved_worker_job()
