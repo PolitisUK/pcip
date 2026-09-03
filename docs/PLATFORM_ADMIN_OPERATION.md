@@ -177,6 +177,9 @@ target-state boolean, reason, generic flags, command, module, arguments, or
 field/value update. It verifies the membership and all other account fields
 before and after the update and rolls back on any mismatch. The packaged worker
 contains this purpose-built operation module, not the broader local command.
+Its non-sensitive correlation-bound completion record is committed with the
+grant, so a lost Service Bus acknowledgement or log delivery can return the
+same approved outcome on redelivery without performing a second update.
 
 The following command remains operational-reference documentation only; it is
 not packaged into the worker and is not an authorised production access path:

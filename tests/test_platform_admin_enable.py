@@ -17,6 +17,17 @@ from scripts.platform_admin_enable import (
     execute_platform_admin_enable,
 )
 
+CORRELATION_ID = "11111111-1111-4111-8111-111111111111"
+
+
+def run_enable(factory, *, email: str, expected_user_id: int, correlation_id=CORRELATION_ID):
+    return execute_platform_admin_enable(
+        factory,
+        email=email,
+        expected_user_id=expected_user_id,
+        correlation_id=correlation_id,
+    )
+
 
 @pytest.fixture
 def enable_database(tmp_path):
@@ -99,7 +110,7 @@ def test_enable_is_one_conditional_false_to_true_change(enable_database):
 
     event.listen(engine, "commit", record_commit)
     try:
-        result = execute_platform_admin_enable(
+        result = run_enable(
             factory, email=" EXISTING@EXAMPLE.ORG ", expected_user_id=user_id
         )
     finally:
@@ -125,7 +136,32 @@ def test_enable_is_one_conditional_false_to_true_change(enable_database):
     assert after["is_platform_admin"] is True
     assert len(commits) == 1
     with factory() as db:
-        assert db.scalar(select(AuditEvent)) is None
+        audit_event = db.scalar(select(AuditEvent))
+        assert audit_event is not None
+        assert audit_event.action == enable_module.ENABLE_AUDIT_ACTION
+        assert "existing@example.org" not in audit_event.detail
+        assert "sensitive-password-hash" not in audit_event.detail
+
+
+def test_same_correlation_recovers_a_committed_write_without_a_second_update(enable_database):
+    engine, factory = enable_database
+    user_id = make_expected_user(factory)
+    statements = []
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        first = run_enable(factory, email="existing@example.org", expected_user_id=user_id)
+        recovered = run_enable(factory, email="existing@example.org", expected_user_id=user_id)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert recovered == first
+    assert sum(statement.lstrip().upper().startswith("UPDATE") for statement in statements) == 1
+    with factory() as db:
+        assert len(db.scalars(select(AuditEvent)).all()) == 1
 
 
 @pytest.mark.parametrize(
@@ -143,7 +179,7 @@ def test_missing_unknown_or_malformed_target_fails_closed(enable_database, email
     expected_id = make_expected_user(factory)
     before = user_state(factory, expected_id)
     with pytest.raises(PlatformAdminEnableError):
-        execute_platform_admin_enable(factory, email=email, expected_user_id=user_id)
+        run_enable(factory, email=email, expected_user_id=user_id)
     assert user_state(factory, expected_id) == before
 
 
@@ -163,7 +199,7 @@ def test_email_and_user_id_must_resolve_the_same_account(enable_database):
         db.flush()
         other_id = other.id
     with pytest.raises(PlatformAdminEnableError):
-        execute_platform_admin_enable(factory, email="other@example.org", expected_user_id=first_id)
+        run_enable(factory, email="other@example.org", expected_user_id=first_id)
     assert user_state(factory, first_id)["is_platform_admin"] is False
     assert user_state(factory, other_id)["is_platform_admin"] is False
 
@@ -176,7 +212,10 @@ def test_ambiguous_email_resolution_fails_closed(enable_database, monkeypatch):
         monkeypatch.setattr(enable_module, "_locked_by_email", lambda *_args: [user, user])
         with pytest.raises(PlatformAdminEnableError):
             enable_module.platform_admin_enable(
-                db, email="existing@example.org", expected_user_id=user_id
+                db,
+                email="existing@example.org",
+                expected_user_id=user_id,
+                correlation_id=CORRELATION_ID,
             )
     assert user_state(factory, user_id)["is_platform_admin"] is False
 
@@ -193,7 +232,7 @@ def test_ineligible_or_already_admin_never_updates(enable_database, active, plat
     event.listen(engine, "before_cursor_execute", capture)
     try:
         with pytest.raises(PlatformAdminEnableError):
-            execute_platform_admin_enable(factory, email="existing@example.org", expected_user_id=user_id)
+            run_enable(factory, email="existing@example.org", expected_user_id=user_id)
     finally:
         event.remove(engine, "before_cursor_execute", capture)
     assert not any(statement.lstrip().upper().startswith("UPDATE") for statement in statements)
@@ -213,7 +252,7 @@ def test_unexpected_membership_state_fails_closed(enable_database, membership_mu
     with factory.begin() as db:
         membership_mutator(db, user_id)
     with pytest.raises(PlatformAdminEnableError):
-        execute_platform_admin_enable(factory, email="existing@example.org", expected_user_id=user_id)
+        run_enable(factory, email="existing@example.org", expected_user_id=user_id)
     assert user_state(factory, user_id)["is_platform_admin"] is False
 
 
@@ -230,7 +269,7 @@ def test_conditional_update_rowcount_anomalies_roll_back(enable_database, monkey
 
     monkeypatch.setattr(enable_module.Session, "execute", guarded_execute)
     with pytest.raises(PlatformAdminEnableError):
-        execute_platform_admin_enable(factory, email="existing@example.org", expected_user_id=user_id)
+        run_enable(factory, email="existing@example.org", expected_user_id=user_id)
     assert user_state(factory, user_id)["is_platform_admin"] is False
 
 
@@ -248,14 +287,14 @@ def test_post_write_verification_failure_rolls_back(enable_database, monkeypatch
 
     monkeypatch.setattr(enable_module, "_account_snapshot", changed_snapshot)
     with pytest.raises(PlatformAdminEnableError):
-        execute_platform_admin_enable(factory, email="existing@example.org", expected_user_id=user_id)
+        run_enable(factory, email="existing@example.org", expected_user_id=user_id)
     assert user_state(factory, user_id)["is_platform_admin"] is False
 
 
 def test_result_never_contains_email_or_authentication_material(enable_database):
     _, factory = enable_database
     user_id = make_expected_user(factory)
-    approved_result = execute_platform_admin_enable(
+    approved_result = run_enable(
         factory, email="existing@example.org", expected_user_id=user_id
     ).approved_result()
     assert isinstance(approved_result["memberships"], list)

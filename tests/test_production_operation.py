@@ -240,8 +240,8 @@ def test_worker_calls_only_fixed_platform_admin_enable_and_emits_approved_result
     receiver = FakeReceiver([message])
     captured = []
 
-    def enable(*, email, expected_user_id):
-        captured.append((email, expected_user_id))
+    def enable(*, email, expected_user_id, correlation_id):
+        captured.append((email, expected_user_id, correlation_id))
         return SimpleNamespace(
             approved_result=lambda: {
                 "user_id": 7,
@@ -258,7 +258,7 @@ def test_worker_calls_only_fixed_platform_admin_enable_and_emits_approved_result
     monkeypatch.setattr(worker.platform_admin_enable, "execute_platform_admin_enable", enable)
     assert worker.main(client_factory=lambda _namespace: FakeClient(receiver), environ=production_environment()) == 0
 
-    assert captured == [("existing@example.org", 7)]
+    assert captured == [("existing@example.org", 7, request["correlation_id"])]
     assert receiver.completed == [message]
     rendered = capsys.readouterr().out
     assert request["email"] not in rendered

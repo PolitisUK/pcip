@@ -205,6 +205,7 @@ def _validated_result(request: OperationRequest) -> dict[str, Any]:
             result = platform_admin_enable.execute_platform_admin_enable(
                 email=request.email,
                 expected_user_id=request.user_id,
+                correlation_id=request.correlation_id,
             ).approved_result()
         except platform_admin_enable.PlatformAdminEnableError as exc:
             raise ProductionOperationError("Production operation refused.") from exc
