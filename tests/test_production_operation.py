@@ -506,11 +506,13 @@ def test_operation_result_polling_orders_by_time_and_fails_on_query_errors_but_t
     result_step = workflow_step(workflow, "Retrieve the approved non-sensitive result")
 
     assert "ContainerAppConsoleLogs" in result_step
-    assert "ContainerAppConsoleLogs_CL" not in result_step
-    assert "TimeGenerated:datetime, Log:string" in result_step
-    assert "where Log has '$CORRELATION_ID'" in result_step
-    assert "project Log" in result_step
-    assert "--query '[].Log'" in result_step
+    assert "ContainerAppConsoleLogs_CL" in result_step
+    assert "TimeGenerated:datetime, OperationLog:string" in result_step
+    assert "(ContainerAppConsoleLogs | project TimeGenerated, OperationLog=Log)" in result_step
+    assert "(ContainerAppConsoleLogs_CL | project TimeGenerated, OperationLog=Log_s)" in result_step
+    assert "where OperationLog has '$CORRELATION_ID'" in result_step
+    assert "project OperationLog" in result_step
+    assert "--query '[].OperationLog'" in result_step
     assert "order by TimeGenerated asc" in result_step
     assert "_timestamp_d" not in result_step
     assert "logs=$(az monitor log-analytics query" in result_step
@@ -520,7 +522,7 @@ def test_operation_result_polling_orders_by_time_and_fails_on_query_errors_but_t
     # genuine Azure query error exits under the step's set -euo pipefail.
     assert "set -euo pipefail" in result_step
     assert "union isfuzzy=true" in result_step
-    assert "datatable(TimeGenerated:datetime, Log:string)[]" in result_step
+    assert "datatable(TimeGenerated:datetime, OperationLog:string)[]" in result_step
     assert "for attempt in {1..30}; do" in result_step
     assert "sleep 10" in result_step
     assert ".correlation_id == $correlation" in result_step

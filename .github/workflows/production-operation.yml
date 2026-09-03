@@ -166,15 +166,15 @@ jobs:
           CORRELATION_ID: ${{ steps.operation.outputs.correlation_id }}
         run: |
           set -euo pipefail
-          # Direct Log Analytics integration uses the Azure table
-          # ContainerAppConsoleLogs(TimeGenerated, Log). The typed empty leg
-          # lets the first operation poll safely before that optional table is
-          # materialised; other query/authentication failures still exit here.
-          query="union isfuzzy=true (datatable(TimeGenerated:datetime, Log:string)[]), ContainerAppConsoleLogs | where Log has '$CORRELATION_ID' | order by TimeGenerated asc | project Log"
+          # Container Apps direct Log Analytics integration can populate either
+          # the resource-specific or legacy custom table. Normalise both to one
+          # column; the typed empty leg tolerates first-run table propagation,
+          # while genuine query/authentication failures still exit here.
+          query="union isfuzzy=true (datatable(TimeGenerated:datetime, OperationLog:string)[]), (ContainerAppConsoleLogs | project TimeGenerated, OperationLog=Log), (ContainerAppConsoleLogs_CL | project TimeGenerated, OperationLog=Log_s) | where OperationLog has '$CORRELATION_ID' | order by TimeGenerated asc | project OperationLog"
           for attempt in {1..30}; do
             # An empty successful response is expected while logs propagate.
             # A query failure must fail this protected operation explicitly.
-            logs=$(az monitor log-analytics query --workspace "$OPERATIONS_LOG_WORKSPACE" --analytics-query "$query" --query '[].Log' -o json)
+            logs=$(az monitor log-analytics query --workspace "$OPERATIONS_LOG_WORKSPACE" --analytics-query "$query" --query '[].OperationLog' -o json)
             result=$(jq -r '.[]? | select(test("\\{.*\\}$")) | capture("(?<result>\\{.*\\}$").result' <<<"$logs" | tail -n 1)
             if jq -e --arg correlation "$CORRELATION_ID" '
               .correlation_id == $correlation and
