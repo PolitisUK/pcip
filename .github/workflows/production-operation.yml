@@ -9,9 +9,14 @@ on:
         type: choice
         options:
           - lookup-user-identity
+          - set-platform-admin-dry-run
       email:
-        description: Exact email for the approved read-only lookup. It is masked and never added to summaries.
+        description: Exact email for the approved read-only operation. It is masked and never added to summaries.
         required: true
+        type: string
+      user_id:
+        description: Verified internal user ID; required only for the platform-admin dry run.
+        required: false
         type: string
       release_sha:
         description: Full SHA reported by the currently deployed production readiness endpoint.
@@ -53,6 +58,7 @@ jobs:
       OPERATIONS_WORKER_REVISION: ${{ vars.PCIP_PRODUCTION_OPERATIONS_WORKER_REVISION }}
       OPERATION: ${{ inputs.operation }}
       OPERATION_EMAIL: ${{ inputs.email }}
+      OPERATION_USER_ID: ${{ inputs.user_id }}
       RELEASE_SHA: ${{ inputs.release_sha }}
       PRODUCTION_IMAGE_DIGEST: ${{ inputs.production_image_digest }}
       OPERATION_OPERATOR: ${{ inputs.operation_operator }}
@@ -75,7 +81,18 @@ jobs:
           for value in AZURE_RESOURCE_GROUP PRODUCTION_APP PRODUCTION_ACR OPERATIONS_AZURE_CLIENT_ID OPERATIONS_JOB OPERATIONS_WORKER_IDENTITY OPERATIONS_SERVICEBUS_NAMESPACE OPERATIONS_QUEUE OPERATIONS_LOG_WORKSPACE OPERATIONS_WORKER_DIGEST OPERATIONS_WORKER_REVISION RELEASE_SHA PRODUCTION_IMAGE_DIGEST OPERATION_OPERATOR; do
             test -n "${!value}" || { echo "$value is required." >&2; exit 1; }
           done
-          test "$OPERATION" = "lookup-user-identity" || { echo "The requested operation is not approved." >&2; exit 1; }
+          case "$OPERATION" in
+            lookup-user-identity)
+              test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
+              ;;
+            set-platform-admin-dry-run)
+              [[ "$OPERATION_USER_ID" =~ ^[1-9][0-9]*$ ]] || { echo "The approved operation input was rejected." >&2; exit 1; }
+              ;;
+            *)
+              echo "The requested operation is not approved." >&2
+              exit 1
+              ;;
+          esac
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full lowercase commit SHA." >&2; exit 1; }
           [[ "$PRODUCTION_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "production_image_digest must be immutable." >&2; exit 1; }
           [[ "$OPERATIONS_WORKER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "operations worker digest must be immutable." >&2; exit 1; }
@@ -140,8 +157,20 @@ jobs:
           correlation_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
           request_file=$(mktemp)
           trap 'rm -f "$request_file"' EXIT
-          jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" --arg email "$OPERATION_EMAIL" \
-            '{correlation_id: $correlation_id, operation: $operation, email: $email}' > "$request_file"
+          case "$OPERATION" in
+            lookup-user-identity)
+              jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" --arg email "$OPERATION_EMAIL" \
+                '{correlation_id: $correlation_id, operation: $operation, email: $email}' > "$request_file"
+              ;;
+            set-platform-admin-dry-run)
+              jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" --arg email "$OPERATION_EMAIL" --argjson user_id "$OPERATION_USER_ID" \
+                '{correlation_id: $correlation_id, operation: $operation, email: $email, user_id: $user_id}' > "$request_file"
+              ;;
+            *)
+              echo "The requested operation is not approved." >&2
+              exit 1
+              ;;
+          esac
           access_token=$(az account get-access-token --resource https://servicebus.azure.net --query accessToken -o tsv)
           curl --fail --silent --show-error --request POST \
             --header "Authorization: Bearer $access_token" \
@@ -175,7 +204,7 @@ jobs:
             # An empty successful response is expected while logs propagate.
             # A query failure must fail this protected operation explicitly.
             logs=$(az monitor log-analytics query --workspace "$OPERATIONS_LOG_WORKSPACE" --analytics-query "$query" --query '[].OperationLog' -o json)
-            result=$(jq -c --arg correlation "$CORRELATION_ID" '
+            result=$(jq -c --arg correlation "$CORRELATION_ID" --arg operation "$OPERATION" --arg user_id "$OPERATION_USER_ID" '
               .[]?
               | select(type == "string")
               | (try fromjson catch empty)
@@ -184,12 +213,35 @@ jobs:
                   .correlation_id == $correlation and
                   .status == "succeeded" and
                   (.result | type == "object") and
-                  (.result | (keys | sort) == ["active", "is_platform_admin", "memberships", "user_id"]) and
-                  (.result.user_id | type == "number") and
-                  (.result.active | type == "boolean") and
-                  (.result.is_platform_admin | type == "boolean") and
-                  (.result.memberships | type == "array") and
-                  all(.result.memberships[]; type == "object" and (keys | sort) == ["is_active", "organisation_id", "role"] and (.organisation_id | type == "number") and (.role | type == "string") and (.is_active | type == "boolean"))
+                  (
+                    (
+                      $operation == "lookup-user-identity" and
+                      (.result | (keys | sort) == ["active", "is_platform_admin", "memberships", "user_id"]) and
+                      (.result.user_id | type == "number") and
+                      (.result.active | type == "boolean") and
+                      (.result.is_platform_admin | type == "boolean") and
+                      (.result.memberships | type == "array") and
+                      all(.result.memberships[]; type == "object" and (keys | sort) == ["is_active", "organisation_id", "role"] and (.organisation_id | type == "number") and (.role | type == "string") and (.is_active | type == "boolean"))
+                    ) or
+                    (
+                      $operation == "set-platform-admin-dry-run" and
+                      (.result | (keys | sort) == ["account_fields_unchanged", "active", "current_is_platform_admin", "intended_is_platform_admin", "memberships", "memberships_unchanged", "user_id", "would_change"]) and
+                      (.result.user_id | type == "number") and
+                      (.result.user_id | tostring) == $user_id and
+                      (.result.active | type == "boolean") and
+                      (.result.current_is_platform_admin | type == "boolean") and
+                      (.result.intended_is_platform_admin | type == "boolean") and
+                      (.result.would_change | type == "boolean") and
+                      .result.memberships_unchanged == true and
+                      .result.account_fields_unchanged == true and
+                      (.result.memberships | type == "array") and
+                      all(.result.memberships[]; type == "object" and (keys | sort) == ["is_active", "organisation_id", "role"] and (.organisation_id | type == "number") and (.role | type == "string") and (.is_active | type == "boolean")) and
+                      (
+                        (.result.active == true and .result.intended_is_platform_admin == true and .result.would_change == (.result.current_is_platform_admin | not)) or
+                        (.result.active == false and .result.intended_is_platform_admin == .result.current_is_platform_admin and .result.would_change == false)
+                      )
+                    )
+                  )
                 )
             ' <<<"$logs" | tail -n 1)
             if test -n "$result"; then

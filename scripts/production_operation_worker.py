@@ -11,19 +11,20 @@ import io
 import json
 import os
 import sys
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 from uuid import UUID
 
 from azure.identity import DefaultAzureCredential
 from azure.servicebus import ServiceBusClient
 
-from scripts import lookup_user_identity
-
+from scripts import lookup_user_identity, platform_admin_dry_run
 
 SERVICE_BUS_NAMESPACE_ENV = "PCIP_OPERATIONS_SERVICEBUS_NAMESPACE"
 SERVICE_BUS_QUEUE_ENV = "PCIP_OPERATIONS_QUEUE"
-APPROVED_OPERATION = "lookup-user-identity"
+LOOKUP_OPERATION = "lookup-user-identity"
+PLATFORM_ADMIN_DRY_RUN_OPERATION = "set-platform-admin-dry-run"
 
 
 class ProductionOperationError(RuntimeError):
@@ -33,7 +34,9 @@ class ProductionOperationError(RuntimeError):
 @dataclass(frozen=True)
 class OperationRequest:
     correlation_id: str
+    operation: str
     email: str
+    user_id: int | None = None
 
 
 def _validate_runtime(environ: Mapping[str, str] | None = None) -> tuple[str, str]:
@@ -55,28 +58,57 @@ def parse_request(body: bytes) -> OperationRequest:
         payload = json.loads(body)
     except (TypeError, ValueError) as exc:
         raise ProductionOperationError("Production operation refused.") from exc
-    if not isinstance(payload, dict) or set(payload) != {"correlation_id", "email", "operation"}:
+    if not isinstance(payload, dict):
         raise ProductionOperationError("Production operation refused.")
     correlation_id = payload.get("correlation_id")
     email = payload.get("email")
-    if payload.get("operation") != APPROVED_OPERATION or not isinstance(correlation_id, str) or not isinstance(email, str):
+    operation = payload.get("operation")
+    if not isinstance(correlation_id, str) or not isinstance(email, str):
         raise ProductionOperationError("Production operation refused.")
     try:
         parsed_id = UUID(correlation_id)
     except (TypeError, ValueError) as exc:
         raise ProductionOperationError("Production operation refused.") from exc
-    if str(parsed_id) != correlation_id.lower() or not email or len(email) > 254 or "\n" in email or "\r" in email:
+    if (
+        str(parsed_id) != correlation_id.lower()
+        or not email
+        or len(email) > 254
+        or "\n" in email
+        or "\r" in email
+    ):
         raise ProductionOperationError("Production operation refused.")
-    return OperationRequest(correlation_id=correlation_id, email=email)
+    if operation == LOOKUP_OPERATION:
+        if set(payload) != {"correlation_id", "email", "operation"}:
+            raise ProductionOperationError("Production operation refused.")
+        return OperationRequest(
+            correlation_id=correlation_id,
+            operation=operation,
+            email=email,
+        )
+    if operation == PLATFORM_ADMIN_DRY_RUN_OPERATION:
+        if set(payload) != {"correlation_id", "email", "operation", "user_id"}:
+            raise ProductionOperationError("Production operation refused.")
+        user_id = payload.get("user_id")
+        if type(user_id) is not int or user_id <= 0:
+            raise ProductionOperationError("Production operation refused.")
+        return OperationRequest(
+            correlation_id=correlation_id,
+            operation=operation,
+            email=email,
+            user_id=user_id,
+        )
+    raise ProductionOperationError("Production operation refused.")
 
 
-def _lookup_result(email: str) -> dict[str, Any]:
-    """Call the exact existing CLI without permitting caller-controlled flags."""
+def _run_fixed_cli(
+    main: Callable[[Sequence[str]], int], argv: list[str]
+) -> dict[str, Any]:
+    """Run one internally selected CLI while suppressing all unapproved output."""
     output = io.StringIO()
     errors = io.StringIO()
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-            exit_code = lookup_user_identity.main(["--email", email])
+            exit_code = main(argv)
     except SystemExit as exc:
         exit_code = int(exc.code) if isinstance(exc.code, int) else 2
     if exit_code != 0:
@@ -90,11 +122,90 @@ def _lookup_result(email: str) -> dict[str, Any]:
     return result
 
 
+def _valid_memberships(value: Any) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(item, dict)
+        and set(item) == {"organisation_id", "role", "is_active"}
+        and type(item["organisation_id"]) is int
+        and isinstance(item["role"], str)
+        and type(item["is_active"]) is bool
+        for item in value
+    )
+
+
+def _validated_result(request: OperationRequest) -> dict[str, Any]:
+    if request.operation == LOOKUP_OPERATION:
+        result = _run_fixed_cli(lookup_user_identity.main, ["--email", request.email])
+        if (
+            set(result) != {"user_id", "active", "is_platform_admin", "memberships"}
+            or type(result["user_id"]) is not int
+            or type(result["active"]) is not bool
+            or type(result["is_platform_admin"]) is not bool
+            or not _valid_memberships(result["memberships"])
+        ):
+            raise ProductionOperationError("Production operation refused.")
+        return result
+
+    if (
+        request.operation == PLATFORM_ADMIN_DRY_RUN_OPERATION
+        and request.user_id is not None
+    ):
+        result = _run_fixed_cli(
+            platform_admin_dry_run.main,
+            ["--email", request.email, "--expected-user-id", str(request.user_id)],
+        )
+        if (
+            set(result)
+            != {
+                "user_id",
+                "active",
+                "current_is_platform_admin",
+                "intended_is_platform_admin",
+                "would_change",
+                "memberships",
+                "memberships_unchanged",
+                "account_fields_unchanged",
+            }
+            or type(result["user_id"]) is not int
+            or result["user_id"] != request.user_id
+            or type(result["active"]) is not bool
+            or type(result["current_is_platform_admin"]) is not bool
+            or type(result["intended_is_platform_admin"]) is not bool
+            or type(result["would_change"]) is not bool
+            or type(result["memberships_unchanged"]) is not bool
+            or type(result["account_fields_unchanged"]) is not bool
+            or not result["memberships_unchanged"]
+            or not result["account_fields_unchanged"]
+            or not _valid_memberships(result["memberships"])
+            or (
+                result["active"]
+                and (
+                    not result["intended_is_platform_admin"]
+                    or result["would_change"]
+                    != (not result["current_is_platform_admin"])
+                )
+            )
+            or (
+                not result["active"]
+                and (
+                    result["intended_is_platform_admin"]
+                    != result["current_is_platform_admin"]
+                    or result["would_change"]
+                )
+            )
+        ):
+            raise ProductionOperationError("Production operation refused.")
+        return result
+    raise ProductionOperationError("Production operation refused.")
+
+
 def _message_body(message: Any) -> bytes:
     return b"".join(bytes(section) for section in message.body)
 
 
-def _emit(correlation_id: str, *, status: str, result: dict[str, Any] | None = None) -> None:
+def _emit(
+    correlation_id: str, *, status: str, result: dict[str, Any] | None = None
+) -> None:
     payload: dict[str, Any] = {"correlation_id": correlation_id, "status": status}
     if result is not None:
         payload["result"] = result
@@ -109,7 +220,7 @@ def process_one_request(client: Any, queue: str) -> int:
         message = messages[0]
         try:
             request = parse_request(_message_body(message))
-            result = _lookup_result(request.email)
+            result = _validated_result(request)
         except ProductionOperationError:
             # Invalid or refused requests are consumed without echoing their body.
             receiver.complete_message(message)
