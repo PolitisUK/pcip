@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import User
+from app.models import Organisation, User
 from app.observability import configure_observability
 from app.main import (
     InMemoryRateLimiter,
@@ -477,6 +477,401 @@ def test_platform_admin_is_explicit_and_customer_owner_cannot_open_global_view()
         assert allowed.status_code == 200
         assert 'Platform administration' in allowed.text
         assert 'Customer organisations' in allowed.text
+
+
+def set_local_platform_admin(enabled: bool = True) -> tuple[int, int]:
+    """Set only the seeded local test identity's platform flag."""
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert user is not None
+        user.is_platform_admin = enabled
+        db.commit()
+        return user.id, user.organisation_id
+
+
+def create_customer_organisation_through_ui(name: str, slug: str):
+    set_local_platform_admin()
+    client.cookies.clear()
+    auth()
+    return post_with_csrf(
+        '/admin/organisations',
+        data={'name': name, 'slug': slug},
+        follow_redirects=False,
+    )
+
+
+def test_platform_admin_customer_organisation_form_and_post_are_server_protected():
+    from app.models import OrganisationMembership
+    from app.security import hash_password
+
+    restricted_accounts = []
+    with client:
+        set_local_platform_admin()
+        client.cookies.clear()
+        auth()
+        dashboard = client.get('/admin')
+        form = client.get('/admin/organisations/new')
+        assert dashboard.status_code == 200
+        assert 'href="/admin/organisations/new"' in dashboard.text
+        assert form.status_code == 200
+        assert 'action="/admin/organisations"' in form.text
+        assert 'name="csrf_token"' in form.text
+        assert 'name="name"' in form.text
+        assert 'name="slug"' in form.text
+
+        set_local_platform_admin(False)
+        client.cookies.clear()
+        auth()
+        assert client.get('/admin/organisations/new').status_code == 404
+        denied_owner_post = post_with_csrf(
+            '/admin/organisations',
+            data={'name': unique_value('Denied owner'), 'slug': unique_value('denied-owner')},
+            follow_redirects=False,
+        )
+        assert denied_owner_post.status_code == 404
+
+        with SessionLocal() as db:
+            organisation = db.scalar(select(Organisation).where(Organisation.slug == 'politis-demo'))
+            assert organisation is not None
+            for role in ('admin', 'researcher', 'observer'):
+                email = f"{unique_value(role)}@example.org"
+                password = 'RoleBoundaryPass123!'
+                user = User(
+                    organisation_id=organisation.id,
+                    name=f'{role.title()} boundary user',
+                    email=email,
+                    password_hash=hash_password(password),
+                    role=role,
+                    is_platform_admin=False,
+                )
+                db.add(user)
+                db.flush()
+                db.add(OrganisationMembership(
+                    user_id=user.id,
+                    organisation_id=organisation.id,
+                    role=role,
+                ))
+                restricted_accounts.append((email, password))
+            db.commit()
+
+        for email, password in restricted_accounts:
+            client.cookies.clear()
+            assert login_as(email, password).status_code == 303
+            assert client.get('/admin/organisations/new').status_code == 404
+            denied = post_with_csrf(
+                '/admin/organisations',
+                data={'name': unique_value('Denied role'), 'slug': unique_value('denied-role')},
+                follow_redirects=False,
+            )
+            assert denied.status_code == 404
+
+        client.cookies.clear()
+        unauthenticated_token = csrf_token()
+        unauthenticated = client.post(
+            '/admin/organisations',
+            data={
+                'name': unique_value('Denied anonymous'),
+                'slug': unique_value('denied-anonymous'),
+                'csrf_token': unauthenticated_token,
+            },
+            follow_redirects=False,
+        )
+        assert unauthenticated.status_code == 303
+        assert unauthenticated.headers['location'] == '/login'
+
+
+def test_platform_admin_creates_isolated_customer_organisation_atomically():
+    from app.models import AuditEvent, OrganisationMembership, Project
+    from app.security import decode_session
+
+    name = unique_value('Dunstable Town Council')
+    slug = unique_value('dunstable-town-council')
+    with client:
+        creator_id, original_organisation_id = set_local_platform_admin()
+        with SessionLocal() as db:
+            creator = db.get(User, creator_id)
+            assert creator is not None
+            original_memberships = {
+                (membership.organisation_id, membership.role, membership.is_active)
+                for membership in creator.memberships
+            }
+            all_memberships_before = db.scalar(select(func.count(OrganisationMembership.id)))
+            unrelated_memberships_before = db.scalar(
+                select(func.count(OrganisationMembership.id)).where(
+                    OrganisationMembership.user_id != creator_id
+                )
+            )
+
+        client.cookies.clear()
+        auth()
+        response = post_with_csrf(
+            '/admin/organisations',
+            data={'name': f'  {name}  ', 'slug': f'  {slug}  '},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers['location'] == '/admin'
+        session_identity = decode_session(client.cookies.get('session'))
+        assert session_identity is not None
+        assert session_identity.organisation_id == original_organisation_id
+
+        with SessionLocal() as db:
+            organisation = db.scalar(select(Organisation).where(Organisation.slug == slug))
+            assert organisation is not None
+            assert organisation.name == name
+            assert db.scalar(
+                select(func.count(Organisation.id)).where(Organisation.slug == slug)
+            ) == 1
+            membership = db.scalar(select(OrganisationMembership).where(
+                OrganisationMembership.user_id == creator_id,
+                OrganisationMembership.organisation_id == organisation.id,
+            ))
+            assert membership is not None
+            assert membership.role == 'owner'
+            assert membership.is_active is True
+            creator = db.get(User, creator_id)
+            assert creator is not None
+            assert creator.is_platform_admin is True
+            assert original_memberships.issubset({
+                (row.organisation_id, row.role, row.is_active)
+                for row in creator.memberships
+            })
+            assert db.scalar(select(func.count(OrganisationMembership.id))) == all_memberships_before + 1
+            assert db.scalar(
+                select(func.count(OrganisationMembership.id)).where(
+                    OrganisationMembership.user_id != creator_id
+                )
+            ) == unrelated_memberships_before
+            event = db.scalar(select(AuditEvent).where(
+                AuditEvent.action == 'platform_admin.organisation_created',
+                AuditEvent.entity_type == 'organisation',
+                AuditEvent.entity_id == str(organisation.id),
+            ))
+            assert event is not None
+            assert event.actor_user_id == creator_id
+            assert event.organisation_id == organisation.id
+            assert event.detail == ''
+            new_organisation_id = organisation.id
+            assert db.scalar(select(func.count(Project.id)).where(
+                Project.organisation_id == new_organisation_id
+            )) == 0
+
+        refreshed_dashboard = client.get('/admin')
+        assert refreshed_dashboard.status_code == 200
+        assert 'Customer organisation created.' in refreshed_dashboard.text
+        assert name in refreshed_dashboard.text
+        switcher_page = client.get('/')
+        assert f'<option value="{new_organisation_id}"' in switcher_page.text
+        assert name in switcher_page.text
+
+        switched = post_with_csrf(
+            '/organisations/switch',
+            data={'organisation_id': new_organisation_id},
+            follow_redirects=False,
+        )
+        assert switched.status_code == 303
+        empty_projects = client.get('/projects')
+        assert empty_projects.status_code == 200
+        assert 'No projects have been created.' in empty_projects.text
+        assert 'Town Centre Experience' not in empty_projects.text
+
+
+def test_customer_organisation_accepts_an_explicit_valid_edited_slug():
+    name = unique_value('Bedfordshire Research Partnership')
+    edited_slug = unique_value('beds-research')
+    with client:
+        response = create_customer_organisation_through_ui(name, edited_slug)
+        assert response.status_code == 303
+        with SessionLocal() as db:
+            organisation = db.scalar(select(Organisation).where(Organisation.name == name))
+            assert organisation is not None
+            assert organisation.slug == edited_slug
+
+
+@pytest.mark.parametrize(
+    ('name', 'slug', 'expected_message'),
+    [
+        ('', 'valid-slug', 'Enter an organisation name.'),
+        ('Valid organisation', '', 'Enter an organisation slug.'),
+        ('Valid organisation', 'Invalid Slug', 'Use lowercase letters and numbers'),
+        ('Valid organisation', '-leading-hyphen', 'Use lowercase letters and numbers'),
+        ('Valid organisation', 'double--hyphen', 'Use lowercase letters and numbers'),
+        ('x' * 201, 'valid-slug', 'Organisation names must be 200 characters or fewer.'),
+        ('Valid organisation', 'x' * 101, 'Organisation slugs must be 100 characters or fewer.'),
+    ],
+)
+def test_customer_organisation_validation_rejects_invalid_boundaries(name, slug, expected_message):
+    with client:
+        set_local_platform_admin()
+        with SessionLocal() as db:
+            organisations_before = db.scalar(select(func.count(Organisation.id)))
+        response = create_customer_organisation_through_ui(name, slug)
+        assert response.status_code == 400
+        assert expected_message in response.text
+        with SessionLocal() as db:
+            assert db.scalar(select(func.count(Organisation.id))) == organisations_before
+
+
+def test_customer_organisation_duplicate_name_slug_and_submission_fail_closed():
+    first_name = unique_value('Duplicate customer')
+    first_slug = unique_value('duplicate-customer')
+    with client:
+        first = create_customer_organisation_through_ui(first_name, first_slug)
+        assert first.status_code == 303
+
+        duplicate_name = create_customer_organisation_through_ui(
+            first_name,
+            unique_value('different-slug'),
+        )
+        assert duplicate_name.status_code == 409
+        assert 'An organisation with this name already exists.' in duplicate_name.text
+
+        duplicate_slug = create_customer_organisation_through_ui(
+            unique_value('Different name'),
+            first_slug,
+        )
+        assert duplicate_slug.status_code == 409
+        assert 'An organisation with this slug already exists.' in duplicate_slug.text
+
+        duplicate_submit = create_customer_organisation_through_ui(first_name, first_slug)
+        assert duplicate_submit.status_code == 409
+        with SessionLocal() as db:
+            assert db.scalar(select(func.count(Organisation.id)).where(
+                Organisation.name == first_name,
+                Organisation.slug == first_slug,
+            )) == 1
+
+
+def test_customer_organisation_creation_is_post_only_and_csrf_protected():
+    name = unique_value('Request safety council')
+    slug = unique_value('request-safety-council')
+    with client:
+        set_local_platform_admin()
+        client.cookies.clear()
+        auth()
+        method_not_allowed = client.get('/admin/organisations', follow_redirects=False)
+        assert method_not_allowed.status_code == 405
+        missing_csrf = client.post(
+            '/admin/organisations',
+            data={'name': name, 'slug': slug},
+            follow_redirects=False,
+        )
+        assert missing_csrf.status_code == 422
+        invalid_csrf = client.post(
+            '/admin/organisations',
+            data={'name': name, 'slug': slug, 'csrf_token': 'not-the-session-token'},
+            follow_redirects=False,
+        )
+        assert invalid_csrf.status_code == 403
+        with SessionLocal() as db:
+            assert db.scalar(select(Organisation.id).where(Organisation.slug == slug)) is None
+
+
+def test_customer_organisation_membership_failure_rolls_back_everything(monkeypatch):
+    import app.main as main_module
+    from app.models import AuditEvent, OrganisationMembership
+
+    name = unique_value('Atomic rollback council')
+    slug = unique_value('atomic-rollback-council')
+
+    def fail_membership(*_args, **_kwargs):
+        raise RuntimeError('simulated membership failure')
+
+    with client:
+        creator_id, _ = set_local_platform_admin()
+        with SessionLocal() as db:
+            memberships_before = db.scalar(select(func.count(OrganisationMembership.id)))
+            creation_audits_before = db.scalar(select(func.count(AuditEvent.id)).where(
+                AuditEvent.action == 'platform_admin.organisation_created',
+                AuditEvent.actor_user_id == creator_id,
+            ))
+        client.cookies.clear()
+        auth()
+        monkeypatch.setattr(main_module, 'add_organisation_membership', fail_membership)
+        with pytest.raises(RuntimeError, match='simulated membership failure'):
+            post_with_csrf(
+                '/admin/organisations',
+                data={'name': name, 'slug': slug},
+                follow_redirects=False,
+            )
+
+    with SessionLocal() as db:
+        assert db.scalar(select(Organisation.id).where(Organisation.slug == slug)) is None
+        assert db.scalar(select(func.count(OrganisationMembership.id))) == memberships_before
+        assert db.scalar(select(func.count(AuditEvent.id)).where(
+            AuditEvent.action == 'platform_admin.organisation_created',
+            AuditEvent.actor_user_id == creator_id,
+        )) == creation_audits_before
+
+
+def test_new_customer_organisation_remains_hidden_from_unrelated_owner():
+    from app.models import OrganisationMembership
+    from app.security import hash_password
+
+    name = unique_value('Private customer workspace')
+    slug = unique_value('private-customer-workspace')
+    unrelated_name = unique_value('Unrelated owner council')
+    unrelated_slug = unique_value('unrelated-owner-council')
+    unrelated_email = f"{unique_value('unrelated-owner')}@example.org"
+    password = 'UnrelatedOwnerPass123!'
+
+    with client:
+        assert create_customer_organisation_through_ui(name, slug).status_code == 303
+        with SessionLocal() as db:
+            new_organisation = db.scalar(select(Organisation).where(Organisation.slug == slug))
+            assert new_organisation is not None
+            unrelated_organisation = Organisation(name=unrelated_name, slug=unrelated_slug)
+            db.add(unrelated_organisation)
+            db.flush()
+            unrelated_owner = User(
+                organisation_id=unrelated_organisation.id,
+                name='Unrelated owner',
+                email=unrelated_email,
+                password_hash=hash_password(password),
+                role='owner',
+                is_platform_admin=False,
+            )
+            db.add(unrelated_owner)
+            db.flush()
+            db.add(OrganisationMembership(
+                user_id=unrelated_owner.id,
+                organisation_id=unrelated_organisation.id,
+                role='owner',
+            ))
+            db.commit()
+            new_organisation_id = new_organisation.id
+
+        client.cookies.clear()
+        assert login_as(unrelated_email, password).status_code == 303
+        home = client.get('/')
+        assert home.status_code == 200
+        assert name not in home.text
+        assert '/admin/organisations/new' not in home.text
+        assert client.get('/admin').status_code == 404
+        assert client.get('/admin/organisations/new').status_code == 404
+        switch_attempt = post_with_csrf(
+            '/organisations/switch',
+            data={'organisation_id': new_organisation_id},
+            follow_redirects=False,
+        )
+        assert switch_attempt.status_code == 403
+        projects = client.get('/projects')
+        assert projects.status_code == 200
+        assert name not in projects.text
+        assert 'Town Centre Experience' not in projects.text
+
+
+def test_customer_organisation_slug_suggestion_has_a_stable_editable_contract():
+    javascript = Path('app/static/app.js').read_text()
+    template = Path('app/templates/platform_organisation_create.html').read_text()
+
+    assert 'function organisationSlugFromName(value)' in javascript
+    assert '.normalize("NFKD")' in javascript
+    assert '.replace(/[^a-z0-9]+/g, "-")' in javascript
+    assert 'if (!slugWasEdited)' in javascript
+    assert 'data-organisation-name' in template
+    assert 'data-organisation-slug' in template
+    assert 'pattern="[a-z0-9]+(?:-[a-z0-9]+)*"' in template
 
 
 def test_rivermere_completion_endpoint_is_non_sensitive_and_platform_detail_is_restricted():

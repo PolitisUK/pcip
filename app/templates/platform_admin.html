@@ -4,7 +4,7 @@
 {% block contextual_help %}<p class="muted">This view is limited to explicitly provisioned platform administrators. Do not use it to access participant material unless an authorised support process requires it.</p>{% endblock %}
 {% block content %}
 <section class="card section card--data">
-  <div class="section-head"><div><h2>Customer organisations</h2><p class="muted">Organisation-level operational summary only.</p></div><span class="muted">{{ organisations|length }} organisations</span></div>
+  <div class="section-head"><div><h2>Customer organisations</h2><p class="muted">Organisation-level operational summary only.</p></div><div class="actions"><span class="muted">{{ organisations|length }} organisations</span><a class="btn" href="/admin/organisations/new">Create customer organisation</a></div></div>
   <table class="table">
     <thead><tr><th>Organisation</th><th>Studies</th><th>Participants</th></tr></thead>
     <tbody>

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Create customer organisation{% endblock %}
+{% block page_description %}<p class="page-description">Create a separate customer workspace. Projects, studies, participants and team access will remain isolated to this organisation.</p>{% endblock %}
+{% block contextual_help %}<p class="muted">The organisation name is shown to its users. The slug is a stable, lowercase workspace identifier and can be edited before creation.</p>{% endblock %}
+{% block content %}
+<section class="card card--action section">
+  <div class="section-head">
+    <div>
+      <h2>Organisation details</h2>
+      <p class="muted">Only the name and workspace slug are needed to get started.</p>
+    </div>
+  </div>
+  {% if errors.form %}<div class="error" role="alert">{{ errors.form }}</div>{% endif %}
+  <form method="post" action="/admin/organisations" class="stack" data-organisation-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label for="organisation-name">Organisation name</label>
+      <input id="organisation-name" name="name" value="{{ organisation_name }}" maxlength="200" required autocomplete="organization" data-organisation-name {% if errors.name %}aria-invalid="true" aria-describedby="organisation-name-error"{% endif %}>
+      {% if errors.name %}<small class="error" id="organisation-name-error">{{ errors.name }}</small>{% endif %}
+    </div>
+    <div class="field">
+      <label for="organisation-slug">Slug</label>
+      <input id="organisation-slug" name="slug" value="{{ organisation_slug }}" maxlength="100" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required spellcheck="false" autocapitalize="none" data-organisation-slug {% if errors.slug %}aria-invalid="true" aria-describedby="organisation-slug-help organisation-slug-error"{% else %}aria-describedby="organisation-slug-help"{% endif %}>
+      <small class="muted" id="organisation-slug-help">Lowercase letters and numbers, separated by single hyphens.</small>
+      {% if errors.slug %}<small class="error" id="organisation-slug-error">{{ errors.slug }}</small>{% endif %}
+    </div>
+    <div class="actions">
+      <button type="submit">Create customer organisation</button>
+      <a class="btn secondary" href="/admin">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

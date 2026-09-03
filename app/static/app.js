@@ -82,3 +82,28 @@ document.querySelectorAll("form").forEach(function (form) {
     specialCategory.addEventListener("change", syncArticleNine);
   }
 });
+
+function organisationSlugFromName(value) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 100)
+    .replace(/-+$/g, "");
+}
+
+document.querySelectorAll("[data-organisation-form]").forEach(function (form) {
+  var nameInput = form.querySelector("[data-organisation-name]");
+  var slugInput = form.querySelector("[data-organisation-slug]");
+  if (!nameInput || !slugInput) return;
+
+  var slugWasEdited = slugInput.value.length > 0;
+  nameInput.addEventListener("input", function () {
+    if (!slugWasEdited) slugInput.value = organisationSlugFromName(nameInput.value);
+  });
+  slugInput.addEventListener("input", function () {
+    slugWasEdited = true;
+  });
+});
