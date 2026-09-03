@@ -88,6 +88,7 @@ jobs:
             test -f /app/scripts/production_operation_worker.py
             test -f /app/scripts/lookup_user_identity.py
             test -f /app/scripts/platform_admin_dry_run.py
+            test -f /app/scripts/platform_admin_enable.py
             python -c "import scripts.production_operation_worker"
             test ! -e /app/scripts/set_platform_admin.py
           '

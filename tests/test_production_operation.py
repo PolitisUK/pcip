@@ -235,6 +235,62 @@ def test_worker_calls_only_fixed_platform_admin_dry_run_and_emits_approved_resul
     assert json.loads(rendered)["result"]["would_change"] is True
 
 
+def test_worker_calls_only_fixed_platform_admin_enable_and_emits_approved_result(monkeypatch, capsys):
+    message, request = request_message(operation="set-platform-admin", user_id=7)
+    receiver = FakeReceiver([message])
+    captured = []
+
+    def enable(*, email, expected_user_id, correlation_id):
+        captured.append((email, expected_user_id, correlation_id))
+        return SimpleNamespace(
+            approved_result=lambda: {
+                "user_id": 7,
+                "active": True,
+                "previous_is_platform_admin": False,
+                "is_platform_admin": True,
+                "changed": True,
+                "memberships": [{"organisation_id": 4, "role": "owner", "is_active": True}],
+                "memberships_unchanged": True,
+                "account_fields_unchanged": True,
+            }
+        )
+
+    monkeypatch.setattr(worker.platform_admin_enable, "execute_platform_admin_enable", enable)
+    assert worker.main(client_factory=lambda _namespace: FakeClient(receiver), environ=production_environment()) == 0
+
+    assert captured == [("existing@example.org", 7, request["correlation_id"])]
+    assert receiver.completed == [message]
+    rendered = capsys.readouterr().out
+    assert request["email"] not in rendered
+    assert json.loads(rendered)["result"]["changed"] is True
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"user_id": 8, "active": True, "previous_is_platform_admin": False, "is_platform_admin": True, "changed": True, "memberships": [], "memberships_unchanged": True, "account_fields_unchanged": True},
+        {"user_id": 7, "active": True, "previous_is_platform_admin": True, "is_platform_admin": True, "changed": True, "memberships": [], "memberships_unchanged": True, "account_fields_unchanged": True},
+        {"user_id": 7, "active": True, "previous_is_platform_admin": False, "is_platform_admin": False, "changed": True, "memberships": [], "memberships_unchanged": True, "account_fields_unchanged": True},
+        {"user_id": 7, "active": True, "previous_is_platform_admin": False, "is_platform_admin": True, "changed": False, "memberships": [], "memberships_unchanged": True, "account_fields_unchanged": True},
+        {"user_id": 7, "active": True, "previous_is_platform_admin": False, "is_platform_admin": True, "changed": True, "memberships": [], "memberships_unchanged": True, "account_fields_unchanged": True, "email": "must-not-leave-worker"},
+    ],
+)
+def test_worker_rejects_unapproved_platform_admin_enable_output(monkeypatch, capsys, result):
+    message, request = request_message(operation="set-platform-admin", user_id=7)
+    receiver = FakeReceiver([message])
+    monkeypatch.setattr(
+        worker.platform_admin_enable,
+        "execute_platform_admin_enable",
+        lambda **_kwargs: SimpleNamespace(approved_result=lambda: result),
+    )
+
+    assert worker.main(client_factory=lambda _namespace: FakeClient(receiver), environ=production_environment()) == 2
+    captured = capsys.readouterr()
+    assert receiver.completed == [message]
+    assert request["email"] not in captured.out + captured.err
+    assert "must-not-leave-worker" not in captured.out + captured.err
+
+
 @pytest.mark.parametrize(
     "result",
     [
@@ -301,6 +357,10 @@ def test_worker_rejects_unapproved_dry_run_output(monkeypatch, capsys, result):
     "payload",
     [
         {"operation": "set-platform-admin"},
+        {"operation": "set-platform-admin", "user_id": 0},
+        {"operation": "set-platform-admin", "user_id": "7"},
+        {"operation": "set-platform-admin", "user_id": 7, "target_state": False},
+        {"operation": "set-platform-admin", "user_id": 7, "dry_run": True},
         {"operation": "set-platform-admin-dry-run"},
         {"operation": "set-platform-admin-dry-run", "user_id": 0},
         {"operation": "set-platform-admin-dry-run", "user_id": "7"},
@@ -360,7 +420,7 @@ def test_worker_rejects_caller_controlled_cli_arguments(capsys):
 
 
 def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
-    workflow = open(".github/workflows/production-operation.yml", encoding="utf-8").read()
+    workflow = Path(".github/workflows/production-operation.yml").read_text()
     assert yaml.compose(workflow) is not None
 
     assert "workflow_dispatch:" in workflow
@@ -368,12 +428,16 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "group: pcip-production-control" in workflow
     assert "- lookup-user-identity" in workflow
     assert "- set-platform-admin-dry-run" in workflow
+    assert "- set-platform-admin" in workflow
     assert 'case "$OPERATION" in' in workflow
     assert "set-platform-admin-dry-run)" in workflow
     assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/platform_admin_dry_run.py"' in workflow
     assert 'git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py"' in workflow
     assert 'PLATFORM_ADMIN_DRY_RUN_OPERATION = "set-platform-admin-dry-run"' in workflow
     assert "platform_admin_dry_run.main" in workflow
+    assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/platform_admin_enable.py"' in workflow
+    assert 'PLATFORM_ADMIN_ENABLE_OPERATION = "set-platform-admin"' in workflow
+    assert "platform_admin_enable.execute_platform_admin_enable" in workflow
     assert "The approved worker does not support this operation." in workflow
     assert '--argjson user_id "$OPERATION_USER_ID"' in workflow
     assert "{correlation_id: $correlation_id, operation: $operation, email: $email, user_id: $user_id}" in workflow
@@ -613,7 +677,7 @@ def test_worker_identity_checks_reject_missing_or_mismatched_runtime_client_id()
 
 
 def test_workflow_result_contract_is_limited_to_approved_non_sensitive_fields():
-    workflow = open(".github/workflows/production-operation.yml", encoding="utf-8").read()
+    workflow = Path(".github/workflows/production-operation.yml").read_text()
 
     assert "[\"active\", \"is_platform_admin\", \"memberships\", \"user_id\"]" in workflow
     assert "[\"account_fields_unchanged\", \"active\", \"current_is_platform_admin\", \"intended_is_platform_admin\", \"memberships\", \"memberships_unchanged\", \"user_id\", \"would_change\"]" in workflow
@@ -739,6 +803,43 @@ def test_operation_result_parser_accepts_only_exact_platform_admin_dry_run_schem
         ) == []
 
 
+def test_operation_result_parser_accepts_only_exact_platform_admin_enable_schema():
+    correlation_id = "11111111-1111-4111-8111-111111111111"
+    result = {
+        "user_id": 7,
+        "active": True,
+        "previous_is_platform_admin": False,
+        "is_platform_admin": True,
+        "changed": True,
+        "memberships": [{"organisation_id": 4, "role": "owner", "is_active": True}],
+        "memberships_unchanged": True,
+        "account_fields_unchanged": True,
+    }
+    line = json.dumps({"correlation_id": correlation_id, "status": "succeeded", "result": result}, sort_keys=True)
+
+    assert _parse_approved_operation_logs(
+        [line], correlation_id, operation="set-platform-admin", user_id="7"
+    ) == [json.loads(line)]
+
+    for invalid in (
+        {**result, "user_id": 8},
+        {**result, "previous_is_platform_admin": True},
+        {**result, "is_platform_admin": False},
+        {**result, "changed": False},
+        {**result, "memberships_unchanged": False},
+        {**result, "account_fields_unchanged": False},
+        {**result, "unexpected": True},
+        {key: value for key, value in result.items() if key != "changed"},
+    ):
+        invalid_line = json.dumps(
+            {"correlation_id": correlation_id, "status": "succeeded", "result": invalid},
+            sort_keys=True,
+        )
+        assert _parse_approved_operation_logs(
+            [invalid_line], correlation_id, operation="set-platform-admin", user_id="7"
+        ) == []
+
+
 @pytest.mark.parametrize(
     "logs",
     [
@@ -779,20 +880,22 @@ def test_operation_result_parser_rejects_prefixed_malformed_or_unapproved_output
     assert _parse_approved_operation_logs(logs, correlation_id) == []
 
 
-def test_dry_run_module_is_packaged_but_mutating_admin_command_remains_excluded():
+def test_fixed_operation_modules_are_packaged_but_generic_admin_command_remains_excluded():
     dockerignore = Path(".dockerignore").read_text()
     ci = Path(".github/workflows/ci.yml").read_text()
 
     assert "scripts/*" in dockerignore
     assert "!scripts/platform_admin_dry_run.py" in dockerignore
+    assert "!scripts/platform_admin_enable.py" in dockerignore
     assert "!scripts/production_operation_worker.py" in dockerignore
     assert "!scripts/set_platform_admin.py" not in dockerignore
     assert "test -f /app/scripts/platform_admin_dry_run.py" in ci
+    assert "test -f /app/scripts/platform_admin_enable.py" in ci
     assert "test ! -e /app/scripts/set_platform_admin.py" in ci
 
 
 def test_operations_infrastructure_bootstraps_a_user_assigned_identity_before_the_job():
-    bicep = open("infra/production-operations.bicep", encoding="utf-8").read()
+    bicep = Path("infra/production-operations.bicep").read_text()
 
     assert "targetScope = 'resourceGroup'" in bicep
     assert "resource operationsWorkerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31'" in bicep
@@ -809,7 +912,7 @@ def test_operations_infrastructure_bootstraps_a_user_assigned_identity_before_th
 
 
 def test_operations_infrastructure_is_event_driven_and_least_privilege():
-    bicep = open("infra/production-operations.bicep", encoding="utf-8").read()
+    bicep = Path("infra/production-operations.bicep").read_text()
 
     assert "resource operationsServiceBus" in bicep
     assert "disableLocalAuth: true" in bicep

@@ -23,5 +23,6 @@ scripts/*
 !scripts/seed_rivermere_demo.py
 !scripts/lookup_user_identity.py
 !scripts/platform_admin_dry_run.py
+!scripts/platform_admin_enable.py
 !scripts/production_operation_worker.py
 *.md

@@ -21,8 +21,10 @@ Vault secret, and runs its separately approved digest-pinned worker image. The w
 the dedicated `AZURE_PRODUCTION_OPERATIONS_CLIENT_ID` OIDC identity; it must
 never fall back to the broader release-promotion identity.
 
-The workflow accepts only the enumerated read-only operations
-`lookup-user-identity` and `set-platform-admin-dry-run`.
+The workflow accepts only the enumerated fixed operations
+`lookup-user-identity`, `set-platform-admin-dry-run`, and
+`set-platform-admin`. The final operation is a separate protected write; it is
+not controlled by a boolean or flag on the dry run.
 It does not accept an arbitrary shell command, Python module, CLI flags, or SQL.
 It verifies the supplied release SHA against three consecutive production
 readiness responses, the supplied immutable application digest on App Service,
@@ -93,7 +95,7 @@ only after its cleanup has completed; any subsequent lookup performs fresh
 validation. There is no Azure-side lock and the operations identity still has
 no permission to alter or start the worker.
 
-The execution sequence is:
+The deliberate three-stage control sequence is:
 
 1. Record approval for the read-only lookup and select the workflow from `main`.
 2. Select `lookup-user-identity`; provide the exact email, deployed release SHA,
@@ -104,6 +106,9 @@ The execution sequence is:
 5. Record the exact internal user ID, then obtain separate approval for the
    protected `set-platform-admin-dry-run` operation. Supply the same exact
    email and verified user ID; the worker independently binds both values.
+6. Review the dry-run result, then obtain separate approval for a new protected
+   `set-platform-admin` operation. It independently repeats the identity and
+   membership checks and permits only the fixed `false -> true` transition.
 
 The workflow records its GitHub run, actor, named operator, target release,
 operation, execution ID, and success/failure in the protected run summary. It
@@ -158,8 +163,26 @@ Review the machine-readable output. It never prints the email, password hashes,
 authentication tokens, sessions, or database credentials. Do not retrieve or
 log database credentials manually.
 
-After reviewing the dry-run result, obtain separate explicit approval for the
-write. Then, using an authorised production execution path, perform it:
+After reviewing the dry-run result, obtain separate explicit approval for a
+new `set-platform-admin` workflow run. That run needs a new production
+environment approval and a new correlation ID; the dry-run approval and
+message cannot authorise or be replayed as a write. The worker independently
+resolves both the exact normalised email and internal user ID, requires that
+they identify the same active account, and requires the expected active owner
+memberships before it can proceed.
+
+`set-platform-admin` is enable-only. It performs one conditional transaction:
+`User.is_platform_admin` may change only from `false` to `true`. It accepts no
+target-state boolean, reason, generic flags, command, module, arguments, or
+field/value update. It verifies the membership and all other account fields
+before and after the update and rolls back on any mismatch. The packaged worker
+contains this purpose-built operation module, not the broader local command.
+Its non-sensitive correlation-bound completion record is committed with the
+grant, so a lost Service Bus acknowledgement or log delivery can return the
+same approved outcome on redelivery without performing a second update.
+
+The following command remains operational-reference documentation only; it is
+not packaged into the worker and is not an authorised production access path:
 
 ```bash
 python -m scripts.set_platform_admin \
