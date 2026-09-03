@@ -189,7 +189,7 @@ jobs:
                   (.result.active | type == "boolean") and
                   (.result.is_platform_admin | type == "boolean") and
                   (.result.memberships | type == "array") and
-                  all(.result.memberships[]; (keys | sort) == ["is_active", "organisation_id", "role"] and (.organisation_id | type == "number") and (.role | type == "string") and (.is_active | type == "boolean"))
+                  all(.result.memberships[]; type == "object" and (keys | sort) == ["is_active", "organisation_id", "role"] and (.organisation_id | type == "number") and (.role | type == "string") and (.is_active | type == "boolean"))
                 )
             ' <<<"$logs" | tail -n 1)
             if test -n "$result"; then

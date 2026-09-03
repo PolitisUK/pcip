@@ -600,6 +600,7 @@ def test_operation_result_parser_accepts_bare_worker_json_from_both_log_schemas(
             )
         ],
         [_approved_operation_log("11111111-1111-4111-8111-111111111111", unexpected=True)],
+        [_approved_operation_log("11111111-1111-4111-8111-111111111111", memberships=[None])],
         [
             json.dumps(
                 {
