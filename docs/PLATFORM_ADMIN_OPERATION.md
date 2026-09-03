@@ -165,8 +165,10 @@ event in the same transaction. It refuses ambiguous identities, missing or
 mismatched IDs, inactive users, and writes without confirmation.
 
 After a successful approved write, sign out and sign back in before verifying
-the Platform administration UI. To roll back a previously approved grant,
-repeat the verified lookup and dry-run steps followed by the approved command
-with `--disable`. This restores only `User.is_platform_admin`; it is not a
-broad database restore. Retain the approval and command output with the audit
-reference.
+the Platform administration UI. The protected dry run in this document is
+enable-only and must not be used to approve a later disable operation. Before
+revoking a previously approved grant, implement and approve a distinct fixed,
+read-only disable assessment through the protected operations architecture;
+then obtain separate approval for the `--disable` write. A disable restores
+only `User.is_platform_admin`; it is not a broad database restore. Retain each
+approval and command result with the audit reference.
