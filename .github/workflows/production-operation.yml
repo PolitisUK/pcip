@@ -10,6 +10,7 @@ on:
         options:
           - lookup-user-identity
           - set-platform-admin-dry-run
+          - set-platform-admin
       email:
         description: Exact email for the approved read-only operation. It is masked and never added to summaries.
         required: true
@@ -92,6 +93,13 @@ jobs:
               grep -Fq 'PLATFORM_ADMIN_DRY_RUN_OPERATION = "set-platform-admin-dry-run"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
               grep -Fq 'platform_admin_dry_run.main' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
               ;;
+            set-platform-admin)
+              [[ "$OPERATION_USER_ID" =~ ^[1-9][0-9]*$ ]] || { echo "The approved operation input was rejected." >&2; exit 1; }
+              git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/platform_admin_enable.py" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              worker_source=$(git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py")
+              grep -Fq 'PLATFORM_ADMIN_ENABLE_OPERATION = "set-platform-admin"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              grep -Fq 'platform_admin_enable.execute_platform_admin_enable' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              ;;
             *)
               echo "The requested operation is not approved." >&2
               exit 1
@@ -166,7 +174,7 @@ jobs:
               jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" --arg email "$OPERATION_EMAIL" \
                 '{correlation_id: $correlation_id, operation: $operation, email: $email}' > "$request_file"
               ;;
-            set-platform-admin-dry-run)
+            set-platform-admin-dry-run|set-platform-admin)
               jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" --arg email "$OPERATION_EMAIL" --argjson user_id "$OPERATION_USER_ID" \
                 '{correlation_id: $correlation_id, operation: $operation, email: $email, user_id: $user_id}' > "$request_file"
               ;;
@@ -244,6 +252,20 @@ jobs:
                         (.result.active == true and .result.intended_is_platform_admin == true and .result.would_change == (.result.current_is_platform_admin | not)) or
                         (.result.active == false and .result.intended_is_platform_admin == .result.current_is_platform_admin and .result.would_change == false)
                       )
+                    ) or
+                    (
+                      $operation == "set-platform-admin" and
+                      (.result | (keys | sort) == ["account_fields_unchanged", "active", "changed", "is_platform_admin", "memberships", "memberships_unchanged", "previous_is_platform_admin", "user_id"]) and
+                      (.result.user_id | type == "number") and
+                      (.result.user_id | tostring) == $user_id and
+                      .result.active == true and
+                      .result.previous_is_platform_admin == false and
+                      .result.is_platform_admin == true and
+                      .result.changed == true and
+                      .result.memberships_unchanged == true and
+                      .result.account_fields_unchanged == true and
+                      (.result.memberships | type == "array") and
+                      all(.result.memberships[]; type == "object" and (keys | sort) == ["is_active", "organisation_id", "role"] and (.organisation_id | type == "number") and (.role | type == "string") and (.is_active | type == "boolean"))
                     )
                   )
                 )

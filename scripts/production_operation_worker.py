@@ -19,12 +19,13 @@ from uuid import UUID
 from azure.identity import DefaultAzureCredential
 from azure.servicebus import ServiceBusClient
 
-from scripts import lookup_user_identity, platform_admin_dry_run
+from scripts import lookup_user_identity, platform_admin_dry_run, platform_admin_enable
 
 SERVICE_BUS_NAMESPACE_ENV = "PCIP_OPERATIONS_SERVICEBUS_NAMESPACE"
 SERVICE_BUS_QUEUE_ENV = "PCIP_OPERATIONS_QUEUE"
 LOOKUP_OPERATION = "lookup-user-identity"
 PLATFORM_ADMIN_DRY_RUN_OPERATION = "set-platform-admin-dry-run"
+PLATFORM_ADMIN_ENABLE_OPERATION = "set-platform-admin"
 
 
 class ProductionOperationError(RuntimeError):
@@ -85,7 +86,10 @@ def parse_request(body: bytes) -> OperationRequest:
             operation=operation,
             email=email,
         )
-    if operation == PLATFORM_ADMIN_DRY_RUN_OPERATION:
+    if operation in {
+        PLATFORM_ADMIN_DRY_RUN_OPERATION,
+        PLATFORM_ADMIN_ENABLE_OPERATION,
+    }:
         if set(payload) != {"correlation_id", "email", "operation", "user_id"}:
             raise ProductionOperationError("Production operation refused.")
         user_id = payload.get("user_id")
@@ -196,6 +200,38 @@ def _validated_result(request: OperationRequest) -> dict[str, Any]:
         ):
             raise ProductionOperationError("Production operation refused.")
         return result
+    if request.operation == PLATFORM_ADMIN_ENABLE_OPERATION and request.user_id is not None:
+        try:
+            result = platform_admin_enable.execute_platform_admin_enable(
+                email=request.email,
+                expected_user_id=request.user_id,
+            ).approved_result()
+        except platform_admin_enable.PlatformAdminEnableError as exc:
+            raise ProductionOperationError("Production operation refused.") from exc
+        if (
+            set(result)
+            != {
+                "user_id",
+                "active",
+                "previous_is_platform_admin",
+                "is_platform_admin",
+                "changed",
+                "memberships",
+                "memberships_unchanged",
+                "account_fields_unchanged",
+            }
+            or type(result["user_id"]) is not int
+            or result["user_id"] != request.user_id
+            or result["active"] is not True
+            or result["previous_is_platform_admin"] is not False
+            or result["is_platform_admin"] is not True
+            or result["changed"] is not True
+            or result["memberships_unchanged"] is not True
+            or result["account_fields_unchanged"] is not True
+            or not _valid_memberships(result["memberships"])
+        ):
+            raise ProductionOperationError("Production operation refused.")
+        return result
     raise ProductionOperationError("Production operation refused.")
 
 
@@ -252,7 +288,7 @@ def main(
     except ProductionOperationError:
         print("Production operation refused.", file=sys.stderr)
         return 2
-    except Exception:
+    except Exception:  # noqa: BLE001 - external failures must remain sanitised.
         # Do not expose database, transport, message, or credential details.
         print("Production operation failed.", file=sys.stderr)
         return 1
