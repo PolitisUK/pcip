@@ -307,11 +307,9 @@ jobs:
       SOURCE_LOGIN_SERVER: ${{ needs.stage.outputs.source_login_server }}
       # This protected-environment variable remains false until the isolated
       # event-driven operations infrastructure has been provisioned.  Once it
-      # is true, every successful production image transition must verify the
-      # independently approved worker; a missing or stale worker is a release failure.
+      # is true, releases verify its independently approved immutable artifact
+      # without crossing into the operations identity's live-job boundary.
       PRODUCTION_OPERATIONS_ENABLED: ${{ vars.PCIP_PRODUCTION_OPERATIONS_ENABLED }}
-      OPERATIONS_JOB: ${{ vars.PCIP_PRODUCTION_OPERATIONS_JOB }}
-      OPERATIONS_WORKER_IDENTITY: ${{ vars.PCIP_PRODUCTION_OPERATIONS_WORKER_IDENTITY }}
       OPERATIONS_WORKER_DIGEST: ${{ vars.PCIP_PRODUCTION_OPERATIONS_WORKER_DIGEST }}
       OPERATIONS_WORKER_REVISION: ${{ vars.PCIP_PRODUCTION_OPERATIONS_WORKER_REVISION }}
     steps:
@@ -427,7 +425,7 @@ jobs:
           for route in privacy support terms cookies accessibility acceptable-use legal contact; do
             curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://citizencentric.co.uk/$route" >/dev/null
           done
-      - name: Verify the independently pinned production-operations worker
+      - name: Verify the independently pinned production-operations worker artifact
         shell: bash
         env:
           OPERATIONS_WORKER_DIGEST: ${{ vars.PCIP_PRODUCTION_OPERATIONS_WORKER_DIGEST }}
@@ -446,76 +444,17 @@ jobs:
               exit 1
               ;;
           esac
-          for value in AZURE_RESOURCE_GROUP PRODUCTION_ACR OPERATIONS_JOB OPERATIONS_WORKER_IDENTITY OPERATIONS_WORKER_DIGEST OPERATIONS_WORKER_REVISION; do
+          for value in PRODUCTION_ACR OPERATIONS_WORKER_DIGEST OPERATIONS_WORKER_REVISION; do
             test -n "${!value}" || { echo "$value is required when production operations are enabled." >&2; exit 1; }
           done
           [[ "$OPERATIONS_WORKER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Operations worker image must be an immutable sha256 digest." >&2; exit 1; }
           [[ "$OPERATIONS_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Operations worker provenance revision is invalid." >&2; exit 1; }
+          # The release principal intentionally cannot read or control the live
+          # job. Its exact template is checked by the protected operations
+          # workflow, under the separately scoped operations identity, before
+          # any request can be queued.
           az acr manifest show-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST" --query digest -o tsv | grep -qx "$OPERATIONS_WORKER_DIGEST"
           az acr manifest list-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY" --query "[?digest=='$OPERATIONS_WORKER_DIGEST' && tags && contains(tags, 'operations-worker-sha-$OPERATIONS_WORKER_REVISION')].digest | [0]" -o tsv | grep -qx "$OPERATIONS_WORKER_DIGEST"
-          expected_image="$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$OPERATIONS_WORKER_DIGEST"
-          job_before=$(az containerapp job show -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" -o json)
-          jq -e --arg image "$expected_image" --arg provenance "$OPERATIONS_WORKER_REVISION" --arg identity "$OPERATIONS_WORKER_IDENTITY" --arg registry "$PRODUCTION_ACR.azurecr.io" '
-            def same_resource_id($expected):
-              (type == "string") and (ascii_downcase == ($expected | ascii_downcase));
-            (.identity.userAssignedIdentities | to_entries | .[0].value.clientId // "") as $identity_client_id |
-            .identity.type == "UserAssigned" and
-            ((.identity.userAssignedIdentities | keys | map(ascii_downcase)) == [($identity | ascii_downcase)]) and
-            .properties.configuration.triggerType == "Event" and
-            .properties.configuration.replicaTimeout == 300 and
-            .properties.configuration.replicaRetryLimit == 0 and
-            .properties.configuration.eventTriggerConfig.scale.minExecutions == 0 and
-            .properties.configuration.eventTriggerConfig.scale.maxExecutions == 1 and
-            .properties.configuration.eventTriggerConfig.scale.pollingInterval == 15 and
-            (.properties.configuration.registries | length) == 1 and
-            ([.properties.configuration.registries[] | select(.server == $registry and (.identity | same_resource_id($identity)))] | length) == 1 and
-            ([.properties.configuration.secrets[] | select(.name == "database-url" and (.identity | same_resource_id($identity)))] | length) == 1 and
-            ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and (.identity | same_resource_id($identity)))] | length) == 1 and
-            (.properties.template.containers | length == 1) and
-            .properties.template.containers[0].name == "production-operation" and
-            .properties.template.containers[0].image == $image and
-            .properties.template.containers[0].command == ["python", "-m", "scripts.production_operation_worker"] and
-            ([.properties.template.containers[0].env[] | select(.name == "DATABASE_URL" and .secretRef == "database-url")] | length) == 1 and
-            ([.properties.template.containers[0].env[] | select(.name == "AZURE_CLIENT_ID" and .value == $identity_client_id)] | length) == 1 and
-            ([.properties.template.containers[0].env[] | select(.name == "PCIP_OPERATIONS_WORKER_PROVENANCE" and .value == $provenance)] | length) == 1 and
-            .properties.template.containers[0].resources.cpu == 0.25 and
-            .properties.template.containers[0].resources.memory == "0.5Gi"
-          ' >/dev/null <<<"$job_before" || {
-            echo "The enabled production-operations worker does not have the approved fixed configuration." >&2
-            exit 1
-          }
-          # Application promotion never replaces the worker with its own
-          # digest: a historical application rollback may predate the worker.
-          job_after=$(az containerapp job show -g "$AZURE_RESOURCE_GROUP" -n "$OPERATIONS_JOB" -o json)
-          jq -e --arg image "$expected_image" --arg provenance "$OPERATIONS_WORKER_REVISION" --arg identity "$OPERATIONS_WORKER_IDENTITY" --arg registry "$PRODUCTION_ACR.azurecr.io" '
-            def same_resource_id($expected):
-              (type == "string") and (ascii_downcase == ($expected | ascii_downcase));
-            (.identity.userAssignedIdentities | to_entries | .[0].value.clientId // "") as $identity_client_id |
-            .identity.type == "UserAssigned" and
-            ((.identity.userAssignedIdentities | keys | map(ascii_downcase)) == [($identity | ascii_downcase)]) and
-            .properties.configuration.triggerType == "Event" and
-            .properties.configuration.replicaTimeout == 300 and
-            .properties.configuration.replicaRetryLimit == 0 and
-            .properties.configuration.eventTriggerConfig.scale.minExecutions == 0 and
-            .properties.configuration.eventTriggerConfig.scale.maxExecutions == 1 and
-            .properties.configuration.eventTriggerConfig.scale.pollingInterval == 15 and
-            (.properties.configuration.registries | length) == 1 and
-            ([.properties.configuration.registries[] | select(.server == $registry and (.identity | same_resource_id($identity)))] | length) == 1 and
-            ([.properties.configuration.secrets[] | select(.name == "database-url" and (.identity | same_resource_id($identity)))] | length) == 1 and
-            ([.properties.configuration.eventTriggerConfig.scale.rules[] | select(.type == "azure-servicebus" and (.identity | same_resource_id($identity)))] | length) == 1 and
-            (.properties.template.containers | length == 1) and
-            .properties.template.containers[0].name == "production-operation" and
-            .properties.template.containers[0].image == $image and
-            .properties.template.containers[0].command == ["python", "-m", "scripts.production_operation_worker"] and
-            ([.properties.template.containers[0].env[] | select(.name == "DATABASE_URL" and .secretRef == "database-url")] | length) == 1 and
-            ([.properties.template.containers[0].env[] | select(.name == "AZURE_CLIENT_ID" and .value == $identity_client_id)] | length) == 1 and
-            ([.properties.template.containers[0].env[] | select(.name == "PCIP_OPERATIONS_WORKER_PROVENANCE" and .value == $provenance)] | length) == 1 and
-            .properties.template.containers[0].resources.cpu == 0.25 and
-            .properties.template.containers[0].resources.memory == "0.5Gi"
-          ' >/dev/null <<<"$job_after" || {
-            echo "Production-operations worker configuration did not match the approved immutable worker artifact." >&2
-            exit 1
-          }
       - name: Enable the approved production Rivermere startup runner
         if: ${{ inputs.seed_rivermere_demo }}
         id: rivermere_seed_control
