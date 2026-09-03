@@ -33,6 +33,16 @@ def worker_identity_filters(workflow: str) -> list[str]:
     )
 
 
+def operation_result_filter(workflow: str) -> str:
+    """Extract the jq filter that accepts one approved worker result."""
+    marker = 'result=$(jq -c --arg correlation "$CORRELATION_ID" \'\n'
+    _, found, remainder = workflow.partition(marker)
+    assert found, "approved operation result filter is missing"
+    result_filter, found, _ = remainder.partition('\n            \' <<<"$logs"')
+    assert found, "approved operation result filter terminator is missing"
+    return result_filter
+
+
 EXPECTED_WORKER_IDENTITY = (
     "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-pcip-prod/"
     "providers/Microsoft.ManagedIdentity/userAssignedIdentities/pcip-production-operations-identity"
@@ -525,9 +535,87 @@ def test_operation_result_polling_orders_by_time_and_fails_on_query_errors_but_t
     assert "datatable(TimeGenerated:datetime, OperationLog:string)[]" in result_step
     assert "for attempt in {1..30}; do" in result_step
     assert "sleep 10" in result_step
+    assert "capture(" not in result_step
+    assert "test(" not in result_step
+    assert "try fromjson catch empty" in result_step
     assert ".correlation_id == $correlation" in result_step
     assert "[\"active\", \"is_platform_admin\", \"memberships\", \"user_id\"]" in result_step
     assert "OPERATION_EMAIL" not in result_step
+
+
+def _approved_operation_log(correlation_id: str, **result_overrides) -> str:
+    result = {
+        "active": True,
+        "is_platform_admin": False,
+        "memberships": [{"organisation_id": 4, "role": "owner", "is_active": True}],
+        "user_id": 7,
+    }
+    result.update(result_overrides)
+    return json.dumps(
+        {"correlation_id": correlation_id, "status": "succeeded", "result": result},
+        sort_keys=True,
+    )
+
+
+def _parse_approved_operation_logs(logs: list[str], correlation_id: str) -> list[dict]:
+    workflow = Path(".github/workflows/production-operation.yml").read_text()
+    completed = subprocess.run(
+        ["jq", "-c", "--arg", "correlation", correlation_id, operation_result_filter(workflow)],
+        input=json.dumps(logs),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return [json.loads(line) for line in completed.stdout.splitlines()]
+
+
+@pytest.mark.parametrize("table_schema", ["resource-specific", "legacy-_CL"])
+def test_operation_result_parser_accepts_bare_worker_json_from_both_log_schemas(table_schema):
+    correlation_id = "11111111-1111-4111-8111-111111111111"
+    line = _approved_operation_log(correlation_id)
+
+    assert _parse_approved_operation_logs([line], correlation_id) == [json.loads(line)]
+
+
+@pytest.mark.parametrize(
+    "logs",
+    [
+        ["2026-09-03T08:00:00Z " + _approved_operation_log("11111111-1111-4111-8111-111111111111")],
+        ["{malformed"],
+        [json.dumps({"event": "unrelated"})],
+        [_approved_operation_log("22222222-2222-4222-8222-222222222222")],
+        [
+            json.dumps(
+                {
+                    "correlation_id": "11111111-1111-4111-8111-111111111111",
+                    "status": "failed",
+                    "result": {
+                        "active": True,
+                        "is_platform_admin": False,
+                        "memberships": [],
+                        "user_id": 7,
+                    },
+                }
+            )
+        ],
+        [_approved_operation_log("11111111-1111-4111-8111-111111111111", unexpected=True)],
+        [_approved_operation_log("11111111-1111-4111-8111-111111111111", memberships=[None])],
+        [
+            json.dumps(
+                {
+                    "correlation_id": "11111111-1111-4111-8111-111111111111",
+                    "status": "succeeded",
+                    "result": {"active": True, "is_platform_admin": False, "memberships": []},
+                }
+            )
+        ],
+    ],
+)
+def test_operation_result_parser_rejects_prefixed_malformed_or_unapproved_output(logs):
+    correlation_id = "11111111-1111-4111-8111-111111111111"
+
+    assert _parse_approved_operation_logs(logs, correlation_id) == []
 
 
 def test_operations_infrastructure_bootstraps_a_user_assigned_identity_before_the_job():

@@ -175,18 +175,24 @@ jobs:
             # An empty successful response is expected while logs propagate.
             # A query failure must fail this protected operation explicitly.
             logs=$(az monitor log-analytics query --workspace "$OPERATIONS_LOG_WORKSPACE" --analytics-query "$query" --query '[].OperationLog' -o json)
-            result=$(jq -r '.[]? | select(test("\\{.*\\}$")) | capture("(?<result>\\{.*\\}$").result' <<<"$logs" | tail -n 1)
-            if jq -e --arg correlation "$CORRELATION_ID" '
-              .correlation_id == $correlation and
-              .status == "succeeded" and
-              (.result | type == "object") and
-              (.result | (keys | sort) == ["active", "is_platform_admin", "memberships", "user_id"]) and
-              (.result.user_id | type == "number") and
-              (.result.active | type == "boolean") and
-              (.result.is_platform_admin | type == "boolean") and
-              (.result.memberships | type == "array") and
-              all(.result.memberships[]; (keys | sort) == ["is_active", "organisation_id", "role"] and (.organisation_id | type == "number") and (.role | type == "string") and (.is_active | type == "boolean"))
-            ' >/dev/null <<<"$result"; then
+            result=$(jq -c --arg correlation "$CORRELATION_ID" '
+              .[]?
+              | select(type == "string")
+              | (try fromjson catch empty)
+              | select(
+                  type == "object" and
+                  .correlation_id == $correlation and
+                  .status == "succeeded" and
+                  (.result | type == "object") and
+                  (.result | (keys | sort) == ["active", "is_platform_admin", "memberships", "user_id"]) and
+                  (.result.user_id | type == "number") and
+                  (.result.active | type == "boolean") and
+                  (.result.is_platform_admin | type == "boolean") and
+                  (.result.memberships | type == "array") and
+                  all(.result.memberships[]; type == "object" and (keys | sort) == ["is_active", "organisation_id", "role"] and (.organisation_id | type == "number") and (.role | type == "string") and (.is_active | type == "boolean"))
+                )
+            ' <<<"$logs" | tail -n 1)
+            if test -n "$result"; then
               jq -c '.result' <<<"$result"
               echo "- Result: succeeded" >> "$GITHUB_STEP_SUMMARY"
               exit 0
