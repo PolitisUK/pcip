@@ -21,7 +21,8 @@ Vault secret, and runs its separately approved digest-pinned worker image. The w
 the dedicated `AZURE_PRODUCTION_OPERATIONS_CLIENT_ID` OIDC identity; it must
 never fall back to the broader release-promotion identity.
 
-The workflow accepts one enumerated operation only: `lookup-user-identity`.
+The workflow accepts only the enumerated read-only operations
+`lookup-user-identity` and `set-platform-admin-dry-run`.
 It does not accept an arbitrary shell command, Python module, CLI flags, or SQL.
 It verifies the supplied release SHA against three consecutive production
 readiness responses, the supplied immutable application digest on App Service,
@@ -100,8 +101,9 @@ The execution sequence is:
 3. Approve the protected GitHub `production` environment.
 4. Review the returned JSON only: internal user ID, active state,
    platform-admin state, and membership IDs/roles/states.
-5. Record the exact internal user ID, then run the separately authorised
-   `set_platform_admin --dry-run` process below.
+5. Record the exact internal user ID, then obtain separate approval for the
+   protected `set-platform-admin-dry-run` operation. Supply the same exact
+   email and verified user ID; the worker independently binds both values.
 
 The workflow records its GitHub run, actor, named operator, target release,
 operation, execution ID, and success/failure in the protected run summary. It
@@ -117,22 +119,44 @@ state, and organisation membership roles. It performs an exact normalized-email
 lookup, fails closed for zero or multiple matches, starts a PostgreSQL read-only
 transaction, and always rolls back rather than committing.
 
-Then use both the verified email and internal user ID for the separately
-controlled dry run:
+The protected dry run is a distinct, non-mutating operation. It does not invoke
+the mutating `scripts.set_platform_admin` command and exposes no flag that can
+turn it into a write. The fixed queue request contains only `correlation_id`,
+`operation`, `email`, and `user_id`. The worker rejects missing or additional
+fields, independently resolves the exact normalized email, requires the same
+positive internal user ID, and executes in a PostgreSQL `READ ONLY` transaction
+that is always rolled back. An inactive account is reported without proposing
+a change; an account already enabled is reported as an unchanged outcome.
+
+Select `set-platform-admin-dry-run` in the same protected workflow, provide the
+verified internal user ID, and approve the `production` environment. The result
+contains only the ID, active state, current/intended platform-admin states,
+whether the fixed enable transition would change anything, membership
+IDs/roles/states, and boolean confirmation that membership and other account
+fields remained unchanged. The exact correlation ID and result schema are
+validated before anything is displayed. The equivalent local command is shown
+for implementation reference only and is not the authorised production path:
+
+Before this operation is exposed in production, build and approve a new worker
+image from a merged revision containing both `scripts.platform_admin_dry_run`
+and its fixed worker dispatch. Attach the dedicated
+`operations-worker-sha-<revision>` provenance tag to that immutable digest,
+reconcile the existing Container Apps job through the approved Bicep process,
+and update the protected worker digest/revision variables after read-back. The
+workflow checks the exact pinned provenance commit for both implementation
+paths and refuses the dry run when the older lookup-only worker remains pinned.
+Promotion and rollback continue to preserve whichever worker digest was
+separately approved; they do not upgrade it implicitly.
 
 ```bash
-python -m scripts.set_platform_admin \
+python -m scripts.platform_admin_dry_run \
   --email <email> \
-  --expected-user-id <id> \
-  --enable \
-  --reason "<approved non-sensitive reason>" \
-  --dry-run
+  --expected-user-id <id>
 ```
 
-Review the machine-readable output: it reports only the internal user ID,
-active status, requested before/after state, and membership IDs/roles. It never
-prints password hashes, authentication tokens, sessions, or database
-credentials. Do not retrieve or log database credentials manually.
+Review the machine-readable output. It never prints the email, password hashes,
+authentication tokens, sessions, or database credentials. Do not retrieve or
+log database credentials manually.
 
 After reviewing the dry-run result, obtain separate explicit approval for the
 write. Then, using an authorised production execution path, perform it:
@@ -152,8 +176,10 @@ event in the same transaction. It refuses ambiguous identities, missing or
 mismatched IDs, inactive users, and writes without confirmation.
 
 After a successful approved write, sign out and sign back in before verifying
-the Platform administration UI. To roll back a previously approved grant,
-repeat the verified lookup and dry-run steps followed by the approved command
-with `--disable`. This restores only `User.is_platform_admin`; it is not a
-broad database restore. Retain the approval and command output with the audit
-reference.
+the Platform administration UI. The protected dry run in this document is
+enable-only and must not be used to approve a later disable operation. Before
+revoking a previously approved grant, implement and approve a distinct fixed,
+read-only disable assessment through the protected operations architecture;
+then obtain separate approval for the `--disable` write. A disable restores
+only `User.is_platform_admin`; it is not a broad database restore. Retain each
+approval and command result with the audit reference.
