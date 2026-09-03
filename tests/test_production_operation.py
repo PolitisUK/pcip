@@ -618,9 +618,62 @@ def test_operations_workflow_keeps_independent_worker_validation_and_no_write_pr
     assert 'expected_image="DOCKER|$PRODUCTION_ACR.azurecr.io/$IMAGE_REPOSITORY@$PRODUCTION_IMAGE_DIGEST"' in workflow
     assert "az containerapp job update" not in workflow
     assert "az containerapp job start" not in workflow
+    assert "--command" not in workflow
+    assert "--args" not in workflow
     assert "Contributor" not in bicep
     assert "operationsWorkflowJobReader" in bicep
     assert "operationsWorkflowQueueSender" in bicep
+
+
+def test_operations_preflight_rejects_runtime_or_resource_drift_from_bicep_contract():
+    workflow = Path(".github/workflows/production-operation.yml").read_text()
+    bicep = Path("infra/production-operations.bicep").read_text()
+    filters = worker_identity_filters(workflow)
+
+    assert len(filters) == 1
+    worker_filter = filters[0]
+    assert worker_filter_accepts(worker_filter, approved_worker_job())
+
+    expected_checks = (
+        '.properties.configuration.replicaTimeout == 300',
+        '.properties.configuration.replicaRetryLimit == 0',
+        '.properties.configuration.eventTriggerConfig.scale.minExecutions == 0',
+        '.properties.configuration.eventTriggerConfig.scale.maxExecutions == 1',
+        '.properties.configuration.eventTriggerConfig.scale.pollingInterval == 15',
+        '(.properties.configuration | has("ingress") | not)',
+        '.properties.template.containers[0].resources.cpu == 0.25',
+        '.properties.template.containers[0].resources.memory == "0.5Gi"',
+    )
+    assert all(check in worker_filter for check in expected_checks)
+
+    for bicep_value in (
+        "replicaTimeout: 300",
+        "replicaRetryLimit: 0",
+        "minExecutions: 0",
+        "maxExecutions: 1",
+        "pollingInterval: 15",
+        "cpu: json('0.25')",
+        "memory: '0.5Gi'",
+    ):
+        assert bicep_value in bicep
+
+    drift_cases = (
+        (("properties", "configuration", "replicaTimeout"), 600),
+        (("properties", "configuration", "replicaRetryLimit"), 1),
+        (("properties", "configuration", "eventTriggerConfig", "scale", "minExecutions"), 1),
+        (("properties", "configuration", "eventTriggerConfig", "scale", "maxExecutions"), 2),
+        (("properties", "configuration", "eventTriggerConfig", "scale", "pollingInterval"), 30),
+        (("properties", "configuration", "ingress"), {"external": True}),
+        (("properties", "template", "containers", 0, "resources", "cpu"), 0.5),
+        (("properties", "template", "containers", 0, "resources", "memory"), "1Gi"),
+    )
+    for path, replacement in drift_cases:
+        job = approved_worker_job()
+        target = job
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = replacement
+        assert not worker_filter_accepts(worker_filter, job), path
 
 
 def test_worker_identity_checks_accept_casing_only_differences_and_reject_other_resource_ids():
