@@ -40,11 +40,15 @@ EXPECTED_WORKER_IDENTITY = (
 OBSERVED_WORKER_IDENTITY = EXPECTED_WORKER_IDENTITY.replace("resourceGroups", "resourcegroups")
 WORKER_IMAGE = "pcipproductionnevsxrlbacr.azurecr.io/pcip@sha256:" + "a" * 64
 WORKER_PROVENANCE = "b" * 40
+WORKER_CLIENT_ID = "33333333-3333-3333-3333-333333333333"
 
 
 def approved_worker_job(identity: str = OBSERVED_WORKER_IDENTITY) -> dict:
     return {
-        "identity": {"type": "UserAssigned", "userAssignedIdentities": {identity: {}}},
+        "identity": {
+            "type": "UserAssigned",
+            "userAssignedIdentities": {identity: {"clientId": WORKER_CLIENT_ID}},
+        },
         "properties": {
             "provisioningState": "Succeeded",
             "configuration": {
@@ -79,6 +83,7 @@ def approved_worker_job(identity: str = OBSERVED_WORKER_IDENTITY) -> dict:
                         "command": ["python", "-m", "scripts.production_operation_worker"],
                         "env": [
                             {"name": "DATABASE_URL", "secretRef": "database-url"},
+                            {"name": "AZURE_CLIENT_ID", "value": WORKER_CLIENT_ID},
                             {"name": "PCIP_OPERATIONS_WORKER_PROVENANCE", "value": WORKER_PROVENANCE},
                         ],
                         "resources": {"cpu": 0.25, "memory": "0.5Gi"},
@@ -347,6 +352,8 @@ def test_release_and_rollback_retain_an_independently_approved_worker_artifact()
         assert "ascii_downcase" in worker_check
         assert "map(ascii_downcase)" in worker_check
         assert "same_resource_id($identity)" in worker_check
+        assert "to_entries | .[0].value.clientId" in worker_check
+        assert 'select(.name == "AZURE_CLIENT_ID" and .value == $identity_client_id)' in worker_check
         assert '--arg identity "$OPERATIONS_WORKER_IDENTITY"' in worker_check
         assert '(.properties.configuration.registries | length) == 1' in worker_check
         assert '.server == $registry and (.identity | same_resource_id($identity))' in worker_check
@@ -464,6 +471,27 @@ def test_worker_identity_checks_reject_multiple_or_mismatched_identity_reference
         assert all(not worker_filter_accepts(jq_filter, mismatched) for jq_filter in filters)
 
 
+def test_worker_identity_checks_reject_missing_or_mismatched_runtime_client_id():
+    filters = [
+        jq_filter
+        for workflow in (
+            Path(".github/workflows/production-operation.yml").read_text(),
+            Path(".github/workflows/promote-release.yml").read_text(),
+            Path(".github/workflows/rollback-release.yml").read_text(),
+        )
+        for jq_filter in worker_identity_filters(workflow)
+    ]
+
+    for replacement in (None, "44444444-4444-4444-4444-444444444444"):
+        job = approved_worker_job()
+        env = job["properties"]["template"]["containers"][0]["env"]
+        if replacement is None:
+            env[:] = [item for item in env if item["name"] != "AZURE_CLIENT_ID"]
+        else:
+            next(item for item in env if item["name"] == "AZURE_CLIENT_ID")["value"] = replacement
+        assert all(not worker_filter_accepts(jq_filter, job) for jq_filter in filters)
+
+
 def test_workflow_result_contract_is_limited_to_approved_non_sensitive_fields():
     workflow = open(".github/workflows/production-operation.yml", encoding="utf-8").read()
 
@@ -530,6 +558,8 @@ def test_operations_infrastructure_is_event_driven_and_least_privilege():
     assert "namespace: serviceBusNamespaceFqdn" not in bicep
     assert "var serviceBusNamespaceFqdn = '${operationsServiceBus.name}.servicebus.windows.net'" in bicep
     assert "value: serviceBusNamespaceFqdn" in bicep
+    assert "name: 'AZURE_CLIENT_ID'" in bicep
+    assert "value: operationsWorkerIdentity.properties.clientId" in bicep
     assert "output operationsServiceBusNamespace string = serviceBusNamespaceFqdn" in bicep
     assert "scripts.production_operation_worker" in bicep
     assert "keyVaultUrl: databaseUrlSecret.properties.secretUriWithVersion" in bicep
