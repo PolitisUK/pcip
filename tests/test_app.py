@@ -3775,6 +3775,100 @@ def test_researcher_message_workspace_separates_visibility_and_tracks_read_state
         assert internal_created is not None and internal_created.read_at is None
 
 
+def test_researcher_message_filters_accept_blank_study_and_preserve_strict_scope():
+    from app.models import ParticipantMessage, Project, Study
+
+    context = _prepare_participant_api_activity_response_context('researcher-message-filters')
+    other_study_title = unique_value('Other organisation message study')
+    with SessionLocal() as db:
+        actor = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        scoped_study = db.get(Study, context['study_id'])
+        assert actor is not None and scoped_study is not None
+        db.add(
+            ParticipantMessage(
+                organisation_id=actor.organisation_id,
+                study_id=context['study_id'],
+                participant_id=context['participant_id'],
+                sender_type='participant',
+                body='Unread message for filter coverage',
+                internal_note=False,
+            )
+        )
+        other_org = Organisation(
+            name=unique_value('Other message filter org'),
+            slug=unique_value('other-message-filter-org').lower(),
+        )
+        db.add(other_org)
+        db.flush()
+        other_project = Project(
+            organisation_id=other_org.id,
+            title='Other message filter project',
+            code=unique_value('OTHER-MSG-FILTER').upper(),
+            status='live',
+            created_by_id=actor.id,
+        )
+        db.add(other_project)
+        db.flush()
+        other_study = Study(
+            organisation_id=other_org.id,
+            project_id=other_project.id,
+            title=other_study_title,
+            code=unique_value('OTHER-MSG-STUDY').upper(),
+            methodology='diary',
+            status='recruiting',
+            created_by_id=actor.id,
+        )
+        db.add(other_study)
+        db.commit()
+        study_id = scoped_study.id
+        study_title = scoped_study.title
+        inaccessible_study_id = other_study.id
+
+    with client:
+        auth()
+
+        unfiltered = client.get('/messages', follow_redirects=False)
+        assert unfiltered.status_code == 200
+        assert '<option value="" selected>All accessible studies</option>' in unfiltered.text
+        assert '<option value="" selected>All conversations</option>' in unfiltered.text
+
+        unread_all_studies = client.get('/messages?status_filter=unread', follow_redirects=False)
+        assert unread_all_studies.status_code == 200
+        assert '<option value="" selected>All accessible studies</option>' in unread_all_studies.text
+        assert '<option value="unread" selected>Needs a response</option>' in unread_all_studies.text
+        assert study_title in unread_all_studies.text
+
+        blank_study = client.get('/messages?study_id=&status_filter=unread', follow_redirects=False)
+        assert blank_study.status_code == 200
+        assert '<option value="" selected>All accessible studies</option>' in blank_study.text
+        assert '<option value="unread" selected>Needs a response</option>' in blank_study.text
+
+        selected_study = client.get(f'/messages?study_id={study_id}', follow_redirects=False)
+        assert selected_study.status_code == 200
+        assert f'<option value="{study_id}" selected>{study_title}</option>' in selected_study.text
+        assert '<option value="" selected>All conversations</option>' in selected_study.text
+
+        selected_study_unread = client.get(
+            f'/messages?study_id={study_id}&status_filter=unread',
+            follow_redirects=False,
+        )
+        assert selected_study_unread.status_code == 200
+        assert f'<option value="{study_id}" selected>{study_title}</option>' in selected_study_unread.text
+        assert '<option value="unread" selected>Needs a response</option>' in selected_study_unread.text
+
+        malformed = client.get('/messages?study_id=abc', follow_redirects=False)
+        assert malformed.status_code == 422
+        assert malformed.json()['detail'][0]['loc'] == ['query', 'study_id']
+
+        inaccessible = client.get(
+            f'/messages?study_id={inaccessible_study_id}',
+            follow_redirects=False,
+        )
+        assert inaccessible.status_code == 403
+        assert other_study_title not in inaccessible.text
+        assert other_study_title not in unfiltered.text
+
+
 def test_researcher_message_workspace_enforces_organisation_scope_and_observer_is_read_only():
     from app.models import Organisation, OrganisationMembership, Participant, Project, Study, StudyEnrolment
     from app.security import hash_password

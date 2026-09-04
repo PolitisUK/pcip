@@ -9,6 +9,7 @@ import time
 import csv, io, json, secrets
 from collections import OrderedDict, deque
 from threading import Lock
+from typing import Annotated
 from urllib.parse import urlencode
 from .csrf import get_csrf_token, csrf_protect
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, Response, Query, Header, Path as ApiPath
@@ -16,6 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from pydantic import BeforeValidator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -6417,11 +6419,19 @@ def _conversation_scope(db: Session, user: User, study_id: int, participant_id: 
     return study_row, participant_row, enrolment, permission
 
 
+def _blank_message_study_filter(value: object) -> object | None:
+    return None if value == "" else value
+
+
 @app.get("/messages", response_class=HTMLResponse)
 def researcher_conversations(
     request: Request,
     q: str = "",
-    study_id: int | None = None,
+    study_id: Annotated[
+        int | None,
+        BeforeValidator(_blank_message_study_filter),
+        Query(),
+    ] = None,
     status_filter: str = "",
     page: int = 1,
     u=Depends(current_user),
