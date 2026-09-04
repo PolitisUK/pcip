@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Permanently delete organisation{% endblock %}
+{% block page_description %}<p class="page-description">Permanent deletion is exceptional and is available only for an archived workspace with no customer or research data.</p>{% endblock %}
+{% block contextual_help %}<p class="muted">Archive should be used whenever records must be retained. The safety assessment is repeated inside the deletion transaction.</p>{% endblock %}
+{% block content %}
+<section class="card section stack confirmation-card">
+  <div>
+    <p class="eyebrow">Customer organisation</p>
+    <h2>{{ organisation.name }}</h2>
+    <p><span class="badge">{{ 'Archived' if organisation.archived_at else 'Active' }}</span></p>
+  </div>
+
+  {% if deletion_error %}<div class="error" role="alert">{{ deletion_error }}</div>{% endif %}
+
+  {% if organisation.archived_at is none %}
+  <div class="notice neutral"><strong>Permanent deletion unavailable.</strong> Archive this organisation first. Archiving retains its data and can be reversed.</div>
+  {% elif not assessment.can_delete %}
+  <div class="notice neutral">
+    <strong>Permanent deletion unavailable.</strong>
+    <p>Archive this organisation instead because it contains retained research or customer data:</p>
+    <ul>
+      {% for label, count in assessment.blocking_counts.items() %}<li>{{ count }} {{ label }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% else %}
+  <div class="notice warning">
+    <strong>This archived organisation is empty.</strong>
+    <p>Permanent deletion will remove the organisation and its {{ assessment.membership_count }} organisation membership record{% if assessment.membership_count != 1 %}s{% endif %}. A durable platform audit record will be retained.</p>
+  </div>
+  <form method="post" action="/admin/organisations/{{ organisation.id }}/delete" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label for="organisation-confirmation">Type <strong>{{ organisation.name }}</strong> to confirm</label>
+      <input id="organisation-confirmation" name="confirmation" value="{{ confirmation }}" required autocomplete="off">
+    </div>
+    <div class="actions">
+      <button class="danger" type="submit">Permanently delete organisation</button>
+      <a class="btn secondary" href="/admin?organisation_status=archived">Cancel</a>
+    </div>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

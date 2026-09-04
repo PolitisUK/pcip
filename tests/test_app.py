@@ -500,6 +500,17 @@ def create_customer_organisation_through_ui(name: str, slug: str):
     )
 
 
+def create_lifecycle_organisation(prefix: str = 'Lifecycle customer') -> tuple[int, str]:
+    name = unique_value(prefix)
+    slug = unique_value(prefix.lower().replace(' ', '-')).lower()
+    response = create_customer_organisation_through_ui(name, slug)
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        organisation = db.scalar(select(Organisation).where(Organisation.slug == slug))
+        assert organisation is not None
+        return organisation.id, organisation.name
+
+
 def test_platform_admin_customer_organisation_form_and_post_are_server_protected():
     from app.models import OrganisationMembership
     from app.security import hash_password
@@ -619,6 +630,7 @@ def test_platform_admin_creates_isolated_customer_organisation_atomically():
             organisation = db.scalar(select(Organisation).where(Organisation.slug == slug))
             assert organisation is not None
             assert organisation.name == name
+            assert organisation.archived_at is None
             assert db.scalar(
                 select(func.count(Organisation.id)).where(Organisation.slug == slug)
             ) == 1
@@ -859,6 +871,629 @@ def test_new_customer_organisation_remains_hidden_from_unrelated_owner():
         assert projects.status_code == 200
         assert name not in projects.text
         assert 'Town Centre Experience' not in projects.text
+
+
+def test_organisation_deletion_policy_classifies_every_scoped_model():
+    from app.db import Base
+    from app.models import AuditEvent, OrganisationMembership
+    from app.organisation_lifecycle import MEANINGFUL_ORGANISATION_MODELS
+
+    scoped_models = {
+        mapper.class_
+        for mapper in Base.registry.mappers
+        if 'organisation_id' in mapper.local_table.c
+    }
+    classified_models = {
+        model for model, _label in MEANINGFUL_ORGANISATION_MODELS
+    } | {AuditEvent, OrganisationMembership}
+
+    assert scoped_models == classified_models
+
+
+def test_platform_admin_lifecycle_routes_are_server_protected():
+    organisation_id, organisation_name = create_lifecycle_organisation('Protected lifecycle')
+    active_organisation_id, _ = create_lifecycle_organisation('Protected active lifecycle')
+    with client:
+        _, platform_home_id = set_local_platform_admin()
+        client.cookies.clear()
+        auth()
+        assert client.get(
+            f'/admin/organisations/{platform_home_id}/archive'
+        ).status_code == 409
+        dashboard = client.get('/admin')
+        assert 'Platform operations home' in dashboard.text
+        archived = post_with_csrf(
+            f'/admin/organisations/{organisation_id}/archive',
+            follow_redirects=False,
+        )
+        assert archived.status_code == 303
+
+        set_local_platform_admin(False)
+        client.cookies.clear()
+        auth()
+        assert post_with_csrf(
+            f'/admin/organisations/{active_organisation_id}/archive',
+            follow_redirects=False,
+        ).status_code == 404
+        assert client.get(f'/admin/organisations/{organisation_id}/delete').status_code == 404
+        assert post_with_csrf(
+            f'/admin/organisations/{organisation_id}/restore',
+            follow_redirects=False,
+        ).status_code == 404
+        assert post_with_csrf(
+            f'/admin/organisations/{organisation_id}/delete',
+            data={'confirmation': organisation_name},
+            follow_redirects=False,
+        ).status_code == 404
+
+        client.cookies.clear()
+        assert client.get(
+            f'/admin/organisations/{organisation_id}/delete',
+            follow_redirects=False,
+        ).status_code == 303
+        assert client.post(
+            f'/admin/organisations/{organisation_id}/restore',
+            data={'csrf_token': 'not-authorised'},
+            follow_redirects=False,
+        ).status_code == 303
+        assert client.post(
+            f'/admin/organisations/{active_organisation_id}/archive',
+            data={'csrf_token': 'not-authorised'},
+            follow_redirects=False,
+        ).status_code == 303
+
+
+def test_archive_restore_preserve_research_data_and_control_normal_access():
+    from app.models import (
+        Activity,
+        ActivityResponse,
+        AuditEvent,
+        EvidenceFile,
+        OrganisationMembership,
+        Participant,
+        ParticipantInvitation,
+        ParticipantMessage,
+        Project,
+        Study,
+        StudyConsentDocument,
+        StudyEnrolment,
+    )
+    from app.security import token_hash
+
+    organisation_id, organisation_name = create_lifecycle_organisation('Retained research')
+    with SessionLocal() as db:
+        administrator = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert administrator is not None
+        project = Project(
+            organisation_id=organisation_id,
+            title='Retained project',
+            code=unique_value('RETAINED-PROJECT').upper(),
+            created_by_id=administrator.id,
+        )
+        db.add(project)
+        db.flush()
+        study_row = Study(
+            organisation_id=organisation_id,
+            project_id=project.id,
+            title='Retained study',
+            code=unique_value('RETAINED-STUDY').upper(),
+            created_by_id=administrator.id,
+        )
+        participant_row = Participant(
+            organisation_id=organisation_id,
+            reference=unique_value('RETAINED-PARTICIPANT').upper(),
+            name='Retained participant',
+            consent_status='granted',
+            created_by_id=administrator.id,
+        )
+        db.add_all([study_row, participant_row])
+        db.flush()
+        activity = Activity(
+            organisation_id=organisation_id,
+            study_id=study_row.id,
+            title='Retained activity',
+        )
+        db.add(activity)
+        db.flush()
+        response_row = ActivityResponse(
+            organisation_id=organisation_id,
+            study_id=study_row.id,
+            activity_id=activity.id,
+            participant_id=participant_row.id,
+            value_json='{"answer":"retained"}',
+            status='submitted',
+        )
+        invitation = ParticipantInvitation(
+            organisation_id=organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(unique_value('retained-invitation')),
+            expires_at=now() + timedelta(days=7),
+            accepted_at=now(),
+            invited_by_id=administrator.id,
+        )
+        consent_document = StudyConsentDocument(
+            organisation_id=organisation_id,
+            study_id=study_row.id,
+            document_type='consent_text',
+            title='Retained consent',
+            version='1.0',
+            reference='retained-consent',
+            effective_date='2026-09-04',
+            body='Retained historical consent content.',
+            content_sha256='a' * 64,
+        )
+        db.add_all([
+            response_row,
+            invitation,
+            consent_document,
+            StudyEnrolment(
+                organisation_id=organisation_id,
+                study_id=study_row.id,
+                participant_id=participant_row.id,
+            ),
+            ParticipantMessage(
+                organisation_id=organisation_id,
+                study_id=study_row.id,
+                participant_id=participant_row.id,
+                sender_type='participant',
+                body='Retained message',
+            ),
+        ])
+        db.flush()
+        evidence = EvidenceFile(
+            organisation_id=organisation_id,
+            study_id=study_row.id,
+            activity_id=activity.id,
+            participant_id=participant_row.id,
+            response_id=response_row.id,
+            original_name='retained.txt',
+            stored_name=unique_value('retained-evidence.txt'),
+            content_type='text/plain',
+        )
+        db.add(evidence)
+        db.add(AuditEvent(
+            organisation_id=organisation_id,
+            actor_user_id=administrator.id,
+            action='research.retained_event',
+            entity_type='study',
+            entity_id=str(study_row.id),
+        ))
+        db.commit()
+        membership_count = db.scalar(
+            select(func.count(OrganisationMembership.id)).where(
+                OrganisationMembership.organisation_id == organisation_id
+            )
+        )
+        record_ids = {
+            Project: project.id,
+            Study: study_row.id,
+            Participant: participant_row.id,
+            Activity: activity.id,
+            ActivityResponse: response_row.id,
+            EvidenceFile: evidence.id,
+            ParticipantInvitation: invitation.id,
+            StudyConsentDocument: consent_document.id,
+        }
+
+    with client:
+        set_local_platform_admin()
+        client.cookies.clear()
+        auth()
+        confirmation = client.get(f'/admin/organisations/{organisation_id}/archive')
+        assert confirmation.status_code == 200
+        assert 'data and memberships are retained unchanged' in confirmation.text
+        archived = post_with_csrf(
+            f'/admin/organisations/{organisation_id}/archive',
+            follow_redirects=False,
+        )
+        assert archived.status_code == 303
+
+        active_list = client.get('/admin?organisation_status=active')
+        archived_list = client.get('/admin?organisation_status=archived')
+        assert organisation_name not in active_list.text
+        assert organisation_name in archived_list.text
+        assert 'organisation-row--archived' in archived_list.text
+        assert 'Review permanent deletion' in archived_list.text
+        assert organisation_name not in client.get('/').text
+        assert post_with_csrf(
+            '/organisations/switch',
+            data={'organisation_id': organisation_id},
+            follow_redirects=False,
+        ).status_code == 403
+
+        deletion_review = client.get(f'/admin/organisations/{organisation_id}/delete')
+        assert deletion_review.status_code == 200
+        assert 'Permanent deletion unavailable.' in deletion_review.text
+        for expected_reason in (
+            '1 projects',
+            '1 studies',
+            '1 participants',
+            '1 study consent documents',
+            '1 activities',
+            '1 submissions or responses',
+            '1 messages',
+            '1 evidence files',
+            '1 audit records',
+        ):
+            assert expected_reason in deletion_review.text
+
+        restored = post_with_csrf(
+            f'/admin/organisations/{organisation_id}/restore',
+            follow_redirects=False,
+        )
+        assert restored.status_code == 303
+        assert organisation_name in client.get('/admin?organisation_status=active').text
+        assert post_with_csrf(
+            '/organisations/switch',
+            data={'organisation_id': organisation_id},
+            follow_redirects=False,
+        ).status_code == 303
+
+    with SessionLocal() as db:
+        organisation = db.get(Organisation, organisation_id)
+        assert organisation is not None and organisation.archived_at is None
+        for model, record_id in record_ids.items():
+            assert db.get(model, record_id) is not None
+        assert db.scalar(
+            select(func.count(OrganisationMembership.id)).where(
+                OrganisationMembership.organisation_id == organisation_id
+            )
+        ) == membership_count
+        actions = set(db.scalars(select(AuditEvent.action).where(
+            AuditEvent.organisation_id == organisation_id
+        )).all())
+        assert 'platform_admin.organisation_archived' in actions
+        assert 'platform_admin.organisation_restored' in actions
+
+
+def test_archived_stale_session_cannot_read_or_mutate_organisation():
+    from app.models import OrganisationMembership, Project
+    from app.security import encode_session, hash_password
+
+    organisation_id, _ = create_lifecycle_organisation('Stale session')
+    email = f"{unique_value('stale-session')}@example.org"
+    password = 'StaleSessionPass123!'
+    with SessionLocal() as db:
+        user = User(
+            organisation_id=organisation_id,
+            name='Stale session owner',
+            email=email,
+            password_hash=hash_password(password),
+            role='owner',
+        )
+        db.add(user)
+        db.flush()
+        db.add(OrganisationMembership(
+            user_id=user.id,
+            organisation_id=organisation_id,
+            role='owner',
+        ))
+        db.commit()
+        user_id = user.id
+        session_version = user.session_version
+
+    with client:
+        set_local_platform_admin()
+        client.cookies.clear()
+        auth()
+        assert post_with_csrf(
+            f'/admin/organisations/{organisation_id}/archive',
+            follow_redirects=False,
+        ).status_code == 303
+
+        client.cookies.clear()
+        client.cookies.set('session', encode_session(user_id, session_version, organisation_id))
+        assert client.get('/projects', follow_redirects=False).status_code == 303
+        projects_before = None
+        with SessionLocal() as db:
+            projects_before = db.scalar(select(func.count(Project.id)).where(
+                Project.organisation_id == organisation_id
+            ))
+        denied_write = post_with_csrf(
+            '/projects',
+            data={
+                'title': 'Must not be created',
+                'code': unique_value('STALE-DENIED').upper(),
+            },
+            follow_redirects=False,
+        )
+        assert denied_write.status_code == 303
+        with SessionLocal() as db:
+            assert db.scalar(select(func.count(Project.id)).where(
+                Project.organisation_id == organisation_id
+            )) == projects_before
+
+        client.cookies.clear()
+        refused_login = login_as(email, password)
+        assert refused_login.status_code == 200
+        assert 'does not currently have access to an active organisation' in refused_login.text
+
+
+def test_archiving_selected_customer_organisation_rescopes_platform_admin_session():
+    from app.security import decode_session
+
+    organisation_id, _ = create_lifecycle_organisation('Selected archive')
+    with client:
+        administrator_id, original_organisation_id = set_local_platform_admin()
+        client.cookies.clear()
+        auth()
+        assert post_with_csrf(
+            '/organisations/switch',
+            data={'organisation_id': organisation_id},
+            follow_redirects=False,
+        ).status_code == 303
+        selected = decode_session(client.cookies.get('session'))
+        assert selected is not None and selected.organisation_id == organisation_id
+
+        archived = post_with_csrf(
+            f'/admin/organisations/{organisation_id}/archive',
+            follow_redirects=False,
+        )
+        assert archived.status_code == 303
+        rescoped = decode_session(client.cookies.get('session'))
+        assert rescoped is not None
+        assert rescoped.user_id == administrator_id
+        assert rescoped.organisation_id == original_organisation_id
+        assert client.get('/admin').status_code == 200
+
+
+def test_archived_organisation_blocks_participant_sessions_and_invitation_entry():
+    from app.models import (
+        Participant,
+        ParticipantInvitation,
+        Project,
+        PublicAuthSession,
+        Study,
+    )
+    from app.security import token_hash
+
+    organisation_id, _ = create_lifecycle_organisation('Archived participant scope')
+    invitation_token = unique_value('archived-participant-invitation')
+    api_token = unique_value('archived-participant-api-session')
+    with SessionLocal() as db:
+        administrator = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+        assert administrator is not None
+        project = Project(
+            organisation_id=organisation_id,
+            title='Archived participant project',
+            code=unique_value('ARCHIVED-PARTICIPANT-PROJECT').upper(),
+            created_by_id=administrator.id,
+        )
+        db.add(project)
+        db.flush()
+        study_row = Study(
+            organisation_id=organisation_id,
+            project_id=project.id,
+            title='Archived participant study',
+            code=unique_value('ARCHIVED-PARTICIPANT-STUDY').upper(),
+            created_by_id=administrator.id,
+        )
+        participant_row = Participant(
+            organisation_id=organisation_id,
+            reference=unique_value('ARCHIVED-PARTICIPANT').upper(),
+            name='Archived participant',
+            consent_status='granted',
+            created_by_id=administrator.id,
+        )
+        db.add_all([study_row, participant_row])
+        db.flush()
+        invitation = ParticipantInvitation(
+            organisation_id=organisation_id,
+            participant_id=participant_row.id,
+            study_id=study_row.id,
+            token_hash=token_hash(invitation_token),
+            expires_at=now() + timedelta(days=7),
+            accepted_at=now(),
+            invited_by_id=administrator.id,
+        )
+        db.add(invitation)
+        db.flush()
+        db.add(PublicAuthSession(
+            scope='participant_api',
+            session_hash=token_hash(api_token),
+            participant_invitation_id=invitation.id,
+            expires_at=now() + timedelta(hours=1),
+        ))
+        db.commit()
+
+    with client:
+        set_local_platform_admin()
+        client.cookies.clear()
+        auth()
+        assert post_with_csrf(
+            f'/admin/organisations/{organisation_id}/archive',
+            follow_redirects=False,
+        ).status_code == 303
+        api_response = client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {api_token}'},
+        )
+        assert api_response.status_code == 401
+        invitation_page = client.get(f'/join-study?token={invitation_token}')
+        assert invitation_page.status_code == 200
+        assert 'This invitation has expired, been used or been revoked.' in invitation_page.text
+
+
+def test_empty_archived_organisation_requires_fresh_safe_confirmed_delete():
+    from app.models import AuditEvent, OrganisationMembership, Project
+
+    organisation_id, organisation_name = create_lifecycle_organisation('Disposable empty')
+    with SessionLocal() as db:
+        unrelated_organisation_id = db.scalar(
+            select(Organisation.id).where(Organisation.slug == 'politis-demo')
+        )
+        assert unrelated_organisation_id is not None
+        unrelated_memberships_before = db.scalar(
+            select(func.count(OrganisationMembership.id)).where(
+                OrganisationMembership.organisation_id != organisation_id
+            )
+        )
+        unrelated_projects_before = db.scalar(
+            select(func.count(Project.id)).where(
+                Project.organisation_id != organisation_id
+            )
+        )
+
+    with client:
+        set_local_platform_admin()
+        client.cookies.clear()
+        auth()
+        assert client.post(
+            f'/admin/organisations/{organisation_id}/archive',
+            follow_redirects=False,
+        ).status_code == 422
+        assert client.post(
+            f'/admin/organisations/{organisation_id}/restore',
+            follow_redirects=False,
+        ).status_code == 422
+        active_delete = post_with_csrf(
+            f'/admin/organisations/{organisation_id}/delete',
+            data={'confirmation': organisation_name},
+            follow_redirects=False,
+        )
+        assert active_delete.status_code == 409
+        assert 'Archive this organisation' in active_delete.text
+
+        assert post_with_csrf(
+            f'/admin/organisations/{organisation_id}/archive',
+            follow_redirects=False,
+        ).status_code == 303
+        assessment = client.get(f'/admin/organisations/{organisation_id}/delete')
+        assert assessment.status_code == 200
+        assert 'This archived organisation is empty.' in assessment.text
+        assert 'Permanently delete organisation' in assessment.text
+        assert client.get(
+            f'/admin/organisations/{organisation_id}/delete',
+            follow_redirects=False,
+        ).status_code == 200
+        with SessionLocal() as db:
+            assert db.get(Organisation, organisation_id) is not None
+
+        assert client.post(
+            f'/admin/organisations/{organisation_id}/delete',
+            data={'confirmation': organisation_name},
+            follow_redirects=False,
+        ).status_code == 422
+        incorrect = post_with_csrf(
+            f'/admin/organisations/{organisation_id}/delete',
+            data={'confirmation': 'wrong organisation'},
+            follow_redirects=False,
+        )
+        assert incorrect.status_code == 400
+        assert 'Enter the organisation name exactly' in incorrect.text
+
+        deleted = post_with_csrf(
+            f'/admin/organisations/{organisation_id}/delete',
+            data={'confirmation': organisation_name},
+            follow_redirects=False,
+        )
+        assert deleted.status_code == 303
+
+    with SessionLocal() as db:
+        assert db.get(Organisation, organisation_id) is None
+        assert db.scalar(select(OrganisationMembership.id).where(
+            OrganisationMembership.organisation_id == organisation_id
+        )) is None
+        assert db.get(Organisation, unrelated_organisation_id) is not None
+        assert db.scalar(
+            select(func.count(OrganisationMembership.id)).where(
+                OrganisationMembership.organisation_id != organisation_id
+            )
+        ) == unrelated_memberships_before
+        assert db.scalar(
+            select(func.count(Project.id)).where(
+                Project.organisation_id != organisation_id
+            )
+        ) == unrelated_projects_before
+        durable_audit = db.scalar(select(AuditEvent).where(
+            AuditEvent.action == 'platform_admin.organisation_deleted',
+            AuditEvent.entity_id == str(organisation_id),
+        ))
+        assert durable_audit is not None
+        assert durable_audit.organisation_id == unrelated_organisation_id
+
+
+def test_permanent_delete_rechecks_safety_after_confirmation_page():
+    from app.models import Project
+
+    organisation_id, organisation_name = create_lifecycle_organisation('Delete race')
+    with client:
+        set_local_platform_admin()
+        client.cookies.clear()
+        auth()
+        assert post_with_csrf(
+            f'/admin/organisations/{organisation_id}/archive',
+            follow_redirects=False,
+        ).status_code == 303
+        assert 'This archived organisation is empty.' in client.get(
+            f'/admin/organisations/{organisation_id}/delete'
+        ).text
+
+        with SessionLocal() as db:
+            administrator = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            assert administrator is not None
+            project = Project(
+                organisation_id=organisation_id,
+                title='Appeared after assessment',
+                code=unique_value('RACE-PROJECT').upper(),
+                created_by_id=administrator.id,
+            )
+            db.add(project)
+            db.commit()
+
+        refused = post_with_csrf(
+            f'/admin/organisations/{organisation_id}/delete',
+            data={'confirmation': organisation_name},
+            follow_redirects=False,
+        )
+        assert refused.status_code == 409
+        assert '1 projects' in refused.text
+    with SessionLocal() as db:
+        assert db.get(Organisation, organisation_id) is not None
+        assert db.scalar(select(Project.id).where(
+            Project.organisation_id == organisation_id
+        )) is not None
+
+
+def test_permanent_delete_transaction_rolls_back_on_audit_failure(monkeypatch):
+    import app.main as main_module
+    from app.models import AuditEvent, OrganisationMembership
+
+    organisation_id, organisation_name = create_lifecycle_organisation('Delete rollback')
+    with client:
+        set_local_platform_admin()
+        client.cookies.clear()
+        auth()
+        assert post_with_csrf(
+            f'/admin/organisations/{organisation_id}/archive',
+            follow_redirects=False,
+        ).status_code == 303
+
+        original_audit = main_module.audit
+
+        def fail_deletion_audit(*args, **kwargs):
+            if args[3] == 'platform_admin.organisation_deleted':
+                raise RuntimeError('simulated durable audit failure')
+            return original_audit(*args, **kwargs)
+
+        monkeypatch.setattr(main_module, 'audit', fail_deletion_audit)
+        with pytest.raises(RuntimeError, match='simulated durable audit failure'):
+            post_with_csrf(
+                f'/admin/organisations/{organisation_id}/delete',
+                data={'confirmation': organisation_name},
+                follow_redirects=False,
+            )
+
+    with SessionLocal() as db:
+        assert db.get(Organisation, organisation_id) is not None
+        assert db.scalar(select(OrganisationMembership.id).where(
+            OrganisationMembership.organisation_id == organisation_id
+        )) is not None
+        assert db.scalar(select(AuditEvent.id).where(
+            AuditEvent.organisation_id == organisation_id,
+            AuditEvent.action == 'platform_admin.organisation_archived',
+        )) is not None
 
 
 def test_customer_organisation_slug_suggestion_has_a_stable_editable_contract():

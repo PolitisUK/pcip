@@ -21,7 +21,7 @@ from pydantic import BeforeValidator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import select, func, or_, and_, case, text, update
+from sqlalchemy import select, func, or_, and_, case, delete, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .config import settings, validate_runtime_settings
@@ -62,6 +62,10 @@ from .models import (
 )
 from .security import hash_password, verify_password, new_token, token_hash, encode_session, decode_session
 from .services import audit, purge_expired_outbox, queue_email
+from .organisation_lifecycle import (
+    DISPOSABLE_LIFECYCLE_AUDIT_ACTIONS,
+    assess_organisation_deletion,
+)
 from .research_intelligence import (
     create_confidence_assessment,
     review_confidence_assessment,
@@ -660,7 +664,7 @@ class CurrentUser:
         return [
             membership
             for membership in self.identity.memberships
-            if membership.is_active
+            if membership.is_active and membership.organisation.archived_at is None
         ]
 
     def __getattr__(self, name):
@@ -689,6 +693,82 @@ def add_organisation_membership(
     )
     db.add(membership)
     return membership
+
+
+def active_organisation_membership(
+    db: Session,
+    user_id: int,
+    *,
+    preferred_organisation_id: int | None = None,
+    excluded_organisation_id: int | None = None,
+) -> OrganisationMembership | None:
+    statement = (
+        select(OrganisationMembership)
+        .join(
+            Organisation,
+            Organisation.id == OrganisationMembership.organisation_id,
+        )
+        .where(
+            OrganisationMembership.user_id == user_id,
+            OrganisationMembership.is_active == True,
+            Organisation.archived_at.is_(None),
+        )
+    )
+    if excluded_organisation_id is not None:
+        statement = statement.where(
+            OrganisationMembership.organisation_id != excluded_organisation_id
+        )
+    if preferred_organisation_id is not None:
+        statement = statement.order_by(
+            case(
+                (OrganisationMembership.organisation_id == preferred_organisation_id, 0),
+                else_=1,
+            ),
+            OrganisationMembership.id,
+        )
+    else:
+        statement = statement.order_by(OrganisationMembership.id)
+    return db.scalar(statement.limit(1))
+
+
+def organisation_is_active(db: Session, organisation_id: int) -> bool:
+    return db.scalar(
+        select(Organisation.id).where(
+            Organisation.id == organisation_id,
+            Organisation.archived_at.is_(None),
+        )
+    ) is not None
+
+
+def organisation_hosts_active_platform_admin(
+    db: Session,
+    organisation_id: int,
+) -> bool:
+    return db.scalar(
+        select(User.id).where(
+            User.organisation_id == organisation_id,
+            User.is_platform_admin == True,
+            User.is_active == True,
+        )
+    ) is not None
+
+
+def active_login_organisation_id(db: Session, user: User) -> int | None:
+    membership = active_organisation_membership(
+        db,
+        user.id,
+        preferred_organisation_id=user.organisation_id,
+    )
+    if membership:
+        return membership.organisation_id
+    # Compatibility only for development/test databases that predate the
+    # membership migration. Production identities must have an active row.
+    if (
+        settings.environment in {"development", "test"}
+        and organisation_is_active(db, user.organisation_id)
+    ):
+        return user.organisation_id
+    return None
 
 
 def invalidate_session_cookie_user(request: Request, db: Session):
@@ -720,10 +800,16 @@ def optional_current_user(request: Request, db: Session = Depends(get_db)):
 
     organisation_id = identity.organisation_id or u.organisation_id
     membership = db.scalar(
-        select(OrganisationMembership).where(
+        select(OrganisationMembership)
+        .join(
+            Organisation,
+            Organisation.id == OrganisationMembership.organisation_id,
+        )
+        .where(
             OrganisationMembership.user_id == u.id,
             OrganisationMembership.organisation_id == organisation_id,
             OrganisationMembership.is_active == True,
+            Organisation.archived_at.is_(None),
         )
     )
     if membership:
@@ -733,6 +819,12 @@ def optional_current_user(request: Request, db: Session = Depends(get_db)):
     if (
         settings.environment in {"development", "test"}
         and organisation_id == u.organisation_id
+        and db.scalar(
+            select(Organisation.id).where(
+                Organisation.id == organisation_id,
+                Organisation.archived_at.is_(None),
+            )
+        )
     ):
         return u
     return None
@@ -1602,7 +1694,12 @@ def _resolve_participant_api_context(
     if not session_row:
         raise _participant_api_unauthorised()
     invitation = db.get(ParticipantInvitation, session_row.participant_invitation_id)
-    if not invitation or invitation.revoked_at or not unexpired(invitation.expires_at):
+    if (
+        not invitation
+        or invitation.revoked_at
+        or not unexpired(invitation.expires_at)
+        or not organisation_is_active(db, invitation.organisation_id)
+    ):
         raise _participant_api_unauthorised()
     participant_row = db.get(Participant, invitation.participant_id)
     if not participant_row:
@@ -2102,9 +2199,18 @@ def login(
     user.locked_until = None
     user.last_login_at = current_time
 
+    login_organisation_id = active_login_organisation_id(db, user)
+    if login_organisation_id is None:
+        db.rollback()
+        return render(
+            request,
+            "login.html",
+            error="Your account does not currently have access to an active organisation.",
+        )
+
     audit(
         db,
-        user.organisation_id,
+        login_organisation_id,
         user.id,
         "auth.login",
         "user",
@@ -2119,7 +2225,7 @@ def login(
         encode_session(
             user.id,
             user.session_version,
-            user.organisation_id,
+            login_organisation_id,
         ),
         httponly=True,
         samesite="strict",
@@ -2175,21 +2281,35 @@ async def entra_callback(request: Request, db: Session = Depends(get_db)):
             user.external_provider = "entra"
             user.external_subject = subject
         elif settings.entra_auto_provision and settings.entra_default_organisation_slug:
-            org = db.scalar(select(Organisation).where(Organisation.slug == settings.entra_default_organisation_slug))
+            org = db.scalar(
+                select(Organisation).where(
+                    Organisation.slug == settings.entra_default_organisation_slug,
+                    Organisation.archived_at.is_(None),
+                )
+            )
             if not org:
                 return render(request, "login.html", error="The configured organisation could not be found.")
             role = settings.entra_default_role if settings.entra_default_role in {"owner","admin","researcher","observer"} else "researcher"
             user = User(organisation_id=org.id, name=name[:120], email=email, password_hash=None, role=role, is_active=True, external_provider="entra", external_subject=subject)
             db.add(user); db.flush()
             add_organisation_membership(db, user, org.id, role)
+            db.flush()
         else:
             return render(request, "login.html", error="Your Microsoft account has not been invited to this workspace.")
     user.name = name[:120] or user.name
     user.last_login_at = now()
-    audit(db, user.organisation_id, user.id, "auth.entra_login", "user", user.id)
+    login_organisation_id = active_login_organisation_id(db, user)
+    if login_organisation_id is None:
+        db.rollback()
+        return render(
+            request,
+            "login.html",
+            error="Your account does not currently have access to an active organisation.",
+        )
+    audit(db, login_organisation_id, user.id, "auth.entra_login", "user", user.id)
     db.commit()
     response = RedirectResponse("/", 303)
-    response.set_cookie("session", encode_session(user.id, user.session_version, user.organisation_id), httponly=True, samesite="lax", secure=settings.cookie_secure, max_age=43200)
+    response.set_cookie("session", encode_session(user.id, user.session_version, login_organisation_id), httponly=True, samesite="lax", secure=settings.cookie_secure, max_age=43200)
     return response
 
 @app.post("/logout")
@@ -2206,10 +2326,16 @@ def switch_organisation(
     db: Session = Depends(get_db),
 ):
     membership = db.scalar(
-        select(OrganisationMembership).where(
+        select(OrganisationMembership)
+        .join(
+            Organisation,
+            Organisation.id == OrganisationMembership.organisation_id,
+        )
+        .where(
             OrganisationMembership.user_id == u.id,
             OrganisationMembership.organisation_id == organisation_id,
             OrganisationMembership.is_active == True,
+            Organisation.archived_at.is_(None),
         )
     )
     if not membership:
@@ -2413,10 +2539,18 @@ def dashboard(request:Request,u=Depends(optional_current_user),db:Session=Depend
 @app.get("/admin", response_class=HTMLResponse)
 def platform_admin_dashboard(
     request: Request,
+    organisation_status: str = "active",
     u=Depends(platform_admin),
     db: Session = Depends(get_db),
 ):
     """Small, deliberately separate operational overview for Politis staff."""
+    if organisation_status not in {"active", "archived"}:
+        raise HTTPException(400, "Select active or archived organisations.")
+    lifecycle_filter = (
+        Organisation.archived_at.is_(None)
+        if organisation_status == "active"
+        else Organisation.archived_at.is_not(None)
+    )
     organisation_rows = db.execute(
         select(
             Organisation,
@@ -2428,9 +2562,34 @@ def platform_admin_dashboard(
             Participant,
             Participant.organisation_id == Organisation.id,
         )
+        .where(lifecycle_filter)
         .group_by(Organisation.id)
         .order_by(Organisation.name)
     ).all()
+    active_organisation_count = int(
+        db.scalar(
+            select(func.count(Organisation.id)).where(
+                Organisation.archived_at.is_(None)
+            )
+        )
+        or 0
+    )
+    archived_organisation_count = int(
+        db.scalar(
+            select(func.count(Organisation.id)).where(
+                Organisation.archived_at.is_not(None)
+            )
+        )
+        or 0
+    )
+    protected_organisation_ids = set(
+        db.scalars(
+            select(User.organisation_id).where(
+                User.is_platform_admin == True,
+                User.is_active == True,
+            )
+        ).all()
+    )
     audit(
         db,
         u.organisation_id,
@@ -2445,6 +2604,13 @@ def platform_admin_dashboard(
         "platform_admin.html",
         user=u,
         organisations=organisation_rows,
+        organisation_status=organisation_status,
+        active_organisation_count=active_organisation_count,
+        archived_organisation_count=archived_organisation_count,
+        open_organisation_ids={
+            membership.organisation_id for membership in u.available_memberships
+        },
+        protected_organisation_ids=protected_organisation_ids,
         ai_governance={
             "provider": "Azure-approved server-side services only",
             "deployment": settings.azure_openai_deployment if settings.azure_openai_endpoint else "No active model deployment configured",
@@ -2584,6 +2750,261 @@ def create_customer_organisation(
 
     set_flash(request, "success", "Customer organisation created.")
     return RedirectResponse("/admin", 303)
+
+
+def platform_organisation_or_404(db: Session, organisation_id: int) -> Organisation:
+    organisation = db.get(Organisation, organisation_id)
+    if not organisation:
+        raise HTTPException(404, "Organisation not found.")
+    return organisation
+
+
+@app.get("/admin/organisations/{organisation_id}/archive", response_class=HTMLResponse)
+def archive_customer_organisation_confirmation(
+    request: Request,
+    organisation_id: int,
+    u=Depends(platform_admin),
+    db: Session = Depends(get_db),
+):
+    organisation = platform_organisation_or_404(db, organisation_id)
+    if organisation.archived_at is not None:
+        raise HTTPException(409, "This organisation is already archived.")
+    if organisation_hosts_active_platform_admin(db, organisation.id):
+        raise HTTPException(
+            409,
+            "An organisation that hosts an active platform administrator cannot be archived.",
+        )
+    return render(
+        request,
+        "platform_organisation_archive.html",
+        user=u,
+        organisation=organisation,
+    )
+
+
+@app.post("/admin/organisations/{organisation_id}/archive")
+def archive_customer_organisation(
+    request: Request,
+    organisation_id: int,
+    u=Depends(platform_admin),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    organisation = db.scalar(
+        select(Organisation)
+        .where(Organisation.id == organisation_id)
+        .with_for_update()
+    )
+    if not organisation:
+        raise HTTPException(404, "Organisation not found.")
+    if organisation.archived_at is not None:
+        raise HTTPException(409, "This organisation is already archived.")
+    if organisation_hosts_active_platform_admin(db, organisation.id):
+        raise HTTPException(
+            409,
+            "An organisation that hosts an active platform administrator cannot be archived.",
+        )
+
+    fallback_membership = None
+    if u.organisation_id == organisation.id:
+        fallback_membership = active_organisation_membership(
+            db,
+            u.id,
+            excluded_organisation_id=organisation.id,
+        )
+        if not fallback_membership:
+            raise HTTPException(
+                409,
+                "Select or restore another active organisation before archiving this one.",
+            )
+
+    organisation.archived_at = now()
+    audit(
+        db,
+        organisation.id,
+        u.id,
+        "platform_admin.organisation_archived",
+        "organisation",
+        organisation.id,
+    )
+    db.commit()
+    set_flash(request, "success", "Customer organisation archived. Its data has been retained.")
+    response = RedirectResponse("/admin?organisation_status=archived", 303)
+    if fallback_membership:
+        response.set_cookie(
+            "session",
+            encode_session(u.id, u.session_version, fallback_membership.organisation_id),
+            httponly=True,
+            samesite="strict",
+            secure=settings.cookie_secure,
+            max_age=settings.session_max_age_seconds,
+        )
+    return response
+
+
+@app.post("/admin/organisations/{organisation_id}/restore")
+def restore_customer_organisation(
+    request: Request,
+    organisation_id: int,
+    u=Depends(platform_admin),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    organisation = db.scalar(
+        select(Organisation)
+        .where(Organisation.id == organisation_id)
+        .with_for_update()
+    )
+    if not organisation:
+        raise HTTPException(404, "Organisation not found.")
+    if organisation.archived_at is None:
+        raise HTTPException(409, "This organisation is already active.")
+    organisation.archived_at = None
+    audit(
+        db,
+        organisation.id,
+        u.id,
+        "platform_admin.organisation_restored",
+        "organisation",
+        organisation.id,
+    )
+    db.commit()
+    set_flash(request, "success", "Customer organisation restored.")
+    return RedirectResponse("/admin", 303)
+
+
+def render_customer_organisation_deletion(
+    request: Request,
+    user,
+    organisation: Organisation,
+    assessment,
+    *,
+    confirmation: str = "",
+    error: str = "",
+    status_code: int = 200,
+):
+    response = render(
+        request,
+        "platform_organisation_delete.html",
+        user=user,
+        organisation=organisation,
+        assessment=assessment,
+        confirmation=confirmation,
+        deletion_error=error,
+    )
+    response.status_code = status_code
+    return response
+
+
+@app.get("/admin/organisations/{organisation_id}/delete", response_class=HTMLResponse)
+def review_customer_organisation_deletion(
+    request: Request,
+    organisation_id: int,
+    u=Depends(platform_admin),
+    db: Session = Depends(get_db),
+):
+    organisation = platform_organisation_or_404(db, organisation_id)
+    assessment = assess_organisation_deletion(db, organisation.id)
+    return render_customer_organisation_deletion(
+        request,
+        u,
+        organisation,
+        assessment,
+    )
+
+
+@app.post("/admin/organisations/{organisation_id}/delete", response_class=HTMLResponse)
+def permanently_delete_customer_organisation(
+    request: Request,
+    organisation_id: int,
+    confirmation: str = Form(""),
+    u=Depends(platform_admin),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    organisation = db.scalar(
+        select(Organisation)
+        .where(Organisation.id == organisation_id)
+        .with_for_update()
+    )
+    if not organisation:
+        raise HTTPException(404, "Organisation not found.")
+    assessment = assess_organisation_deletion(db, organisation.id)
+    if organisation.archived_at is None:
+        return render_customer_organisation_deletion(
+            request,
+            u,
+            organisation,
+            assessment,
+            error="Archive this organisation before reviewing permanent deletion.",
+            status_code=409,
+        )
+    if not assessment.can_delete:
+        return render_customer_organisation_deletion(
+            request,
+            u,
+            organisation,
+            assessment,
+            error="Permanent deletion is unavailable because retained customer or research data exists.",
+            status_code=409,
+        )
+    if confirmation != organisation.name:
+        return render_customer_organisation_deletion(
+            request,
+            u,
+            organisation,
+            assessment,
+            confirmation=confirmation,
+            error="Enter the organisation name exactly to confirm permanent deletion.",
+            status_code=400,
+        )
+    if u.organisation_id == organisation.id:
+        raise HTTPException(409, "The currently selected organisation cannot be deleted.")
+    audit_organisation = db.scalar(
+        select(Organisation).where(
+            Organisation.id == u.organisation_id,
+            Organisation.archived_at.is_(None),
+        )
+    )
+    if not audit_organisation:
+        raise HTTPException(409, "A durable platform audit scope is unavailable.")
+
+    try:
+        # The organisation row lock, fresh assessment, restrictive foreign keys,
+        # and one transaction jointly close the confirmation-page race.
+        db.execute(
+            delete(OrganisationMembership).where(
+                OrganisationMembership.organisation_id == organisation.id
+            )
+        )
+        db.execute(
+            delete(AuditEvent).where(
+                AuditEvent.organisation_id == organisation.id,
+                AuditEvent.action.in_(DISPOSABLE_LIFECYCLE_AUDIT_ACTIONS),
+            )
+        )
+        audit(
+            db,
+            audit_organisation.id,
+            u.id,
+            "platform_admin.organisation_deleted",
+            "organisation",
+            organisation.id,
+        )
+        db.execute(delete(Organisation).where(Organisation.id == organisation.id))
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            409,
+            "Permanent deletion was refused because the organisation changed during review.",
+        ) from error
+    except Exception:
+        db.rollback()
+        raise
+
+    set_flash(request, "success", "Empty customer organisation permanently deleted.")
+    return RedirectResponse("/admin?organisation_status=archived", 303)
 
 
 @app.get("/admin/participant-invitation-integrity", response_class=HTMLResponse)
@@ -3905,7 +4326,12 @@ def resend_participant_invite(invitation_id:int,u=Depends(roles("owner","admin",
 def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
     if token:
         inv = resolve_invitation_by_token(db, token)
-        valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at))
+        valid=bool(
+            inv
+            and not inv.revoked_at
+            and unexpired(inv.expires_at)
+            and organisation_is_active(db, inv.organisation_id)
+        )
         if not valid:
             response = render(request,"join_study.html",invitation=None,study=None,participant=None,valid=False)
             _cache_control_no_store(response)
@@ -3931,7 +4357,12 @@ def join_study(request:Request,token:str="",db:Session=Depends(get_db)):
         _cache_control_no_store(response)
         return response
     inv = db.get(ParticipantInvitation, session_row.participant_invitation_id)
-    valid=bool(inv and not inv.revoked_at and unexpired(inv.expires_at))
+    valid=bool(
+        inv
+        and not inv.revoked_at
+        and unexpired(inv.expires_at)
+        and organisation_is_active(db, inv.organisation_id)
+    )
     s=db.get(Study,inv.study_id) if valid else None
     p=db.get(Participant,inv.participant_id) if valid else None
     if valid and inv.accepted_at:
@@ -3958,7 +4389,12 @@ def accept_study(request:Request,token:str=Form(""),consent:bool=Form(False),rev
         account_key=account_key,
         account_limit=settings.rate_limit_invitation_accept_token,
     )
-    if not inv or inv.revoked_at or not unexpired(inv.expires_at):
+    if (
+        not inv
+        or inv.revoked_at
+        or not unexpired(inv.expires_at)
+        or not organisation_is_active(db, inv.organisation_id)
+    ):
         raise HTTPException(400,"This participant link is invalid or expired.")
     if not consent: raise HTTPException(400,"Consent is required.")
     p = db.get(Participant, inv.participant_id)
@@ -4033,7 +4469,13 @@ def participant_portal_app_access_code(
 def participant_portal_context(request: Request, db: Session):
     session_row = get_public_auth_session(request, db, PUBLIC_SCOPE_PARTICIPANT_PORTAL)
     inv = resolve_participant_invitation(db, session_row)
-    if not inv or inv.revoked_at or not unexpired(inv.expires_at) or not inv.accepted_at:
+    if (
+        not inv
+        or inv.revoked_at
+        or not unexpired(inv.expires_at)
+        or not inv.accepted_at
+        or not organisation_is_active(db, inv.organisation_id)
+    ):
         return None
     participant_row = db.scalar(
         select(Participant).where(
@@ -4710,7 +5152,12 @@ def participant_api_session_exchange(
         )
     else:
         invitation = resolve_invitation_by_token(db, payload.invitation_token)
-    if not invitation or invitation.revoked_at or not unexpired(invitation.expires_at):
+    if (
+        not invitation
+        or invitation.revoked_at
+        or not unexpired(invitation.expires_at)
+        or not organisation_is_active(db, invitation.organisation_id)
+    ):
         raise HTTPException(400, "This participant link is invalid or expired.")
     if access_code and not invitation.accepted_at:
         raise HTTPException(400, "This participant link is invalid or expired.")
@@ -6779,7 +7226,13 @@ def accept_page(request:Request,token:str="",db:Session=Depends(get_db)):
         if token_already_redeemed(db, PUBLIC_SCOPE_RESEARCHER_INVITE, token):
             return render(request,"accept.html",invitation=None,valid=False)
         inv=db.scalar(select(Invitation).where(Invitation.token_hash==token_hash(token)))
-        valid=bool(inv and not inv.accepted_at and not inv.revoked_at and unexpired(inv.expires_at))
+        valid=bool(
+            inv
+            and not inv.accepted_at
+            and not inv.revoked_at
+            and unexpired(inv.expires_at)
+            and organisation_is_active(db, inv.organisation_id)
+        )
         if not valid:
             return render(request,"accept.html",invitation=None,valid=False)
         raw_session = create_public_auth_session(
@@ -6798,7 +7251,13 @@ def accept_page(request:Request,token:str="",db:Session=Depends(get_db)):
     if not session_row:
         return render(request,"accept.html",invitation=None,valid=False)
     inv = db.get(Invitation, session_row.invitation_id)
-    valid = bool(inv and not inv.accepted_at and not inv.revoked_at and unexpired(inv.expires_at))
+    valid = bool(
+        inv
+        and not inv.accepted_at
+        and not inv.revoked_at
+        and unexpired(inv.expires_at)
+        and organisation_is_active(db, inv.organisation_id)
+    )
     existing_identity = bool(
         valid
         and db.scalar(
@@ -6831,7 +7290,14 @@ def accept_invitation(request: Request, token:str=Form(""),password:str=Form(...
     if not session_row:
         raise HTTPException(400,"Invitation invalid or expired.")
     inv = db.get(Invitation, session_row.invitation_id)
-    if not inv or inv.accepted_at or inv.revoked_at or not unexpired(inv.expires_at): raise HTTPException(400,"Invitation invalid or expired.")
+    if (
+        not inv
+        or inv.accepted_at
+        or inv.revoked_at
+        or not unexpired(inv.expires_at)
+        or not organisation_is_active(db, inv.organisation_id)
+    ):
+        raise HTTPException(400,"Invitation invalid or expired.")
     if len(password)<10: raise HTTPException(400,"Password must contain at least 10 characters.")
     u=db.scalar(select(User).where(func.lower(User.email)==inv.email.lower()))
     if u:
