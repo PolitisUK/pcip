@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from contextlib import contextmanager
 from fastapi.testclient import TestClient
 from app.main import app
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from app.config import settings
@@ -1918,6 +1918,28 @@ def test_participant_api_exposes_scoped_document_references_and_snapshots_consen
         assert client.get(
             f'/api/v1/participant/portal?study_id={study_id}',
             headers=switched_headers,
+            follow_redirects=False,
+        ).status_code == 403
+        switched_back = client.post(
+            '/api/v1/participant/session/switch',
+            json={'study_id': study_id},
+            headers=switched_headers,
+            follow_redirects=False,
+        )
+        assert switched_back.status_code == 200
+        assert switched_back.json()['invitation']['study_id'] == study_id
+        switched_back_headers = {
+            'Authorization': f"Bearer {switched_back.json()['session']['access_token']}",
+        }
+        switched_back_session = client.get(
+            '/api/v1/participant/session',
+            headers=switched_back_headers,
+        )
+        assert switched_back_session.status_code == 200
+        assert switched_back_session.json()['study_scope'] == [study_id]
+        assert client.get(
+            f'/api/v1/participant/portal?study_id={second_study_id}',
+            headers=switched_back_headers,
             follow_redirects=False,
         ).status_code == 403
         # Switching rotates the target study's old active session without
@@ -8571,6 +8593,145 @@ def test_participant_api_validates_choice_membership_uniqueness_and_complete_ran
         assert response is not None
         assert response.status == 'submitted'
         assert json.loads(response.value_json)['choices'] == ['Train', 'Bus', 'Walk']
+
+
+def test_participant_api_exposes_and_enforces_authoritative_rating_and_slider_scale():
+    from app.models import Activity, ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-rating-scale')
+    with SessionLocal() as db:
+        base_row = db.get(Activity, context['activity_id'])
+        assert base_row is not None
+        rows = [
+            Activity(
+                organisation_id=base_row.organisation_id,
+                study_id=base_row.study_id,
+                title='Neighbourhood rating',
+                prompt='Choose a rating.',
+                activity_type='rating',
+                position=base_row.position + 31,
+                required=True,
+            ),
+            Activity(
+                organisation_id=base_row.organisation_id,
+                study_id=base_row.study_id,
+                title='Confidence slider',
+                prompt='Choose a value.',
+                activity_type='slider',
+                position=base_row.position + 32,
+                required=True,
+            ),
+        ]
+        db.add_all(rows)
+        db.flush()
+        rating_id, slider_id = [row.id for row in rows]
+        db.commit()
+
+    headers = {'Authorization': f"Bearer {context['api_token']}"}
+    expected = [str(value) for value in range(1, 11)]
+    with client:
+        activities = client.get('/api/v1/participant/activities', headers=headers)
+        assert activities.status_code == 200
+        by_id = {row['activity_id']: row for row in activities.json()['data']}
+        assert by_id[rating_id]['options'] == expected
+        assert by_id[slider_id]['options'] == expected
+
+        portal = client.get('/api/v1/participant/portal', headers=headers)
+        portal_by_id = {row['activity_id']: row for row in portal.json()['activities']}
+        assert portal_by_id[rating_id]['options'] == expected
+
+        invalid = client.post(
+            f'/api/v1/participant/activities/{rating_id}/submit',
+            json={'answer': '11'},
+            headers=headers,
+        )
+        assert invalid.status_code == 400
+        assert invalid.json() == {'detail': 'The rating is outside the available range.'}
+
+        wrong_shape = client.post(
+            f'/api/v1/participant/activities/{rating_id}/submit',
+            json={'choices': ['5']},
+            headers=headers,
+        )
+        assert wrong_shape.status_code == 400
+        assert wrong_shape.json() == {'detail': 'Rating activities must use one available value.'}
+
+        submitted = client.post(
+            f'/api/v1/participant/activities/{rating_id}/submit',
+            json={'answer': '7'},
+            headers=headers,
+        )
+        assert submitted.status_code == 200
+
+    with SessionLocal() as db:
+        response = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == rating_id,
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert response is not None
+        assert json.loads(response.value_json) == {'answer': '7', 'choices': []}
+
+
+def test_required_gps_activity_accepts_structured_location_without_text_answer():
+    from app.models import Activity, ActivityResponse
+
+    context = _prepare_participant_api_activity_response_context('api-gps-activity')
+    with SessionLocal() as db:
+        base_row = db.get(Activity, context['activity_id'])
+        assert base_row is not None
+        gps = Activity(
+            organisation_id=base_row.organisation_id,
+            study_id=base_row.study_id,
+            title='Current place',
+            prompt='Share your current location.',
+            activity_type='gps',
+            position=base_row.position + 33,
+            required=True,
+            allow_participant_location=False,
+        )
+        db.add(gps)
+        db.flush()
+        gps_id = gps.id
+        db.commit()
+
+    headers = {'Authorization': f"Bearer {context['api_token']}"}
+    location = {
+        'latitude': 51.5074,
+        'longitude': -0.1278,
+        'accuracy_metres': 12.5,
+        'source': 'device',
+        'captured_at': datetime.now(timezone.utc).isoformat(),
+    }
+    with client:
+        detail = client.get(f'/api/v1/participant/activities/{gps_id}', headers=headers)
+        assert detail.status_code == 200
+        assert detail.json()['activity']['allow_participant_location'] is True
+
+        missing = client.post(
+            f'/api/v1/participant/activities/{gps_id}/submit',
+            json={'answer': ''},
+            headers=headers,
+        )
+        assert missing.status_code == 400
+
+        submitted = client.post(
+            f'/api/v1/participant/activities/{gps_id}/submit',
+            json={'location': location},
+            headers=headers,
+        )
+        assert submitted.status_code == 200
+
+    with SessionLocal() as db:
+        response = db.scalar(
+            select(ActivityResponse).where(
+                ActivityResponse.activity_id == gps_id,
+                ActivityResponse.participant_id == context['participant_id'],
+            )
+        )
+        assert response is not None
+        assert response.location_latitude == 51.5074
 
 
 def test_participant_api_activity_detail_enforces_scope_consent_enrolment_and_path_constraints():

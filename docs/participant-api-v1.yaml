@@ -1033,7 +1033,10 @@ components:
             - file
         options:
           type: array
-          description: Participant-safe response options for choice-based activities only.
+          description: >-
+            Participant-safe permitted values in display order. Present for
+            single-choice, multiple-choice and ranking activities, and for the
+            authoritative 1–10 rating/slider scale.
           items:
             type: string
         required:

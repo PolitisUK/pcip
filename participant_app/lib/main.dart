@@ -118,6 +118,8 @@ String mediaContentType(String filename, String kind) {
     'm4a': 'audio/mp4',
     'mp3': 'audio/mpeg',
     'wav': 'audio/wav',
+    'mp4': 'video/mp4',
+    'mov': 'video/quicktime',
     'pdf': 'application/pdf',
     'doc': 'application/msword',
     'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -128,6 +130,8 @@ String mediaContentType(String filename, String kind) {
           ? 'image/jpeg'
           : kind == 'voice'
           ? 'audio/mp4'
+          : kind == 'video'
+          ? 'video/mp4'
           : 'application/octet-stream');
 }
 
@@ -258,13 +262,21 @@ class Api implements ParticipantApi {
     String answer,
     String key, {
     Map<String, dynamic>? location,
+  }) => draftResponse(id, key, answer: answer, location: location);
+
+  Future<void> draftResponse(
+    int id,
+    String key, {
+    String? answer,
+    List<String> choices = const [],
+    Map<String, dynamic>? location,
   }) async {
     await request(
       'PUT',
       '/api/v1/participant/activities/$id/draft',
       body: {
         'answer': answer,
-        'choices': [],
+        'choices': choices,
         if (location != null) 'location': location,
       },
       idempotencyKey: key,
@@ -276,13 +288,21 @@ class Api implements ParticipantApi {
     String answer,
     String key, {
     Map<String, dynamic>? location,
+  }) => submitResponse(id, key, answer: answer, location: location);
+
+  Future<void> submitResponse(
+    int id,
+    String key, {
+    String? answer,
+    List<String> choices = const [],
+    Map<String, dynamic>? location,
   }) async {
     await request(
       'POST',
       '/api/v1/participant/activities/$id/submit',
       body: {
         'answer': answer,
-        'choices': [],
+        'choices': choices,
         if (location != null) 'location': location,
       },
       idempotencyKey: key,
@@ -440,9 +460,9 @@ Future<void> clearParticipantCache(SharedPreferences prefs) async {
       .getKeys()
       .where(
         (key) =>
-            key == 'cached_profile' ||
-            key == 'cached_history' ||
-            key == 'cached_messages' ||
+            key.startsWith('cached_profile') ||
+            key.startsWith('cached_history') ||
+            key.startsWith('cached_messages') ||
             key == 'submission_queue' ||
             key == 'media_upload_queue' ||
             key == 'evidence_receipts' ||
@@ -482,6 +502,27 @@ Future<List<dynamic>?> cachedList(String key) async {
   } catch (_) {}
   await prefs.remove(key);
   return null;
+}
+
+String studyCacheKey(String base, int? studyId) =>
+    studyId == null ? base : '${base}_study_$studyId';
+
+String activityDraftKey(int activityId, int? studyId) => studyId == null
+    ? 'draft_$activityId'
+    : 'draft_study_${studyId}_activity_$activityId';
+
+Future<String?> readActivityDraft(int activityId, int? studyId) async {
+  final preferences = await SharedPreferences.getInstance();
+  final scopedKey = activityDraftKey(activityId, studyId);
+  final scoped = preferences.getString(scopedKey);
+  if (scoped != null || studyId == null) return scoped;
+  final legacyKey = activityDraftKey(activityId, null);
+  final legacy = preferences.getString(legacyKey);
+  if (legacy != null) {
+    await preferences.setString(scopedKey, legacy);
+    await preferences.remove(legacyKey);
+  }
+  return legacy;
 }
 
 class SessionStore {
@@ -681,8 +722,8 @@ class _ParticipantAppState extends State<ParticipantApp> {
     final currentStudyId =
         (session?['invitation'] as Map?)?['study_id'] as int?;
     if (api == null || currentStudyId == studyId) return;
-    if (await Queue.count() > 0 || await MediaQueue.count() > 0) {
-      studySwitchError = 'Finish sending your saved responses and uploads before changing study.';
+    if (!availableStudies.any((study) => study['study_id'] == studyId)) {
+      studySwitchError = 'That study is not available in your secure session.';
       if (mounted) setState(() {});
       return;
     }
@@ -1105,11 +1146,14 @@ class _HomeState extends State<Home> {
 
   Future<Map<String, dynamic>> refresh() async {
     if (widget.dashboardLoader != null) return widget.dashboardLoader!();
-    await Queue.replay(widget.api);
-    await MediaQueue.replay(widget.api);
-    await EvidenceReceiptStore.refresh(widget.api);
+    await Queue.replay(widget.api, studyId: widget.activeStudyId);
+    await MediaQueue.replay(widget.api, studyId: widget.activeStudyId);
+    await EvidenceReceiptStore.refresh(
+      widget.api,
+      studyId: widget.activeStudyId,
+    );
     final portal = await widget.api.portal();
-    final pending = await MediaQueue.count();
+    final pending = await MediaQueue.count(studyId: widget.activeStudyId);
     return {...portal, 'pending_uploads': pending};
   }
 
@@ -1126,7 +1170,6 @@ class _HomeState extends State<Home> {
         if (widget.studies.length > 1 && widget.onSwitchStudy != null)
           PopupMenuButton<int>(
             tooltip: 'Switch study',
-            icon: const Icon(Icons.swap_horiz),
             onSelected: widget.onSwitchStudy,
             itemBuilder: (context) => widget.studies
                 .map(
@@ -1137,6 +1180,16 @@ class _HomeState extends State<Home> {
                   ),
                 )
                 .toList(),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.school_outlined),
+                  SizedBox(width: 4),
+                  Text('My studies'),
+                ],
+              ),
+            ),
           ),
         IconButton(
           tooltip: 'Sign out',
@@ -1258,24 +1311,32 @@ class _HomeState extends State<Home> {
                 icon: Icons.assignment_outlined,
                 title: 'Activities',
                 subtitle: '$outstanding awaiting completion',
-                onTap: () => open(Activities(api: widget.api)),
+                onTap: () => open(
+                  Activities(api: widget.api, studyId: widget.activeStudyId),
+                ),
               ),
               _DashboardLink(
                 icon: Icons.history,
                 title: 'Submission history',
                 subtitle: 'Review answers and uploaded evidence',
-                onTap: () => open(History(api: widget.api)),
+                onTap: () => open(
+                  History(api: widget.api, studyId: widget.activeStudyId),
+                ),
               ),
               _DashboardLink(
                 icon: Icons.forum_outlined,
                 title: 'Messages',
                 subtitle: 'Talk securely with your research team',
-                onTap: () => open(Messages(api: widget.api)),
+                onTap: () => open(
+                  Messages(api: widget.api, studyId: widget.activeStudyId),
+                ),
               ),
               _DashboardLink(
                 icon: Icons.person_outline,
                 title: 'Profile and contact preferences',
-                onTap: () => open(Profile(api: widget.api)),
+                onTap: () => open(
+                  Profile(api: widget.api, studyId: widget.activeStudyId),
+                ),
               ),
               _DashboardLink(
                 icon: Icons.privacy_tip_outlined,
@@ -1386,11 +1447,26 @@ class Queue {
     await p.setStringList(_key, rows);
   }
 
-  static Future<int> count() async =>
-      (await SharedPreferences.getInstance()).getStringList(_key)?.length ?? 0;
+  static Future<int> count({int? studyId}) async {
+    final rows =
+        (await SharedPreferences.getInstance()).getStringList(_key) ?? const [];
+    if (studyId == null) return rows.length;
+    return rows.where((row) {
+      try {
+        return (jsonDecode(row) as Map)['study_id'] == studyId;
+      } catch (_) {
+        return false;
+      }
+    }).length;
+  }
+
   static Duration backoff(int attempts) =>
       Duration(seconds: (1 << attempts.clamp(0, 6)));
-  static Future<SyncState> replay(Api api, {DateTime? now}) async {
+  static Future<SyncState> replay(
+    Api api, {
+    DateTime? now,
+    int? studyId,
+  }) async {
     final p = await SharedPreferences.getInstance();
     final rows = p.getStringList(_key) ?? [];
     final retained = <String>[];
@@ -1405,17 +1481,29 @@ class Queue {
         state = SyncState.needsAttention;
         continue;
       }
+      if (studyId != null && item['study_id'] == null) {
+        // Pre-namespacing queue rows were created by the currently active
+        // study session. Bind them once before any study switch is offered.
+        item['study_id'] = studyId;
+      }
+      if (studyId != null && item['study_id'] != studyId) {
+        retained.add(row);
+        continue;
+      }
       final due = DateTime.tryParse(item['next_attempt_at'] ?? '') ?? clock;
       if (due.isAfter(clock)) {
-        retained.add(row);
+        retained.add(jsonEncode(item));
         state = SyncState.waiting;
         continue;
       }
       try {
-        await api.submit(
+        await api.submitResponse(
           item['activity_id'] as int,
-          item['answer'] as String,
           item['idempotency_key'] as String,
+          answer: item['answer']?.toString(),
+          choices: (item['choices'] as List? ?? const [])
+              .whereType<String>()
+              .toList(),
           location: item['location'] is Map
               ? Map<String, dynamic>.from(item['location'] as Map)
               : null,
@@ -1451,6 +1539,7 @@ class Queue {
 class PendingMediaUpload {
   const PendingMediaUpload({
     required this.activityId,
+    this.studyId,
     required this.localPath,
     required this.filename,
     required this.kind,
@@ -1462,6 +1551,7 @@ class PendingMediaUpload {
   });
 
   final int activityId;
+  final int? studyId;
   final String localPath;
   final String filename;
   final String kind;
@@ -1473,6 +1563,7 @@ class PendingMediaUpload {
 
   Map<String, dynamic> toJson() => {
     'activity_id': activityId,
+    if (studyId != null) 'study_id': studyId,
     'local_path': localPath,
     'filename': filename,
     'kind': kind,
@@ -1486,6 +1577,7 @@ class PendingMediaUpload {
   factory PendingMediaUpload.fromJson(Map<String, dynamic> value) =>
       PendingMediaUpload(
         activityId: value['activity_id'] as int,
+        studyId: value['study_id'] as int?,
         localPath: value['local_path'] as String,
         filename: value['filename'] as String,
         kind: value['kind'] as String,
@@ -1500,6 +1592,7 @@ class PendingMediaUpload {
 
   PendingMediaUpload retryAt(DateTime value) => PendingMediaUpload(
     activityId: activityId,
+    studyId: studyId,
     localPath: localPath,
     filename: filename,
     kind: kind,
@@ -1512,6 +1605,7 @@ class PendingMediaUpload {
 
   PendingMediaUpload blocked(String category) => PendingMediaUpload(
     activityId: activityId,
+    studyId: studyId,
     localPath: localPath,
     filename: filename,
     kind: kind,
@@ -1521,19 +1615,35 @@ class PendingMediaUpload {
     nextAttemptAt: nextAttemptAt,
     failureCategory: category,
   );
+
+  PendingMediaUpload forStudy(int value) => PendingMediaUpload(
+    activityId: activityId,
+    studyId: value,
+    localPath: localPath,
+    filename: filename,
+    kind: kind,
+    contentType: contentType,
+    idempotencyKey: idempotencyKey,
+    attempts: attempts,
+    nextAttemptAt: nextAttemptAt,
+    failureCategory: failureCategory,
+  );
 }
 
 class EvidenceReceiptStore {
   static const _key = 'evidence_receipts';
 
-  static Future<List<Map<String, dynamic>>> read() async {
+  static Future<List<Map<String, dynamic>>> read({int? studyId}) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_key);
     if (raw == null) return [];
     try {
-      return (jsonDecode(raw) as List)
+      final rows = (jsonDecode(raw) as List)
           .map((item) => Map<String, dynamic>.from(item as Map))
           .toList();
+      return studyId == null
+          ? rows
+          : rows.where((item) => item['study_id'] == studyId).toList();
     } catch (_) {
       await prefs.remove(_key);
       return [];
@@ -1542,24 +1652,39 @@ class EvidenceReceiptStore {
 
   static Future<void> record(
     int activityId,
-    Map<String, dynamic> evidence,
-  ) async {
+    Map<String, dynamic> evidence, {
+    int? studyId,
+  }) async {
     final rows = await read();
     final id = evidence['evidence_id'];
     rows.removeWhere((item) => item['evidence_id'] == id);
-    rows.add({...evidence, 'activity_id': activityId});
+    rows.add({
+      ...evidence,
+      'activity_id': activityId,
+      if (studyId != null) 'study_id': studyId,
+    });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key, jsonEncode(rows));
   }
 
-  static Future<List<Map<String, dynamic>>> refresh(Api api) async {
+  static Future<List<Map<String, dynamic>>> refresh(
+    Api api, {
+    int? studyId,
+  }) async {
     final rows = await read();
     for (var index = 0; index < rows.length; index++) {
       final row = rows[index];
+      if (studyId != null && row['study_id'] == null) {
+        row['study_id'] = studyId;
+      }
+      if (studyId != null && row['study_id'] != studyId) continue;
       if (row['scan_status'] != 'pending') continue;
       try {
         final result = await api.evidenceStatus(row['evidence_id'] as int);
-        rows[index] = Map<String, dynamic>.from(result['evidence'] as Map);
+        rows[index] = {
+          ...Map<String, dynamic>.from(result['evidence'] as Map),
+          if (row['study_id'] != null) 'study_id': row['study_id'],
+        };
       } catch (_) {
         // A transient status failure must not discard the server acknowledgement.
       }
@@ -1593,6 +1718,7 @@ class MediaQueue {
 
   static Future<PendingMediaUpload> enqueue({
     required int activityId,
+    int? studyId,
     required String sourcePath,
     required String filename,
     required String kind,
@@ -1610,6 +1736,7 @@ class MediaQueue {
     await File(sourcePath).copy(durable.path);
     final item = PendingMediaUpload(
       activityId: activityId,
+      studyId: studyId,
       localPath: durable.path,
       filename: filename,
       kind: kind,
@@ -1626,14 +1753,26 @@ class MediaQueue {
     return item;
   }
 
-  static Future<int> count() async => (await read()).length;
+  static Future<int> count({int? studyId}) async {
+    final rows = await read();
+    return studyId == null
+        ? rows.length
+        : rows.where((item) => item.studyId == studyId).length;
+  }
 
   static Future<PendingMediaUpload?> pendingFor(
     int activityId,
-    String kind,
-  ) async {
+    String kind, {
+    int? studyId,
+  }) async {
     for (final item in (await read()).reversed) {
-      if (item.activityId == activityId && item.kind == kind) return item;
+      if (item.activityId == activityId &&
+          item.kind == kind &&
+          (studyId == null ||
+              item.studyId == null ||
+              item.studyId == studyId)) {
+        return item;
+      }
     }
     return null;
   }
@@ -1658,13 +1797,21 @@ class MediaQueue {
   static Future<SyncState> replay(
     Api api, {
     DateTime? now,
+    int? studyId,
     String? onlyKey,
     Future<Map<String, dynamic>> Function(PendingMediaUpload)? uploader,
   }) async {
     final clock = now ?? DateTime.now();
     final retained = <PendingMediaUpload>[];
     var state = SyncState.sent;
-    for (final item in await read()) {
+    for (final storedItem in await read()) {
+      final item = studyId != null && storedItem.studyId == null
+          ? storedItem.forStudy(studyId)
+          : storedItem;
+      if (studyId != null && item.studyId != studyId) {
+        retained.add(item);
+        continue;
+      }
       if (item.failureCategory != null) {
         retained.add(item);
         state = SyncState.needsAttention;
@@ -1687,7 +1834,11 @@ class MediaQueue {
                   item.idempotencyKey,
                 ));
         final evidence = Map<String, dynamic>.from(result['evidence'] as Map);
-        await EvidenceReceiptStore.record(item.activityId, evidence);
+        await EvidenceReceiptStore.record(
+          item.activityId,
+          evidence,
+          studyId: item.studyId,
+        );
         final local = File(item.localPath);
         if (await local.exists()) await local.delete();
       } on ApiError catch (error) {
@@ -1723,14 +1874,53 @@ bool activityIsSubmitted(Map<String, dynamic> activity) {
   return response is Map && response['status'] == 'submitted';
 }
 
-Widget participantActivityPage(Api api, Map<String, dynamic> item) {
+String activityRendererName(String? activityType) => switch (activityType) {
+  'short_text' => 'short_text',
+  'long_text' => 'long_text',
+  'single_choice' => 'single_choice',
+  'multiple_choice' => 'multiple_choice',
+  'rating' => 'rating',
+  'slider' => 'slider',
+  'photo' => 'photo',
+  'audio' => 'audio',
+  'video' => 'video',
+  'gps' => 'gps',
+  'ranking' => 'ranking',
+  'file' => 'file',
+  _ => 'unsupported',
+};
+
+Widget participantActivityPage(
+  Api api,
+  Map<String, dynamic> item, {
+  int? studyId,
+}) {
   final activityId = item['activity_id'] as int;
   final submitted = activityIsSubmitted(item);
-  switch (item['activity_type']) {
+  switch (activityRendererName(item['activity_type']?.toString())) {
+    case 'short_text':
+      return TextActivity(
+        api: api,
+        item: item,
+        studyId: studyId,
+        singleLine: true,
+      );
+    case 'long_text':
+      return TextActivity(api: api, item: item, studyId: studyId);
+    case 'single_choice':
+    case 'multiple_choice':
+      return ChoiceActivity(api: api, item: item, studyId: studyId);
+    case 'rating':
+      return RatingActivity(api: api, item: item, studyId: studyId);
+    case 'slider':
+      return SliderActivity(api: api, item: item, studyId: studyId);
+    case 'ranking':
+      return RankingActivity(api: api, item: item, studyId: studyId);
     case 'photo':
       return PhotoEvidence(
         api: api,
         activityId: activityId,
+        studyId: studyId,
         title: item['title']?.toString(),
         prompt: item['prompt']?.toString(),
         submitted: submitted,
@@ -1739,18 +1929,489 @@ Widget participantActivityPage(Api api, Map<String, dynamic> item) {
       return VoiceDiary(
         api: api,
         activityId: activityId,
+        studyId: studyId,
+        title: item['title']?.toString(),
+        prompt: item['prompt']?.toString(),
+        submitted: submitted,
+      );
+    case 'video':
+      return VideoEvidence(
+        api: api,
+        activityId: activityId,
+        studyId: studyId,
+        title: item['title']?.toString(),
+        prompt: item['prompt']?.toString(),
+        submitted: submitted,
+      );
+    case 'gps':
+      return LocationActivity(api: api, item: item, studyId: studyId);
+    case 'file':
+      return DocumentEvidence(
+        api: api,
+        activityId: activityId,
+        studyId: studyId,
         title: item['title']?.toString(),
         prompt: item['prompt']?.toString(),
         submitted: submitted,
       );
     default:
-      return TextActivity(api: api, item: item);
+      return UnsupportedActivity(item: item);
   }
 }
 
-class Activities extends StatefulWidget {
-  const Activities({super.key, required this.api});
+class UnsupportedActivity extends StatelessWidget {
+  const UnsupportedActivity({super.key, required this.item});
+  final Map<String, dynamic> item;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(item['title']?.toString() ?? 'Activity')),
+    body: const Padding(
+      padding: EdgeInsets.all(24),
+      child: Text(
+        "This activity type isn't supported by this version of the app.",
+      ),
+    ),
+  );
+}
+
+enum StructuredControl { singleChoice, multipleChoice, rating, slider, ranking }
+
+class ChoiceActivity extends StatelessWidget {
+  const ChoiceActivity({
+    super.key,
+    required this.api,
+    required this.item,
+    this.studyId,
+  });
   final Api api;
+  final Map<String, dynamic> item;
+  final int? studyId;
+  @override
+  Widget build(BuildContext context) => StructuredResponseActivity(
+    api: api,
+    item: item,
+    studyId: studyId,
+    control: item['activity_type'] == 'single_choice'
+        ? StructuredControl.singleChoice
+        : StructuredControl.multipleChoice,
+  );
+}
+
+class RatingActivity extends StatelessWidget {
+  const RatingActivity({
+    super.key,
+    required this.api,
+    required this.item,
+    this.studyId,
+  });
+  final Api api;
+  final Map<String, dynamic> item;
+  final int? studyId;
+  @override
+  Widget build(BuildContext context) => StructuredResponseActivity(
+    api: api,
+    item: item,
+    studyId: studyId,
+    control: StructuredControl.rating,
+  );
+}
+
+class SliderActivity extends StatelessWidget {
+  const SliderActivity({
+    super.key,
+    required this.api,
+    required this.item,
+    this.studyId,
+  });
+  final Api api;
+  final Map<String, dynamic> item;
+  final int? studyId;
+  @override
+  Widget build(BuildContext context) => StructuredResponseActivity(
+    api: api,
+    item: item,
+    studyId: studyId,
+    control: StructuredControl.slider,
+  );
+}
+
+class RankingActivity extends StatelessWidget {
+  const RankingActivity({
+    super.key,
+    required this.api,
+    required this.item,
+    this.studyId,
+  });
+  final Api api;
+  final Map<String, dynamic> item;
+  final int? studyId;
+  @override
+  Widget build(BuildContext context) => StructuredResponseActivity(
+    api: api,
+    item: item,
+    studyId: studyId,
+    control: StructuredControl.ranking,
+  );
+}
+
+class StructuredResponseActivity extends StatefulWidget {
+  const StructuredResponseActivity({
+    super.key,
+    required this.api,
+    required this.item,
+    required this.control,
+    this.studyId,
+  });
+  final Api api;
+  final Map<String, dynamic> item;
+  final StructuredControl control;
+  final int? studyId;
+  @override
+  State<StructuredResponseActivity> createState() =>
+      _StructuredResponseActivityState();
+}
+
+class _StructuredResponseActivityState
+    extends State<StructuredResponseActivity> {
+  late bool submitted;
+  late String entryKey;
+  String? answer;
+  List<String> choices = [];
+  bool working = false;
+  String status = '';
+
+  List<String> get options => (widget.item['options'] as List? ?? const [])
+      .whereType<String>()
+      .map((value) => value.trim())
+      .where((value) => value.isNotEmpty)
+      .toList();
+  String get draftKey =>
+      activityDraftKey(widget.item['activity_id'] as int, widget.studyId);
+  bool get repeatable => widget.item['allow_multiple_entries'] == true;
+
+  @override
+  void initState() {
+    super.initState();
+    submitted = activityIsSubmitted(widget.item);
+    entryKey = const Uuid().v4();
+    if (widget.control == StructuredControl.ranking) choices = [...options];
+    restore();
+  }
+
+  Future<void> restore() async {
+    final saved = await readActivityDraft(
+      widget.item['activity_id'] as int,
+      widget.studyId,
+    );
+    if (saved == null) return;
+    try {
+      final value = Map<String, dynamic>.from(jsonDecode(saved) as Map);
+      final storedChoices = (value['choices'] as List? ?? const [])
+          .whereType<String>()
+          .toList();
+      final validChoices =
+          storedChoices.length == storedChoices.toSet().length &&
+          storedChoices.every(options.contains);
+      if (validChoices) {
+        if (widget.control == StructuredControl.ranking &&
+            storedChoices.length == options.length &&
+            storedChoices.toSet().containsAll(options)) {
+          choices = storedChoices;
+        } else if (widget.control != StructuredControl.ranking) {
+          choices = storedChoices;
+        }
+      }
+      final storedAnswer = value['answer']?.toString();
+      if (storedAnswer != null && options.contains(storedAnswer)) {
+        answer = storedAnswer;
+      }
+      entryKey = value['idempotency_key']?.toString() ?? entryKey;
+    } catch (_) {
+      // Invalid local structured data is ignored rather than submitted.
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> persist() async {
+    await (await SharedPreferences.getInstance()).setString(
+      draftKey,
+      jsonEncode({
+        'answer': answer,
+        'choices': choices,
+        'idempotency_key': entryKey,
+        if (widget.studyId != null) 'study_id': widget.studyId,
+      }),
+    );
+  }
+
+  String? validate(bool submit) {
+    if (options.length < 2 || options.length != options.toSet().length) {
+      return 'This activity is not configured safely. Please contact the research team.';
+    }
+    if (widget.control == StructuredControl.ranking) {
+      if (choices.length != options.length ||
+          choices.length != choices.toSet().length ||
+          !choices.toSet().containsAll(options)) {
+        return 'Rank every option exactly once before submitting.';
+      }
+      return null;
+    }
+    if (widget.control == StructuredControl.singleChoice ||
+        widget.control == StructuredControl.multipleChoice) {
+      if (choices.any((choice) => !options.contains(choice)) ||
+          choices.length != choices.toSet().length) {
+        return 'Choose only from the available options.';
+      }
+      if (widget.control == StructuredControl.singleChoice &&
+          choices.length > 1) {
+        return 'Select one option only.';
+      }
+      if (submit && widget.item['required'] == true && choices.isEmpty) {
+        return 'Choose a response before submitting.';
+      }
+    } else if (answer != null && !options.contains(answer)) {
+      return 'Choose a rating from the available values.';
+    } else if (submit && widget.item['required'] == true && answer == null) {
+      return 'Choose a rating before submitting.';
+    }
+    return null;
+  }
+
+  Future<void> save(bool submit) async {
+    final validation = validate(submit);
+    if (validation != null) {
+      setState(() => status = validation);
+      return;
+    }
+    setState(() => working = true);
+    await persist();
+    try {
+      final activityId = widget.item['activity_id'] as int;
+      if (submit) {
+        await widget.api.submitResponse(
+          activityId,
+          entryKey,
+          answer: answer,
+          choices: choices,
+        );
+      } else {
+        await widget.api.draftResponse(
+          activityId,
+          entryKey,
+          answer: answer,
+          choices: choices,
+        );
+      }
+      if (submit) {
+        await (await SharedPreferences.getInstance()).remove(draftKey);
+        submitted = !repeatable;
+        status = repeatable
+            ? 'Entry added. You can add another when ready.'
+            : 'Submitted successfully.';
+        if (repeatable) {
+          answer = null;
+          choices = widget.control == StructuredControl.ranking
+              ? [...options]
+              : [];
+          entryKey = const Uuid().v4();
+        }
+      } else {
+        status = 'Draft saved.';
+      }
+    } on ApiError catch (error) {
+      if (submit && error.retryable) {
+        await Queue.add({
+          'activity_id': widget.item['activity_id'],
+          if (widget.studyId != null) 'study_id': widget.studyId,
+          'answer': answer,
+          'choices': choices,
+          'idempotency_key': entryKey,
+        });
+        status = 'Saved on this device. We will retry when you reconnect.';
+      } else if (error.category == 'session_ended') {
+        status = 'Your session has ended. Sign in again before submitting this entry.';
+      } else {
+        status = 'We could not submit this entry. Please try again or contact your research team.';
+      }
+    } catch (_) {
+      status = 'We could not submit this entry. Please try again or contact your research team.';
+    }
+    if (mounted) setState(() => working = false);
+  }
+
+  Widget control() {
+    if (widget.control == StructuredControl.singleChoice) {
+      return RadioGroup<String>(
+        groupValue: choices.length == 1 ? choices.first : null,
+        onChanged: working
+            ? (_) {}
+            : (value) => setState(() => choices = value == null ? [] : [value]),
+        child: Column(
+          children: options
+              .map(
+                (option) =>
+                    RadioListTile<String>(value: option, title: Text(option)),
+              )
+              .toList(),
+        ),
+      );
+    }
+    if (widget.control == StructuredControl.multipleChoice) {
+      return Column(
+        children: options
+            .map(
+              (option) => CheckboxListTile(
+                value: choices.contains(option),
+                title: Text(option),
+                onChanged: working
+                    ? null
+                    : (selected) => setState(() {
+                        if (selected == true) {
+                          choices = [...choices, option];
+                        } else {
+                          choices = choices
+                              .where((item) => item != option)
+                              .toList();
+                        }
+                      }),
+              ),
+            )
+            .toList(),
+      );
+    }
+    if (widget.control == StructuredControl.rating) {
+      return Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: options
+            .map(
+              (option) => ChoiceChip(
+                label: Text(option),
+                selected: answer == option,
+                onSelected: working
+                    ? null
+                    : (_) => setState(() => answer = option),
+              ),
+            )
+            .toList(),
+      );
+    }
+    if (widget.control == StructuredControl.slider) {
+      final current = answer == null ? 0 : options.indexOf(answer!);
+      return Column(
+        children: [
+          Text(
+            answer == null ? 'No value selected' : 'Selected value: $answer',
+          ),
+          Slider(
+            value: current.toDouble(),
+            min: 0,
+            max: (options.length - 1).clamp(1, 100).toDouble(),
+            divisions: (options.length - 1).clamp(1, 100),
+            label: answer ?? (options.isEmpty ? null : options.first),
+            semanticFormatterCallback: (value) =>
+                'Rating ${options[value.round().clamp(0, options.length - 1)]}',
+            onChanged: working
+                ? null
+                : (value) => setState(
+                    () => answer =
+                        options[value.round().clamp(0, options.length - 1)],
+                  ),
+          ),
+        ],
+      );
+    }
+    return ReorderableListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: choices.length,
+      onReorderItem: working
+          ? (_, _) {}
+          : (oldIndex, newIndex) => setState(() {
+              final item = choices.removeAt(oldIndex);
+              choices.insert(newIndex, item);
+            }),
+      itemBuilder: (context, index) => ListTile(
+        key: ValueKey(choices[index]),
+        leading: CircleAvatar(child: Text('${index + 1}')),
+        title: Text(choices[index]),
+        subtitle: const Text('Drag to reorder or use the arrow buttons'),
+        trailing: Wrap(
+          children: [
+            IconButton(
+              tooltip: 'Move ${choices[index]} up',
+              onPressed: working || index == 0
+                  ? null
+                  : () => setState(() {
+                      final item = choices.removeAt(index);
+                      choices.insert(index - 1, item);
+                    }),
+              icon: const Icon(Icons.arrow_upward),
+            ),
+            IconButton(
+              tooltip: 'Move ${choices[index]} down',
+              onPressed: working || index == choices.length - 1
+                  ? null
+                  : () => setState(() {
+                      final item = choices.removeAt(index);
+                      choices.insert(index + 1, item);
+                    }),
+              icon: const Icon(Icons.arrow_downward),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(widget.item['title']?.toString() ?? 'Activity')),
+    body: ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(widget.item['prompt']?.toString() ?? 'Share your response.'),
+        const SizedBox(height: 16),
+        if (submitted)
+          const Text(
+            'This activity has already been submitted. You can view it in Submission history.',
+          )
+        else if (options.length < 2 || options.length != options.toSet().length)
+          const Text(
+            'This activity is not configured safely. Please contact the research team.',
+          )
+        else
+          control(),
+        if (status.isNotEmpty)
+          Semantics(
+            liveRegion: true,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(status),
+            ),
+          ),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          onPressed: working || submitted ? null : () => save(false),
+          child: const Text('Save draft'),
+        ),
+        SizedBox(
+          height: 48,
+          child: FilledButton(
+            onPressed: working || submitted ? null : () => save(true),
+            child: Text(repeatable ? 'Add entry' : 'Submit response'),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class Activities extends StatefulWidget {
+  const Activities({super.key, required this.api, this.studyId});
+  final Api api;
+  final int? studyId;
   @override
   State<Activities> createState() => _ActivitiesState();
 }
@@ -1779,9 +2440,15 @@ class _ActivitiesState extends State<Activities> with WidgetsBindingObserver {
 
   Future<void> replay() async {
     setState(() => sync = SyncState.sending);
-    final submissionResult = await Queue.replay(widget.api);
-    final mediaResult = await MediaQueue.replay(widget.api);
-    await EvidenceReceiptStore.refresh(widget.api);
+    final submissionResult = await Queue.replay(
+      widget.api,
+      studyId: widget.studyId,
+    );
+    final mediaResult = await MediaQueue.replay(
+      widget.api,
+      studyId: widget.studyId,
+    );
+    await EvidenceReceiptStore.refresh(widget.api, studyId: widget.studyId);
     final result =
         submissionResult == SyncState.needsAttention ||
             mediaResult == SyncState.needsAttention
@@ -1856,6 +2523,7 @@ class _ActivitiesState extends State<Activities> with WidgetsBindingObserver {
                         builder: (_) => participantActivityPage(
                           widget.api,
                           Map<String, dynamic>.from(r),
+                          studyId: widget.studyId,
                         ),
                       ),
                     );
@@ -1871,10 +2539,246 @@ class _ActivitiesState extends State<Activities> with WidgetsBindingObserver {
   );
 }
 
-class TextActivity extends StatefulWidget {
-  const TextActivity({super.key, required this.api, required this.item});
+class LocationActivity extends StatefulWidget {
+  const LocationActivity({
+    super.key,
+    required this.api,
+    required this.item,
+    this.studyId,
+  });
   final Api api;
   final Map<String, dynamic> item;
+  final int? studyId;
+  @override
+  State<LocationActivity> createState() => _LocationActivityState();
+}
+
+class _LocationActivityState extends State<LocationActivity> {
+  Map<String, dynamic>? location;
+  late String entryKey;
+  late bool submitted;
+  bool working = false;
+  String status = '';
+  String get draftKey =>
+      activityDraftKey(widget.item['activity_id'] as int, widget.studyId);
+
+  @override
+  void initState() {
+    super.initState();
+    entryKey = const Uuid().v4();
+    submitted = activityIsSubmitted(widget.item);
+    restore();
+  }
+
+  Future<void> restore() async {
+    final saved = await readActivityDraft(
+      widget.item['activity_id'] as int,
+      widget.studyId,
+    );
+    if (saved == null) return;
+    try {
+      final value = Map<String, dynamic>.from(jsonDecode(saved) as Map);
+      if (value['location'] is Map) {
+        location = Map<String, dynamic>.from(value['location'] as Map);
+      }
+      entryKey = value['idempotency_key']?.toString() ?? entryKey;
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  Future<void> persist() async =>
+      (await SharedPreferences.getInstance()).setString(
+        draftKey,
+        jsonEncode({
+          'answer': '',
+          'choices': <String>[],
+          'idempotency_key': entryKey,
+          if (widget.studyId != null) 'study_id': widget.studyId,
+          if (location != null) 'location': location,
+        }),
+      );
+
+  Future<void> capture() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      setState(
+        () => status = 'Location services are unavailable. You can continue without sharing a location.',
+      );
+      return;
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      setState(
+        () => status =
+            'Location was not added. You can continue without sharing it.',
+      );
+      return;
+    }
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+      location = {
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'accuracy_metres': position.accuracy,
+        'source': 'device',
+        'captured_at': DateTime.now().toUtc().toIso8601String(),
+      };
+      await persist();
+      setState(() => status = 'Location added.');
+    } catch (_) {
+      setState(
+        () => status =
+            'Location could not be added. You can continue without sharing it.',
+      );
+    }
+  }
+
+  Future<void> remove() async {
+    location = null;
+    await persist();
+    setState(() => status = 'Location removed from this entry.');
+  }
+
+  Future<void> save(bool submit) async {
+    if (submit && widget.item['required'] == true && location == null) {
+      setState(
+        () => status = 'Add a location before submitting this activity.',
+      );
+      return;
+    }
+    setState(() => working = true);
+    await persist();
+    try {
+      if (submit) {
+        await widget.api.submitResponse(
+          widget.item['activity_id'] as int,
+          entryKey,
+          answer: '',
+          location: location,
+        );
+        await (await SharedPreferences.getInstance()).remove(draftKey);
+        submitted = widget.item['allow_multiple_entries'] != true;
+        status = submitted
+            ? 'Submitted successfully.'
+            : 'Entry added. You can add another when ready.';
+        if (!submitted) {
+          location = null;
+          entryKey = const Uuid().v4();
+        }
+      } else {
+        await widget.api.draftResponse(
+          widget.item['activity_id'] as int,
+          entryKey,
+          answer: '',
+          location: location,
+        );
+        status = 'Draft saved.';
+      }
+    } on ApiError catch (error) {
+      if (submit && error.retryable) {
+        await Queue.add({
+          'activity_id': widget.item['activity_id'],
+          if (widget.studyId != null) 'study_id': widget.studyId,
+          'answer': '',
+          'choices': <String>[],
+          'location': location,
+          'idempotency_key': entryKey,
+        });
+        status = 'Saved on this device. We will retry when you reconnect.';
+      } else if (error.category == 'session_ended') {
+        status = 'Your session has ended. Sign in again before submitting this entry.';
+      } else {
+        status = 'We could not submit this entry. Please try again or contact your research team.';
+      }
+    } catch (_) {
+      status = 'We could not submit this entry. Please try again or contact your research team.';
+    }
+    if (mounted) setState(() => working = false);
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: Text(widget.item['title']?.toString() ?? 'Location activity'),
+    ),
+    body: ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(
+          widget.item['prompt']?.toString() ?? 'Share your current location.',
+        ),
+        const SizedBox(height: 16),
+        if (submitted)
+          const Text(
+            'This activity has already been submitted. You can view it in Submission history.',
+          )
+        else if (location == null)
+          FilledButton.icon(
+            onPressed: working ? null : capture,
+            icon: const Icon(Icons.my_location_outlined),
+            label: const Text('Use my current location'),
+          )
+        else
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.location_on_outlined),
+              title: const Text('Location added'),
+              subtitle: Text(
+                'Approximate accuracy: ${(location!['accuracy_metres'] as num).round()} m',
+              ),
+              trailing: TextButton(
+                onPressed: working ? null : remove,
+                child: const Text('Remove'),
+              ),
+            ),
+          ),
+        if (status.isNotEmpty)
+          Semantics(
+            liveRegion: true,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(status),
+            ),
+          ),
+        OutlinedButton(
+          onPressed: working || submitted ? null : () => save(false),
+          child: const Text('Save draft'),
+        ),
+        SizedBox(
+          height: 48,
+          child: FilledButton(
+            onPressed: working || submitted ? null : () => save(true),
+            child: Text(
+              widget.item['allow_multiple_entries'] == true
+                  ? 'Add entry'
+                  : 'Submit response',
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class TextActivity extends StatefulWidget {
+  const TextActivity({
+    super.key,
+    required this.api,
+    required this.item,
+    this.studyId,
+    this.singleLine = false,
+  });
+  final Api api;
+  final Map<String, dynamic> item;
+  final int? studyId;
+  final bool singleLine;
   @override
   State<TextActivity> createState() => _TextActivityState();
 }
@@ -1886,7 +2790,8 @@ class _TextActivityState extends State<TextActivity> {
   late String entryKey;
   Map<String, dynamic>? location;
   String status = '';
-  String get key => 'draft_${widget.item['activity_id']}';
+  String get key =>
+      activityDraftKey(widget.item['activity_id'] as int, widget.studyId);
   bool get repeatable => widget.item['allow_multiple_entries'] == true;
   bool get allowLocation => widget.item['allow_participant_location'] == true;
   @override
@@ -1898,7 +2803,10 @@ class _TextActivityState extends State<TextActivity> {
   }
 
   Future<void> restore() async {
-    final saved = (await SharedPreferences.getInstance()).getString(key);
+    final saved = await readActivityDraft(
+      widget.item['activity_id'] as int,
+      widget.studyId,
+    );
     if (saved == null) return;
     try {
       final draft = Map<String, dynamic>.from(jsonDecode(saved) as Map);
@@ -2014,7 +2922,9 @@ class _TextActivityState extends State<TextActivity> {
       if (error.retryable) {
         await Queue.add({
           'activity_id': widget.item['activity_id'],
+          if (widget.studyId != null) 'study_id': widget.studyId,
           'answer': text.text,
+          'choices': <String>[],
           'idempotency_key': id,
           if (location != null) 'location': location,
           'attempts': 0,
@@ -2047,6 +2957,7 @@ class _TextActivityState extends State<TextActivity> {
                     builder: (_) => PhotoEvidence(
                       api: widget.api,
                       activityId: widget.item['activity_id'] as int,
+                      studyId: widget.studyId,
                     ),
                   ),
                 ),
@@ -2060,6 +2971,7 @@ class _TextActivityState extends State<TextActivity> {
                     builder: (_) => DocumentEvidence(
                       api: widget.api,
                       activityId: widget.item['activity_id'] as int,
+                      studyId: widget.studyId,
                     ),
                   ),
                 ),
@@ -2073,6 +2985,7 @@ class _TextActivityState extends State<TextActivity> {
                     builder: (_) => VoiceDiary(
                       api: widget.api,
                       activityId: widget.item['activity_id'] as int,
+                      studyId: widget.studyId,
                     ),
                   ),
                 ),
@@ -2096,8 +3009,8 @@ class _TextActivityState extends State<TextActivity> {
                   )
                 : TextField(
                     controller: text,
-                    maxLines: null,
-                    expands: true,
+                    maxLines: widget.singleLine ? 1 : null,
+                    expands: !widget.singleLine,
                     decoration: const InputDecoration(
                       labelText: 'Your response',
                       border: OutlineInputBorder(),
@@ -2165,8 +3078,9 @@ class _TextActivityState extends State<TextActivity> {
 }
 
 class Profile extends StatefulWidget {
-  const Profile({super.key, required this.api});
+  const Profile({super.key, required this.api, this.studyId});
   final Api api;
+  final int? studyId;
   @override
   State<Profile> createState() => _ProfileState();
 }
@@ -2184,12 +3098,14 @@ class _ProfileState extends State<Profile> {
     try {
       final p = await widget.api.profile();
       (await SharedPreferences.getInstance()).setString(
-        'cached_profile',
+        studyCacheKey('cached_profile', widget.studyId),
         jsonEncode(p),
       );
       return p;
     } catch (_) {
-      final cached = await cachedObject('cached_profile');
+      final cached = await cachedObject(
+        studyCacheKey('cached_profile', widget.studyId),
+      );
       if (cached != null) return cached;
       rethrow;
     }
@@ -2199,7 +3115,7 @@ class _ProfileState extends State<Profile> {
     try {
       final p = await widget.api.updatePreference(v, const Uuid().v4());
       (await SharedPreferences.getInstance()).setString(
-        'cached_profile',
+        studyCacheKey('cached_profile', widget.studyId),
         jsonEncode(p),
       );
       if (mounted) setState(() => message = 'Your preference has been saved.');
@@ -2282,8 +3198,9 @@ class _ProfileState extends State<Profile> {
 }
 
 class History extends StatefulWidget {
-  const History({super.key, required this.api, this.reader});
+  const History({super.key, required this.api, this.studyId, this.reader});
   final Api api;
+  final int? studyId;
   final Future<List<dynamic>> Function()? reader;
   @override
   State<History> createState() => _HistoryState();
@@ -2301,12 +3218,14 @@ class _HistoryState extends State<History> {
     try {
       final rows = await (widget.reader?.call() ?? widget.api.history());
       (await SharedPreferences.getInstance()).setString(
-        'cached_history',
+        studyCacheKey('cached_history', widget.studyId),
         jsonEncode(rows),
       );
       return rows;
     } catch (_) {
-      final cached = await cachedList('cached_history');
+      final cached = await cachedList(
+        studyCacheKey('cached_history', widget.studyId),
+      );
       if (cached != null) return cached;
       rethrow;
     }
@@ -2556,8 +3475,15 @@ class _HistoryEvidenceState extends State<_HistoryEvidence> {
 }
 
 class Messages extends StatefulWidget {
-  const Messages({super.key, required this.api, this.reader, this.sender});
+  const Messages({
+    super.key,
+    required this.api,
+    this.studyId,
+    this.reader,
+    this.sender,
+  });
   final Api api;
+  final int? studyId;
   final Future<List<dynamic>> Function()? reader;
   final Future<Map<String, dynamic>> Function(String, String)? sender;
   @override
@@ -2576,12 +3502,14 @@ class _MessagesState extends State<Messages> {
     try {
       final rows = await (widget.reader?.call() ?? widget.api.messages());
       (await SharedPreferences.getInstance()).setString(
-        'cached_messages',
+        studyCacheKey('cached_messages', widget.studyId),
         jsonEncode(rows),
       );
       return rows;
     } catch (_) {
-      final cached = await cachedList('cached_messages');
+      final cached = await cachedList(
+        studyCacheKey('cached_messages', widget.studyId),
+      );
       if (cached != null) return cached;
       rethrow;
     }
@@ -2598,7 +3526,7 @@ class _MessagesState extends State<Messages> {
     final current = await load;
     final updated = [...current, sent];
     await (await SharedPreferences.getInstance()).setString(
-      'cached_messages',
+      studyCacheKey('cached_messages', widget.studyId),
       jsonEncode(updated),
     );
     if (mounted) {
@@ -2784,12 +3712,14 @@ class PhotoEvidence extends StatefulWidget {
     super.key,
     required this.api,
     required this.activityId,
+    this.studyId,
     this.title,
     this.prompt,
     this.submitted = false,
   });
   final Api api;
   final int activityId;
+  final int? studyId;
   final String? title;
   final String? prompt;
   final bool submitted;
@@ -2810,7 +3740,11 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
   }
 
   Future<void> restore() async {
-    final item = await MediaQueue.pendingFor(widget.activityId, 'photo');
+    final item = await MediaQueue.pendingFor(
+      widget.activityId,
+      'photo',
+      studyId: widget.studyId,
+    );
     if (item != null && mounted) {
       setState(() {
         pending = item;
@@ -2835,6 +3769,7 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
         if (pending != null) await MediaQueue.remove(pending!.idempotencyKey);
         final item = await MediaQueue.enqueue(
           activityId: widget.activityId,
+          studyId: widget.studyId,
           sourcePath: selected.path,
           filename: selected.name,
           kind: 'photo',
@@ -2865,11 +3800,18 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
       widget.api,
       onlyKey: pending!.idempotencyKey,
     );
-    final remaining = await MediaQueue.pendingFor(widget.activityId, 'photo');
+    final remaining = await MediaQueue.pendingFor(
+      widget.activityId,
+      'photo',
+      studyId: widget.studyId,
+    );
     if (remaining == null) {
       pending = null;
       photo = null;
-      final receipts = await EvidenceReceiptStore.refresh(widget.api);
+      final receipts = await EvidenceReceiptStore.refresh(
+        widget.api,
+        studyId: widget.studyId,
+      );
       Map<String, dynamic>? receipt;
       for (final item in receipts) {
         if (item['activity_id'] == widget.activityId) receipt = item;
@@ -2977,14 +3919,181 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
   );
 }
 
+class VideoEvidence extends StatefulWidget {
+  const VideoEvidence({
+    super.key,
+    required this.api,
+    required this.activityId,
+    this.studyId,
+    this.title,
+    this.prompt,
+    this.submitted = false,
+  });
+  final Api api;
+  final int activityId;
+  final int? studyId;
+  final String? title;
+  final String? prompt;
+  final bool submitted;
+  @override
+  State<VideoEvidence> createState() => _VideoEvidenceState();
+}
+
+class _VideoEvidenceState extends State<VideoEvidence> {
+  final picker = ImagePicker();
+  PendingMediaUpload? pending;
+  bool uploading = false;
+  String status = '';
+
+  @override
+  void initState() {
+    super.initState();
+    restore();
+  }
+
+  Future<void> restore() async {
+    final item = await MediaQueue.pendingFor(
+      widget.activityId,
+      'video',
+      studyId: widget.studyId,
+    );
+    if (mounted && item != null) {
+      setState(() {
+        pending = item;
+        status = widget.submitted
+            ? 'This activity has already been submitted. This saved video cannot be attached.'
+            : 'Saved on this device — waiting to upload.';
+      });
+    }
+  }
+
+  Future<void> choose(ImageSource source) async {
+    if (widget.submitted) return;
+    try {
+      final selected = await picker.pickVideo(source: source);
+      if (selected == null) return;
+      if (pending != null) await MediaQueue.remove(pending!.idempotencyKey);
+      final item = await MediaQueue.enqueue(
+        activityId: widget.activityId,
+        studyId: widget.studyId,
+        sourcePath: selected.path,
+        filename: selected.name,
+        kind: 'video',
+      );
+      if (mounted) {
+        setState(() {
+          pending = item;
+          status = 'Saved on this device — waiting to upload.';
+        });
+      }
+    } catch (_) {
+      setState(
+        () => status = 'We could not open that video source. Check your device permissions and try again.',
+      );
+    }
+  }
+
+  Future<void> upload() async {
+    if (pending == null || widget.submitted) return;
+    setState(() => uploading = true);
+    final result = await MediaQueue.replay(
+      widget.api,
+      studyId: widget.studyId,
+      onlyKey: pending!.idempotencyKey,
+    );
+    final remaining = await MediaQueue.pendingFor(
+      widget.activityId,
+      'video',
+      studyId: widget.studyId,
+    );
+    if (remaining == null) {
+      pending = null;
+      status =
+          'Video uploaded and linked. Its security status is synchronised.';
+    } else {
+      pending = remaining;
+      status = remaining.failureCategory == 'security_rejected'
+          ? 'This video was rejected by the security checks. Remove it and choose a different video.'
+          : result == SyncState.needsAttention
+          ? 'Saved on this device. Sign in again before it can upload.'
+          : 'Saved on this device — waiting to upload. Tap retry when connected.';
+    }
+    if (mounted) setState(() => uploading = false);
+  }
+
+  Future<void> remove() async {
+    if (pending != null) await MediaQueue.remove(pending!.idempotencyKey);
+    if (mounted)
+      setState(() {
+        pending = null;
+        status = '';
+      });
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(widget.title ?? 'Add video evidence')),
+    body: ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(
+          widget.prompt ??
+              'Record or choose a video to attach to this activity.',
+        ),
+        const SizedBox(height: 16),
+        if (widget.submitted && pending == null)
+          const Text('Submitted activities cannot be changed.')
+        else if (pending == null) ...[
+          FilledButton.icon(
+            onPressed: () => choose(ImageSource.camera),
+            icon: const Icon(Icons.videocam_outlined),
+            label: const Text('Record a video'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => choose(ImageSource.gallery),
+            icon: const Icon(Icons.video_library_outlined),
+            label: const Text('Choose from library'),
+          ),
+        ] else ...[
+          ListTile(
+            leading: const Icon(Icons.video_file_outlined),
+            title: Text(pending!.filename),
+          ),
+          TextButton(onPressed: remove, child: const Text('Remove video')),
+          FilledButton(
+            onPressed: uploading || widget.submitted ? null : upload,
+            child: Text(uploading ? 'Uploading…' : 'Upload video'),
+          ),
+        ],
+        if (status.isNotEmpty)
+          Semantics(
+            liveRegion: true,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Text(status),
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
 class DocumentEvidence extends StatefulWidget {
   const DocumentEvidence({
     super.key,
     required this.api,
     required this.activityId,
+    this.studyId,
+    this.title,
+    this.prompt,
+    this.submitted = false,
   });
   final Api api;
   final int activityId;
+  final int? studyId;
+  final String? title;
+  final String? prompt;
+  final bool submitted;
   @override
   State<DocumentEvidence> createState() => _DocumentEvidenceState();
 }
@@ -3002,7 +4111,11 @@ class _DocumentEvidenceState extends State<DocumentEvidence> {
   }
 
   Future<void> restore() async {
-    final item = await MediaQueue.pendingFor(widget.activityId, 'document');
+    final item = await MediaQueue.pendingFor(
+      widget.activityId,
+      'document',
+      studyId: widget.studyId,
+    );
     if (item != null && await File(item.localPath).exists() && mounted) {
       final size = await File(item.localPath).length();
       setState(() {
@@ -3018,6 +4131,7 @@ class _DocumentEvidenceState extends State<DocumentEvidence> {
   }
 
   Future<void> choose() async {
+    if (widget.submitted) return;
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -3032,6 +4146,7 @@ class _DocumentEvidenceState extends State<DocumentEvidence> {
           if (pending != null) await MediaQueue.remove(pending!.idempotencyKey);
           final item = await MediaQueue.enqueue(
             activityId: widget.activityId,
+            studyId: widget.studyId,
             sourcePath: selected.path!,
             filename: selected.name,
             kind: 'document',
@@ -3066,6 +4181,7 @@ class _DocumentEvidenceState extends State<DocumentEvidence> {
     final remaining = await MediaQueue.pendingFor(
       widget.activityId,
       'document',
+      studyId: widget.studyId,
     );
     if (remaining == null) {
       pending = null;
@@ -3095,16 +4211,18 @@ class _DocumentEvidenceState extends State<DocumentEvidence> {
 
   @override
   Widget build(BuildContext c) => Scaffold(
-    appBar: AppBar(title: const Text('Add document evidence')),
+    appBar: AppBar(title: Text(widget.title ?? 'Add document evidence')),
     body: Padding(
       padding: const EdgeInsets.all(20),
       child: ListView(
         children: [
-          const Text(
-            'Choose a PDF, Word, text or CSV document to attach to this activity.',
+          Text(
+            widget.prompt ?? 'Choose a PDF, Word, text or CSV document to attach to this activity.',
           ),
           const SizedBox(height: 16),
-          if (file == null)
+          if (widget.submitted && file == null)
+            const Text('Submitted activities cannot be changed.')
+          else if (file == null)
             SizedBox(
               height: 48,
               child: FilledButton.icon(
@@ -3129,7 +4247,7 @@ class _DocumentEvidenceState extends State<DocumentEvidence> {
                   child: const Text('Remove document'),
                 ),
                 TextButton(
-                  onPressed: choose,
+                  onPressed: widget.submitted ? null : choose,
                   child: const Text('Choose another'),
                 ),
               ],
@@ -3137,7 +4255,7 @@ class _DocumentEvidenceState extends State<DocumentEvidence> {
             SizedBox(
               height: 48,
               child: FilledButton(
-                onPressed: uploading ? null : upload,
+                onPressed: uploading || widget.submitted ? null : upload,
                 child: Text(uploading ? 'Uploading…' : 'Upload document'),
               ),
             ),
@@ -3161,12 +4279,14 @@ class VoiceDiary extends StatefulWidget {
     super.key,
     required this.api,
     required this.activityId,
+    this.studyId,
     this.title,
     this.prompt,
     this.submitted = false,
   });
   final Api api;
   final int activityId;
+  final int? studyId;
   final String? title;
   final String? prompt;
   final bool submitted;
@@ -3186,7 +4306,11 @@ class _VoiceDiaryState extends State<VoiceDiary> {
   }
 
   Future<void> restore() async {
-    final item = await MediaQueue.pendingFor(widget.activityId, 'voice');
+    final item = await MediaQueue.pendingFor(
+      widget.activityId,
+      'voice',
+      studyId: widget.studyId,
+    );
     if (item != null && mounted) {
       setState(() {
         pending = item;
@@ -3211,6 +4335,7 @@ class _VoiceDiaryState extends State<VoiceDiary> {
         if (pending != null) await MediaQueue.remove(pending!.idempotencyKey);
         final item = await MediaQueue.enqueue(
           activityId: widget.activityId,
+          studyId: widget.studyId,
           sourcePath: recordedPath,
           filename: 'voice-diary.m4a',
           kind: 'voice',
@@ -3252,7 +4377,11 @@ class _VoiceDiaryState extends State<VoiceDiary> {
       widget.api,
       onlyKey: pending!.idempotencyKey,
     );
-    final remaining = await MediaQueue.pendingFor(widget.activityId, 'voice');
+    final remaining = await MediaQueue.pendingFor(
+      widget.activityId,
+      'voice',
+      studyId: widget.studyId,
+    );
     if (remaining == null) {
       pending = null;
       path = null;

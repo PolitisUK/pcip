@@ -537,6 +537,7 @@ ACTIVITY_TYPES = {
     "ranking",
     "file",
 }
+PARTICIPANT_SCALE_OPTIONS = [str(value) for value in range(1, 11)]
 COMMUNICATION_PREFERENCES = {"email", "sms", "phone", "none"}
 ORGANISATION_NAME_MAX_LENGTH = 200
 ORGANISATION_SLUG_MAX_LENGTH = 100
@@ -4688,7 +4689,9 @@ def participant_api_portal_summary(
             activity_type=activity.activity_type,
             required=activity.required,
             allow_multiple_entries=bool(activity.allow_multiple_entries),
-            allow_participant_location=bool(activity.allow_participant_location),
+            allow_participant_location=bool(
+                activity.allow_participant_location or activity.activity_type == "gps"
+            ),
             position=activity.position,
             availability=ActivityAvailability(
                 status=availability["status"],
@@ -4698,6 +4701,9 @@ def participant_api_portal_summary(
         )
         if response_summary:
             item.response = response_summary
+        options = _participant_activity_options(activity)
+        if options is not None:
+            item.options = options
         activity_summaries.append(item)
 
     messages = [
@@ -5727,6 +5733,10 @@ def _store_participant_response_location(
 
 
 def _participant_activity_options(activity_row: Activity) -> list[str] | None:
+    if activity_row.activity_type in {"rating", "slider"}:
+        # The existing participant web experience defines both scales as 1–10.
+        # Expose that same authoritative contract to native clients.
+        return PARTICIPANT_SCALE_OPTIONS.copy()
     if activity_row.activity_type not in {"single_choice", "multiple_choice", "ranking"}:
         return None
 
@@ -5754,6 +5764,17 @@ def _validate_activity_response_value(
     choices = [x.strip() for x in raw_choices if isinstance(x, str) and x.strip()]
     value["answer"] = answer
     value["choices"] = choices
+
+    if activity_row.activity_type in {"rating", "slider"}:
+        if choices:
+            raise HTTPException(400, "Rating activities must use one available value.")
+        options = _participant_activity_options(activity_row) or []
+        if answer.strip() and answer.strip() not in options:
+            raise HTTPException(400, "The rating is outside the available range.")
+        if action == "submit" and activity_row.required and not answer.strip():
+            raise HTTPException(400, "A response is required.")
+        value["answer"] = answer.strip()
+        return value
 
     if activity_row.activity_type not in {"single_choice", "multiple_choice", "ranking"}:
         return value
@@ -5787,7 +5808,9 @@ def _participant_activity_summary(activity_row: Activity, window: dict[str, obje
         activity_type=activity_row.activity_type,
         required=bool(activity_row.required),
         allow_multiple_entries=bool(activity_row.allow_multiple_entries),
-        allow_participant_location=bool(activity_row.allow_participant_location),
+        allow_participant_location=bool(
+            activity_row.allow_participant_location or activity_row.activity_type == "gps"
+        ),
         position=activity_row.position,
         availability=ActivityAvailability(
             status=str(window.get("status") or "open"),
@@ -5961,7 +5984,11 @@ def _participant_response_value_from_payload(
     }
     if payload.evidence_id is not None:
         value["evidence_id"] = payload.evidence_id
-    if payload.location is not None and not activity_row.allow_participant_location:
+    if (
+        payload.location is not None
+        and activity_row.activity_type != "gps"
+        and not activity_row.allow_participant_location
+    ):
         raise HTTPException(400, "Location is not enabled for this activity.")
     return _validate_activity_response_value(activity_row, value, action)
 
@@ -6232,9 +6259,10 @@ def participant_api_activity_response_submit(
     has_answer = bool((payload.answer or "").strip())
     has_choices = bool(value.get("choices"))
     has_evidence = payload.evidence_id is not None
+    has_location = payload.location is not None
     if activity_row.activity_type in {"photo", "audio", "video", "file"} and not has_evidence:
         raise HTTPException(400, "Upload the required evidence before submitting this activity.")
-    if activity_row.required and not has_answer and not has_choices and not has_evidence:
+    if activity_row.required and not has_answer and not has_choices and not has_evidence and not has_location:
         raise HTTPException(400, "A response is required.")
 
     if payload.evidence_id is not None:
