@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -124,6 +125,34 @@ void main() {
     }
   });
 
+  test('oversized evidence is a permanent actionable rejection', () async {
+    final directory = await Directory.systemTemp.createTemp('pcip-upload-413-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/oversized.mp4');
+    await file.writeAsBytes([1, 2, 3], flush: true);
+    final api = Api(
+      Uri.parse('https://citizencentric.co.uk'),
+      'synthetic',
+      client: _StatusClient(413),
+    );
+
+    await expectLater(
+      api.uploadEvidence(
+        1,
+        file.path,
+        'oversized.mp4',
+        'video/mp4',
+        'synthetic-key',
+      ),
+      throwsA(
+        isA<ApiError>()
+            .having((error) => error.retryable, 'retryable', isFalse)
+            .having((error) => error.category, 'category', 'file_too_large')
+            .having((error) => error.statusCode, 'status', 413),
+      ),
+    );
+  });
+
   test('expired sessions remain non-retryable and require sign-in', () async {
     final api = Api(
       Uri.parse('https://citizencentric.co.uk'),
@@ -140,20 +169,27 @@ void main() {
     );
   });
 
-  test('available-studies conflict has a safe, actionable participant message', () {
-    expect(
-      availableStudiesLoadError(const ApiError(
-        'Internal detail must not reach participants.',
-        retryable: false,
-        statusCode: 409,
-      )),
-      'Your study access needs review. You can continue using your current study, but switching studies is temporarily unavailable. Please contact the research team.',
-    );
-    expect(
-      availableStudiesLoadError(const ApiError('Temporary failure.', statusCode: 500)),
-      'Your available studies could not be loaded. You can keep using this study.',
-    );
-  });
+  test(
+    'available-studies conflict has a safe, actionable participant message',
+    () {
+      expect(
+        availableStudiesLoadError(
+          const ApiError(
+            'Internal detail must not reach participants.',
+            retryable: false,
+            statusCode: 409,
+          ),
+        ),
+        'Your study access needs review. You can continue using your current study, but switching studies is temporarily unavailable. Please contact the research team.',
+      );
+      expect(
+        availableStudiesLoadError(
+          const ApiError('Temporary failure.', statusCode: 500),
+        ),
+        'Your available studies could not be loaded. You can keep using this study.',
+      );
+    },
+  );
 
   test('logout cache cleanup retains no participant data', () async {
     SharedPreferences.setMockInitialValues({
