@@ -361,7 +361,7 @@ class Api implements ParticipantApi {
               contentType: MediaType.parse(contentType),
             ),
           );
-    final x = await http.Response.fromStream(await r.send());
+    final x = await http.Response.fromStream(await _client.send(r));
     if (x.statusCode == 401) throw const ApiError('Your session has ended.');
     if (x.statusCode == 409) {
       throw const ApiError(
@@ -374,6 +374,14 @@ class Api implements ParticipantApi {
       throw const ApiError(
         'This file was rejected by the security checks. Choose a different file.',
         retryable: false,
+      );
+    }
+    if (x.statusCode == 413) {
+      throw const ApiError(
+        'This file is too large to upload. Choose a smaller file.',
+        retryable: false,
+        category: 'file_too_large',
+        statusCode: 413,
       );
     }
     if (x.statusCode < 200 || x.statusCode > 299)
@@ -2078,6 +2086,7 @@ class _StructuredResponseActivityState
   late String entryKey;
   String? answer;
   List<String> choices = [];
+  Map<String, dynamic>? location;
   bool working = false;
   String status = '';
 
@@ -2089,6 +2098,7 @@ class _StructuredResponseActivityState
   String get draftKey =>
       activityDraftKey(widget.item['activity_id'] as int, widget.studyId);
   bool get repeatable => widget.item['allow_multiple_entries'] == true;
+  bool get allowLocation => widget.item['allow_participant_location'] == true;
 
   @override
   void initState() {
@@ -2126,6 +2136,9 @@ class _StructuredResponseActivityState
       if (storedAnswer != null && options.contains(storedAnswer)) {
         answer = storedAnswer;
       }
+      if (value['location'] is Map) {
+        location = Map<String, dynamic>.from(value['location'] as Map);
+      }
       entryKey = value['idempotency_key']?.toString() ?? entryKey;
     } catch (_) {
       // Invalid local structured data is ignored rather than submitted.
@@ -2141,8 +2154,71 @@ class _StructuredResponseActivityState
         'choices': choices,
         'idempotency_key': entryKey,
         if (widget.studyId != null) 'study_id': widget.studyId,
+        if (location != null) 'location': location,
       }),
     );
+  }
+
+  Future<void> captureLocation() async {
+    if (!allowLocation) return;
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      if (mounted) {
+        setState(
+          () => status = 'Location services are unavailable. You can still submit without a location.',
+        );
+      }
+      return;
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        setState(
+          () => status =
+              'Location was not added. You can still submit this entry.',
+        );
+      }
+      return;
+    }
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+      location = {
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'accuracy_metres': position.accuracy,
+        'source': 'device',
+        'captured_at': DateTime.now().toUtc().toIso8601String(),
+      };
+      await persist();
+      if (mounted) {
+        setState(
+          () => status =
+              'Location added (approximately ${position.accuracy.round()} m accuracy).',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => status =
+              'Location could not be added. You can still submit this entry.',
+        );
+      }
+    }
+  }
+
+  Future<void> removeLocation() async {
+    location = null;
+    await persist();
+    if (mounted) {
+      setState(() => status = 'Location removed from this entry.');
+    }
   }
 
   String? validate(bool submit) {
@@ -2194,6 +2270,7 @@ class _StructuredResponseActivityState
           entryKey,
           answer: answer,
           choices: choices,
+          location: location,
         );
       } else {
         await widget.api.draftResponse(
@@ -2201,6 +2278,7 @@ class _StructuredResponseActivityState
           entryKey,
           answer: answer,
           choices: choices,
+          location: location,
         );
       }
       if (submit) {
@@ -2214,6 +2292,7 @@ class _StructuredResponseActivityState
           choices = widget.control == StructuredControl.ranking
               ? [...options]
               : [];
+          location = null;
           entryKey = const Uuid().v4();
         }
       } else {
@@ -2226,6 +2305,7 @@ class _StructuredResponseActivityState
           if (widget.studyId != null) 'study_id': widget.studyId,
           'answer': answer,
           'choices': choices,
+          if (location != null) 'location': location,
           'idempotency_key': entryKey,
         });
         status = 'Saved on this device. We will retry when you reconnect.';
@@ -2383,6 +2463,35 @@ class _StructuredResponseActivityState
           )
         else
           control(),
+        if (!submitted && allowLocation) ...[
+          const SizedBox(height: 12),
+          if (location == null)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Add location (optional)'),
+                OutlinedButton.icon(
+                  onPressed: working ? null : captureLocation,
+                  icon: const Icon(Icons.my_location_outlined),
+                  label: const Text('Use my current location'),
+                ),
+              ],
+            )
+          else
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.location_on_outlined),
+                title: const Text('Location added'),
+                subtitle: Text(
+                  'Approximate accuracy: ${(location!['accuracy_metres'] as num).round()} m',
+                ),
+                trailing: TextButton(
+                  onPressed: working ? null : removeLocation,
+                  child: const Text('Remove'),
+                ),
+              ),
+            ),
+        ],
         if (status.isNotEmpty)
           Semantics(
             liveRegion: true,
@@ -3206,12 +3315,17 @@ class History extends StatefulWidget {
   State<History> createState() => _HistoryState();
 }
 
+Future<int> historyPendingUploadCount(int? studyId) =>
+    MediaQueue.count(studyId: studyId);
+
 class _HistoryState extends State<History> {
   late Future<List<dynamic>> load;
+  late Future<int> pendingCount;
   @override
   void initState() {
     super.initState();
     load = read();
+    pendingCount = historyPendingUploadCount(widget.studyId);
   }
 
   Future<List<dynamic>> read() async {
@@ -3257,12 +3371,15 @@ class _HistoryState extends State<History> {
             child: Text('You have not submitted any responses yet.'),
           );
         return RefreshIndicator(
-          onRefresh: () async => setState(() => load = read()),
+          onRefresh: () async => setState(() {
+            load = read();
+            pendingCount = historyPendingUploadCount(widget.studyId);
+          }),
           child: ListView(
             padding: const EdgeInsets.all(14),
             children: [
               FutureBuilder<int>(
-                future: MediaQueue.count(),
+                future: pendingCount,
                 builder: (context, pending) => (pending.data ?? 0) > 0
                     ? Semantics(
                         liveRegion: true,

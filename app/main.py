@@ -6259,10 +6259,18 @@ def participant_api_activity_response_submit(
     has_answer = bool((payload.answer or "").strip())
     has_choices = bool(value.get("choices"))
     has_evidence = payload.evidence_id is not None
-    has_location = payload.location is not None
+    has_location_response = (
+        activity_row.activity_type == "gps" and payload.location is not None
+    )
     if activity_row.activity_type in {"photo", "audio", "video", "file"} and not has_evidence:
         raise HTTPException(400, "Upload the required evidence before submitting this activity.")
-    if activity_row.required and not has_answer and not has_choices and not has_evidence and not has_location:
+    if (
+        activity_row.required
+        and not has_answer
+        and not has_choices
+        and not has_evidence
+        and not has_location_response
+    ):
         raise HTTPException(400, "A response is required.")
 
     if payload.evidence_id is not None:

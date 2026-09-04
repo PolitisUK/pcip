@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 // The nullable test fixture field is clearer as a conditional map entry.
 // ignore_for_file: use_null_aware_elements
@@ -327,6 +328,56 @@ void main() {
     expect(location['source'], 'device');
   });
 
+  testWidgets('structured activity preserves optional participant location', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_locationChannel, (call) async {
+          if (call.method == 'isLocationServiceEnabled') return true;
+          if (call.method == 'checkPermission') return 2;
+          if (call.method == 'getCurrentPosition') {
+            return {
+              'latitude': 51.5074,
+              'longitude': -0.1278,
+              'timestamp': 0,
+              'accuracy': 8.0,
+              'altitude': 0.0,
+              'altitude_accuracy': 0.0,
+              'heading': 0.0,
+              'heading_accuracy': 0.0,
+              'speed': 0.0,
+              'speed_accuracy': 0.0,
+              'is_mocked': false,
+            };
+          }
+          throw MissingPluginException();
+        });
+    final api = _RecordingApi();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RatingActivity(
+          api: api,
+          item: {
+            ..._activity('rating', options: const ['1', '2', '3']),
+            'allow_participant_location': true,
+          },
+          studyId: 22,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use my current location'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('3'));
+    await tester.tap(find.text('Submit response'));
+    await tester.pumpAndSettle();
+
+    final location = api.calls.single['location'] as Map<String, dynamic>;
+    expect(api.calls.single['answer'], '3');
+    expect(location['latitude'], 51.5074);
+    expect(location['source'], 'device');
+  });
+
   testWidgets('submitted structured activity is read-only', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -424,6 +475,26 @@ void main() {
     );
     expect((await EvidenceReceiptStore.read(studyId: 10)).length, 1);
     expect((await EvidenceReceiptStore.read(studyId: 11)).length, 1);
+  });
+
+  test('history counts pending uploads only for the active study', () async {
+    final root = await Directory.systemTemp.createTemp('pcip-study-media-');
+    addTearDown(() => root.delete(recursive: true));
+    for (final studyId in [10, 11]) {
+      final source = File('${root.path}/source-$studyId.jpg');
+      await source.writeAsBytes([studyId], flush: true);
+      await MediaQueue.enqueue(
+        activityId: studyId,
+        studyId: studyId,
+        sourcePath: source.path,
+        filename: 'photo-$studyId.jpg',
+        kind: 'photo',
+        supportDirectory: root,
+      );
+    }
+    expect(await historyPendingUploadCount(10), 1);
+    expect(await historyPendingUploadCount(11), 1);
+    expect(await MediaQueue.count(), 2);
   });
 
   testWidgets(

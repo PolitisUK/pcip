@@ -8681,6 +8681,16 @@ def test_required_gps_activity_accepts_structured_location_without_text_answer()
     with SessionLocal() as db:
         base_row = db.get(Activity, context['activity_id'])
         assert base_row is not None
+        text_with_optional_location = Activity(
+            organisation_id=base_row.organisation_id,
+            study_id=base_row.study_id,
+            title='Located reflection',
+            prompt='Share a reflection and optionally its location.',
+            activity_type='long_text',
+            position=base_row.position + 32,
+            required=True,
+            allow_participant_location=True,
+        )
         gps = Activity(
             organisation_id=base_row.organisation_id,
             study_id=base_row.study_id,
@@ -8691,8 +8701,9 @@ def test_required_gps_activity_accepts_structured_location_without_text_answer()
             required=True,
             allow_participant_location=False,
         )
-        db.add(gps)
+        db.add_all([text_with_optional_location, gps])
         db.flush()
+        text_activity_id = text_with_optional_location.id
         gps_id = gps.id
         db.commit()
 
@@ -8705,6 +8716,14 @@ def test_required_gps_activity_accepts_structured_location_without_text_answer()
         'captured_at': datetime.now(timezone.utc).isoformat(),
     }
     with client:
+        optional_location_only = client.post(
+            f'/api/v1/participant/activities/{text_activity_id}/submit',
+            json={'location': location},
+            headers=headers,
+        )
+        assert optional_location_only.status_code == 400
+        assert optional_location_only.json() == {'detail': 'A response is required.'}
+
         detail = client.get(f'/api/v1/participant/activities/{gps_id}', headers=headers)
         assert detail.status_code == 200
         assert detail.json()['activity']['allow_participant_location'] is True
