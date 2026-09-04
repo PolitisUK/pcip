@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Archive organisation{% endblock %}
+{% block page_description %}<p class="page-description">Take this customer workspace out of normal use without deleting its records.</p>{% endblock %}
+{% block contextual_help %}<p class="muted">Archive is reversible. Projects, studies, participants, consent, submissions, evidence, messages, memberships and audit history are retained.</p>{% endblock %}
+{% block content %}
+<section class="card section stack confirmation-card">
+  <div>
+    <p class="eyebrow">Customer organisation</p>
+    <h2>{{ organisation.name }}</h2>
+  </div>
+  <div class="notice neutral">
+    <strong>What archiving does</strong>
+    <ul>
+      <li>The organisation becomes unavailable for normal researcher and participant use.</li>
+      <li>Its data and memberships are retained unchanged.</li>
+      <li>A platform administrator can restore it later.</li>
+    </ul>
+  </div>
+  <form method="post" action="/admin/organisations/{{ organisation.id }}/archive" class="actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Archive organisation</button>
+    <a class="btn secondary" href="/admin">Cancel</a>
+  </form>
+</section>
+{% endblock %}

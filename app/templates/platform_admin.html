@@ -4,14 +4,40 @@
 {% block contextual_help %}<p class="muted">This view is limited to explicitly provisioned platform administrators. Do not use it to access participant material unless an authorised support process requires it.</p>{% endblock %}
 {% block content %}
 <section class="card section card--data">
-  <div class="section-head"><div><h2>Customer organisations</h2><p class="muted">Organisation-level operational summary only.</p></div><div class="actions"><span class="muted">{{ organisations|length }} organisations</span><a class="btn" href="/admin/organisations/new">Create customer organisation</a></div></div>
+  <div class="section-head"><div><h2>Customer organisations</h2><p class="muted">Archive is the normal way to take a customer workspace out of use while retaining its records.</p></div><div class="actions"><a class="btn" href="/admin/organisations/new">Create customer organisation</a></div></div>
+  <nav class="tabs" aria-label="Organisation status">
+    <a href="/admin?organisation_status=active" {% if organisation_status == 'active' %}aria-current="page" class="active"{% endif %}>Active <span class="badge">{{ active_organisation_count }}</span></a>
+    <a href="/admin?organisation_status=archived" {% if organisation_status == 'archived' %}aria-current="page" class="active"{% endif %}>Archived <span class="badge">{{ archived_organisation_count }}</span></a>
+  </nav>
   <table class="table">
-    <thead><tr><th>Organisation</th><th>Studies</th><th>Participants</th></tr></thead>
+    <thead><tr><th>Organisation</th><th>Status</th><th>Studies</th><th>Participants</th><th>Actions</th></tr></thead>
     <tbody>
       {% for organisation, study_count, participant_count in organisations %}
-      <tr><td>{{ organisation.name }}</td><td>{{ study_count }}</td><td>{{ participant_count }}</td></tr>
+      <tr class="{% if organisation.archived_at %}organisation-row--archived{% endif %}">
+        <td>{{ organisation.name }}</td>
+        <td><span class="badge">{{ 'Archived' if organisation.archived_at else 'Active' }}</span></td>
+        <td>{{ study_count }}</td>
+        <td>{{ participant_count }}</td>
+        <td>
+          <div class="actions">
+            {% if not organisation.archived_at %}
+              {% if organisation.id in open_organisation_ids %}
+              <form method="post" action="/organisations/switch" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="organisation_id" value="{{ organisation.id }}"><button class="mini" type="submit">Open</button></form>
+              {% endif %}
+              {% if organisation.id in protected_organisation_ids %}
+              <span class="muted">Platform operations home</span>
+              {% else %}
+              <a class="mini" href="/admin/organisations/{{ organisation.id }}/archive">Archive</a>
+              {% endif %}
+            {% else %}
+              <form method="post" action="/admin/organisations/{{ organisation.id }}/restore" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="mini" type="submit">Restore</button></form>
+              <a class="mini" href="/admin/organisations/{{ organisation.id }}/delete">Review permanent deletion</a>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
       {% else %}
-      <tr><td colspan="3" class="empty">No customer organisations are configured.</td></tr>
+      <tr><td colspan="5" class="empty">No {{ organisation_status }} customer organisations.</td></tr>
       {% endfor %}
     </tbody>
   </table>

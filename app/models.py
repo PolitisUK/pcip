@@ -72,6 +72,11 @@ class Organisation(Base):
     name: Mapped[str] = mapped_column(String(200), unique=True)
     slug: Mapped[str] = mapped_column(String(100), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
     users: Mapped[list[User]] = relationship(back_populates="organisation")
     memberships: Mapped[list[OrganisationMembership]] = relationship(
         back_populates="organisation"

@@ -661,6 +661,42 @@ h3 {
   align-items: center;
 }
 
+.actions,
+.tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.inline-form {
+  display: inline;
+  margin: 0;
+}
+
+.tabs {
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid #dbe5f0;
+}
+
+.tabs a {
+  padding: 9px 10px;
+  border-bottom: 3px solid transparent;
+  text-decoration: none;
+  color: var(--text-muted);
+}
+
+.tabs a[aria-current="page"] {
+  border-bottom-color: var(--brand-700);
+  color: var(--brand-900);
+  font-weight: 700;
+}
+
+.organisation-row--archived {
+  background: #f5f7fa;
+  color: var(--text-muted);
+}
+
 .field {
   display: grid;
   gap: 6px;
