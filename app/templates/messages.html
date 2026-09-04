@@ -11,8 +11,8 @@
 <section class="card section">
   <form method="get" class="message-filters">
     <div class="field"><label for="message-search">Search</label><input id="message-search" name="q" value="{{ q }}" placeholder="Participant, reference or study"></div>
-    <div class="field"><label for="message-study">Study</label><select id="message-study" name="study_id"><option value="">All accessible studies</option>{% for study in studies %}<option value="{{ study.id }}" {% if study.id == study_id %}selected{% endif %}>{{ study.title }}</option>{% endfor %}</select></div>
-    <div class="field"><label for="message-status">Status</label><select id="message-status" name="status_filter"><option value="">All conversations</option><option value="unread" {% if status_filter == 'unread' %}selected{% endif %}>Needs a response</option></select></div>
+    <div class="field"><label for="message-study">Study</label><select id="message-study" name="study_id"><option value="" {% if study_id is none %}selected{% endif %}>All accessible studies</option>{% for study in studies %}<option value="{{ study.id }}" {% if study.id == study_id %}selected{% endif %}>{{ study.title }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="message-status">Status</label><select id="message-status" name="status_filter"><option value="" {% if not status_filter %}selected{% endif %}>All conversations</option><option value="unread" {% if status_filter == 'unread' %}selected{% endif %}>Needs a response</option></select></div>
     <button>Filter messages</button>
   </form>
 </section>
