@@ -129,7 +129,7 @@ No physical iOS or Android device was connected. The available iPhone 17 Pro
   `applinks:<approved-host>` entitlement.
 - **Android App Links:** the same approved HTTPS host must serve
   `/.well-known/assetlinks.json`, binding
-  `uk.co.politisltd.participant_app` to the release signing-certificate SHA-256
+  `uk.co.politisltd.citizencentric.participant` to the release signing-certificate SHA-256
   fingerprint; the manifest must declare the matching verified HTTPS intent
   filter.
 - **Flutter:** the app must validate that host and `/join-study` path before

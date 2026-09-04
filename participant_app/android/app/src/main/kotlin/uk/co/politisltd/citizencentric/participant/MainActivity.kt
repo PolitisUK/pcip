@@ -1,4 +1,4 @@
-package uk.co.politisltd.participant_app
+package uk.co.politisltd.citizencentric.participant
 
 import io.flutter.embedding.android.FlutterActivity
 
