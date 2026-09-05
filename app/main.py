@@ -106,6 +106,7 @@ from .study_consent import (
     bind_invitation_to_current_bundle,
     create_or_reuse_current_bundle,
     current_bundle_documents,
+    validate_document_metadata,
     require_bound_documents,
 )
 from .methodology import (
@@ -3521,6 +3522,26 @@ def update_study_governance(
     selected_features = {value for value in enabled_features_values if value in FEATURES}
     if set(enabled_features_values) != selected_features:
         raise HTTPException(400, "Invalid participant feature.")
+    try:
+        validate_document_metadata({
+            "participant_information": {
+                "reference": participant_information_reference.strip(),
+                "version": participant_information_version.strip(),
+                "effective_date": participant_information_effective_date.strip(),
+            },
+            "privacy_notice": {
+                "reference": privacy_notice_reference.strip(),
+                "version": privacy_notice_version.strip(),
+                "effective_date": privacy_notice_effective_date.strip(),
+            },
+            "consent_text": {
+                "reference": consent_text_reference.strip(),
+                "version": consent_text_version.strip(),
+                "effective_date": consent_text_effective_date.strip(),
+            },
+        })
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
     governance = governance_for_study(db, s)
     if governance is None:
         governance = StudyGovernance(organisation_id=s.organisation_id, study_id=s.id)

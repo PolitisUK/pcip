@@ -1785,6 +1785,121 @@ def _controller_governance_payload(version: str = '1.0') -> dict[str, str]:
     }
 
 
+def _governance_write_counts() -> tuple[int, int, int, int, int]:
+    from app.models import (
+        AuditEvent,
+        StudyConsentBundle,
+        StudyConsentBundleDocument,
+        StudyConsentDocument,
+        StudyGovernance,
+    )
+
+    with SessionLocal() as db:
+        return tuple(
+            db.scalar(select(func.count(model.id)))
+            for model in (
+                StudyGovernance,
+                StudyConsentDocument,
+                StudyConsentBundle,
+                StudyConsentBundleDocument,
+                AuditEvent,
+            )
+        )
+
+
+def test_governance_document_metadata_limits_are_validated_before_writes():
+    from app.models import StudyGovernance
+
+    with client:
+        auth()
+        project = post_with_csrf(
+            '/projects',
+            data={
+                'title': 'Metadata validation project',
+                'code': unique_value('MDVP').upper(),
+                'description': '',
+                'status_value': 'draft',
+            },
+            follow_redirects=False,
+        )
+        project_id = int(project.headers['location'].rsplit('/', 1)[-1])
+        study = post_with_csrf(
+            f'/projects/{project_id}/studies',
+            data={
+                'title': 'Metadata validation study',
+                'code': unique_value('MDVS').upper(),
+                'description': '',
+                'methodology': 'diary',
+                'status_value': 'draft',
+            },
+            follow_redirects=False,
+        )
+        study_id = int(study.headers['location'].rsplit('/', 1)[-1])
+
+        valid = _controller_governance_payload()
+        for prefix in ('participant_information', 'privacy_notice', 'consent_text'):
+            valid[f'{prefix}_reference'] = 'r' * 500
+            valid[f'{prefix}_version'] = 'v' * 80
+            valid[f'{prefix}_effective_date'] = 'd' * 30
+
+        before_first_rejection = _governance_write_counts()
+        first_rejection = dict(valid)
+        first_rejection['participant_information_effective_date'] = 'd' * 31
+        rejected = post_with_csrf(
+            f'/studies/{study_id}/governance', data=first_rejection, follow_redirects=False,
+        )
+        assert rejected.status_code == 400
+        assert rejected.json()['detail'] == (
+            'Participant information effective date must be 30 characters or fewer.'
+        )
+        assert _governance_write_counts() == before_first_rejection
+
+        saved = post_with_csrf(
+            f'/studies/{study_id}/governance', data=valid, follow_redirects=False,
+        )
+        assert saved.status_code == 303
+        detail = client.get(saved.headers['location'])
+        assert detail.status_code == 200
+        for prefix in ('participant_information', 'privacy_notice', 'consent_text'):
+            assert f'name="{prefix}_reference" maxlength="500"' in detail.text
+            assert f'name="{prefix}_version" maxlength="80"' in detail.text
+            assert f'name="{prefix}_effective_date" maxlength="30"' in detail.text
+
+        with SessionLocal() as db:
+            governance = db.scalar(select(StudyGovernance).where(StudyGovernance.study_id == study_id))
+            assert governance is not None
+            original_metadata = {
+                field: getattr(governance, field)
+                for field in (
+                    'participant_information_reference',
+                    'participant_information_version',
+                    'participant_information_effective_date',
+                )
+            }
+
+        for field, maximum, label in (
+            ('participant_information_reference', 500, 'reference'),
+            ('participant_information_version', 80, 'version'),
+            ('participant_information_effective_date', 30, 'effective date'),
+        ):
+            before_update_rejection = _governance_write_counts()
+            invalid_update = dict(valid)
+            invalid_update[field] = 'x' * (maximum + 1)
+            rejected = post_with_csrf(
+                f'/studies/{study_id}/governance', data=invalid_update, follow_redirects=False,
+            )
+            assert rejected.status_code == 400
+            assert f'Participant information {label} must be {maximum} characters or fewer.' in rejected.json()['detail']
+            assert _governance_write_counts() == before_update_rejection
+            with SessionLocal() as db:
+                governance = db.scalar(select(StudyGovernance).where(StudyGovernance.study_id == study_id))
+                assert governance is not None
+                assert {
+                    field: getattr(governance, field)
+                    for field in original_metadata
+                } == original_metadata
+
+
 def test_participant_api_exposes_scoped_document_references_and_snapshots_consent_evidence():
     from app.models import OutboxEmail, ParticipantInvitation
 
@@ -7892,6 +8007,24 @@ def test_access_logging_redacts_raw_invitation_tokens():
     rendered = record.getMessage()
     assert "raw-token-must-not-appear" not in rendered
     assert "token=[REDACTED]&safe=value" in rendered
+
+
+def test_database_exceptions_hide_bound_parameters():
+    from sqlalchemy.exc import StatementError
+    from app.db import engine
+
+    sensitive_body = 'controller-supplied consent document content'
+    error = StatementError(
+        'Database operation failed.',
+        'INSERT INTO study_consent_documents (body) VALUES (:body)',
+        {'body': sensitive_body},
+        RuntimeError('database rejected the operation'),
+        hide_parameters=engine.hide_parameters,
+    )
+
+    assert engine.hide_parameters is True
+    assert sensitive_body not in str(error)
+    assert 'INSERT INTO study_consent_documents' in str(error)
 
 
 def test_participant_api_studies_requires_valid_bearer_and_returns_www_authenticate_header():
