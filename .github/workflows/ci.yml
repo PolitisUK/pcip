@@ -53,6 +53,8 @@ jobs:
           alembic upgrade head
           alembic current
           alembic check
+      - name: Exercise governance metadata validation on PostgreSQL
+        run: PYTHONPATH=. pytest -q tests/test_postgres_governance_metadata.py
 
   security:
     runs-on: ubuntu-latest
