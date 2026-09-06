@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import struct
+import zlib
 from pathlib import Path
 from tempfile import gettempdir
 from uuid import uuid4
@@ -207,10 +209,12 @@ def test_login_uses_transparent_citizen_centric_wordmark():
     ]
     for template_name in public_templates:
         template = Path('app/templates', template_name).read_text()
-        assert '/static/citizen-centric-logo.png' in template
         if template_name == '_public_footer.html':
-            assert 'role="img" aria-label="Citizen Centric by Politis"' in template
+            assert '/static/citizen-centric-footer-wordmark-v2.png' in template
+            assert 'alt="Citizen Centric by Politis"' in template
+            assert '/static/citizen-centric-logo.png' not in template
         else:
+            assert '/static/citizen-centric-logo.png' in template
             assert 'alt="Citizen Centric by Politis"' in template
 
     dockerfile = Path('Dockerfile').read_text()
@@ -220,18 +224,63 @@ def test_login_uses_transparent_citizen_centric_wordmark():
 def test_public_footer_uses_a_visible_high_contrast_wordmark_without_a_png_mask():
     css = Path('app/static/app.css').read_text()
     footer = Path('app/templates/_public_footer.html').read_text()
+    footer_asset = Path('app/static/citizen-centric-footer-wordmark-v2.png')
 
-    assert 'brand-logo--on-blue' not in footer
-    assert 'role="img" aria-label="Citizen Centric by Politis"' in footer
+    assert 'citizen-centric-footer-wordmark-v2.png' in footer
+    assert 'footer-wordmark-image' in footer
+    assert 'width="900" height="204"' in footer
+    assert 'brand-logo--wordmark' not in footer
+    assert 'footer-wordmark"' not in footer
     assert '.public-nav a,\n.public-footer a' not in css
     assert '.public-footer-brand p {\n  max-width: 390px;\n  margin: 22px 0 0;\n  color: #e5efff;' in css
     assert '.public-footer-group h2 {\n  margin: 0 0 6px;\n  color: #fff;' in css
     assert '.public-footer-bottom small {\n  color: #e5efff;' in css
     assert css.index('.public-footer a {') > css.index('.public-footer {')
-    assert '.public-footer .brand-logo--wordmark {\n  width: 100%;\n  height: auto;' in css
-    assert 'filter: brightness(0) invert(1);' in css
+    assert '.public-footer .footer-wordmark-image {' in css
+    footer_css = css[css.index('.public-footer .footer-wordmark-image {'):css.index('.text-link {')]
+    assert 'filter:' not in footer_css
     assert '-webkit-mask:' not in css
     assert 'mask:' not in css
+    assert footer_asset.exists()
+    png = footer_asset.read_bytes()
+    assert png.startswith(b'\x89PNG\r\n\x1a\n')
+    assert png[25] == 6  # PNG RGBA colour type.
+
+    # The dedicated footer asset must retain transparent corners rather than
+    # shipping a white rectangular background into the blue footer.
+    cursor = 8
+    chunks = {}
+    idat = []
+    while cursor < len(png):
+        length = struct.unpack('>I', png[cursor:cursor + 4])[0]
+        name = png[cursor + 4:cursor + 8]
+        data = png[cursor + 8:cursor + 8 + length]
+        chunks[name] = data
+        if name == b'IDAT':
+            idat.append(data)
+        cursor += length + 12
+    width, height, bit_depth, color_type = struct.unpack('>IIBB', chunks[b'IHDR'][:10])
+    assert (width, height, bit_depth, color_type) == (900, 204, 8, 6)
+    decoded = zlib.decompress(b''.join(idat))
+    assert decoded[0] == 0  # Asset uses unfiltered RGBA rows for stable inspection.
+    assert decoded[4] == 0  # Top-left pixel alpha is transparent.
+    last_row = (1 + width * 4) * (height - 1)
+    assert decoded[last_row] == 0
+    assert decoded[last_row + width * 4] == 0  # Bottom-right alpha is transparent.
+
+
+def test_all_public_pages_render_the_shared_dedicated_footer_wordmark():
+    public_paths = [
+        '/', '/join-study', '/privacy', '/legal', '/support', '/contact',
+        '/data-rights', '/consent', '/cookies', '/terms', '/accessibility',
+        '/acceptable-use',
+    ]
+    with client:
+        client.cookies.clear()
+        for path in public_paths:
+            page = client.get(path)
+            assert page.status_code == 200, path
+            assert 'src="/static/citizen-centric-footer-wordmark-v2.png"' in page.text, path
 
 
 def test_public_homepage_is_available_without_authentication_and_keeps_workspace_data_private():
@@ -4424,9 +4473,12 @@ def test_service_worker_caches_only_explicit_public_assets():
     script = response.text
 
     assert 'PUBLIC_STATIC_ASSETS' in script
+    assert 'citizen-centric-public-static-v3' in script
     assert '/static/offline.html' in script
-    assert '/static/citizen-centric-logo.png' in script
+    assert '/static/citizen-centric-footer-wordmark-v2.png' in script
     assert '/static/citizen-centric-logo-compact.png' in script
+    assert 'cacheName !== CACHE_NAME' in script
+    assert 'caches.delete(cacheName)' in script
     assert 'request.mode === "navigate"' in script
 
     sensitive_paths = [

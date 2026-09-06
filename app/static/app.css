@@ -1826,21 +1826,13 @@ button.is-loading::after,
   text-decoration: none;
 }
 
-.public-footer .footer-wordmark {
+.public-footer .footer-wordmark-image {
   display: block;
   width: min(280px, 100%);
-}
-
-.public-footer .brand-logo--wordmark {
-  width: 100%;
+  max-width: 100%;
   height: auto;
-  /*
-   * Keep the transparent PNG as an image rather than a CSS mask.  iOS Safari
-   * can report PNG-mask support while failing to apply the mask, which leaves
-   * only the white fallback rectangle visible.  Filtering the image preserves
-   * its alpha channel and gives the footer a reliably high-contrast wordmark.
-   */
-  filter: brightness(0) invert(1);
+  background: transparent;
+  object-fit: contain;
 }
 
 .text-link {

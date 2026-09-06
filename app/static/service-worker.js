@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "citizen-centric-public-static-v2";
+const CACHE_NAME = "citizen-centric-public-static-v3";
 const OFFLINE_URL = "/static/offline.html";
 
 // Legacy asset reference retained temporarily for test compatibility only.
@@ -9,7 +9,7 @@ const OFFLINE_URL = "/static/offline.html";
 
 const PUBLIC_STATIC_ASSETS = [
   OFFLINE_URL,
-  "/static/citizen-centric-logo.png",
+  "/static/citizen-centric-footer-wordmark-v2.png",
   "/static/citizen-centric-logo-compact.png"
 ];
 
