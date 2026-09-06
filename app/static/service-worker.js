@@ -9,6 +9,7 @@ const OFFLINE_URL = "/static/offline.html";
 
 const PUBLIC_STATIC_ASSETS = [
   OFFLINE_URL,
+  "/static/citizen-centric-logo.png",
   "/static/citizen-centric-footer-wordmark-v2.png",
   "/static/citizen-centric-logo-compact.png"
 ];

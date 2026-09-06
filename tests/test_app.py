@@ -4475,6 +4475,9 @@ def test_service_worker_caches_only_explicit_public_assets():
     assert 'PUBLIC_STATIC_ASSETS' in script
     assert 'citizen-centric-public-static-v3' in script
     assert '/static/offline.html' in script
+    offline_html = Path('app/static/offline.html').read_text()
+    assert '/static/citizen-centric-logo.png' in offline_html
+    assert '/static/citizen-centric-logo.png' in script
     assert '/static/citizen-centric-footer-wordmark-v2.png' in script
     assert '/static/citizen-centric-logo-compact.png' in script
     assert 'cacheName !== CACHE_NAME' in script
