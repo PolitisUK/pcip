@@ -2,6 +2,21 @@
 {% block title %}Entries · {{ project.title }}{% endblock %}
 {% block page_description %}<p class="page-description">Read complete participant entries in context. Filters only search research material you are authorised to access.</p>{% endblock %}
 {% block content %}
+<style>
+.entry-card {
+  min-width: 0;
+  max-width: 100%;
+}
+.entry-card__header > div,
+.entry-card__body {
+  min-width: 0;
+  max-width: 100%;
+}
+.entry-card__body {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+</style>
 <p class="breadcrumbs"><a href="/projects/{{ project.id }}/workspace">{{ project.title }} research workspace</a> <span aria-hidden="true">/</span> Entries</p>
 {% set workspace_section = 'entries' %}{% include "_workspace_nav.html" %}
 <section class="card card--data section"><form method="get" class="filter-grid"><div class="field"><label for="entry-search">Search entry text or prompt</label><input id="entry-search" name="q" value="{{ filters.q }}"></div><div class="field"><label for="entry-participant">Participant</label><select id="entry-participant" name="participant_id"><option value="">All participants</option>{% for participant in participant_rows %}<option value="{{ participant.id }}" {% if filters.participant_id == participant.id %}selected{% endif %}>{{ participant.reference }} · {{ participant.name }}</option>{% endfor %}</select></div><div class="field"><label for="entry-prompt">Prompt</label><select id="entry-prompt" name="prompt_id"><option value="">All prompts</option>{% for prompt in prompts %}<option value="{{ prompt.id }}" {% if filters.prompt_id == prompt.id %}selected{% endif %}>{{ prompt.title }}</option>{% endfor %}</select></div><div class="field"><label for="entry-code">Code / theme</label><select id="entry-code" name="code"><option value="">All codes</option>{% for item in codes %}<option {% if filters.code == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select></div><div class="field"><label for="entry-from">From</label><input id="entry-from" type="date" name="date_from" value="{{ filters.date_from }}"></div><div class="field"><label for="entry-to">To</label><input id="entry-to" type="date" name="date_to" value="{{ filters.date_to }}"></div><div class="field"><label for="entry-evidence">Evidence</label><select id="entry-evidence" name="evidence"><option value="all" {% if filters.evidence == 'all' %}selected{% endif %}>Any</option><option value="yes" {% if filters.evidence == 'yes' %}selected{% endif %}>With media or files</option><option value="no" {% if filters.evidence == 'no' %}selected{% endif %}>Without media or files</option></select></div><div class="field"><label for="entry-order">Order</label><select id="entry-order" name="order"><option value="newest" {% if filters.order == 'newest' %}selected{% endif %}>Newest first</option><option value="oldest" {% if filters.order == 'oldest' %}selected{% endif %}>Oldest first</option></select></div><div class="filter-actions"><button>Apply filters</button><a class="btn secondary" href="/projects/{{ project.id }}/workspace/entries">Clear</a></div></form></section>
