@@ -38,8 +38,8 @@ before the evidence row is removed. A storage or database failure remains
   Pseudonymised information remains personal data and is not treated as
   anonymous by this policy.
 - A minimised privacy lifecycle record may remain for accountability. It has no
-  participant content or free-text reason; account deletion clears its live
-  participant link.
+  participant content or free-text reason; account deletion clears every live
+  participant link, including any earlier study-level privacy-request record.
 - Protected production backup copies can remain for up to **14 days**. Current
   evidence is Azure PostgreSQL PITR retention of 14 days and Azure Blob and
   container soft-delete retention of 14 days. Blob versioning and App Service
@@ -71,6 +71,11 @@ keep users informed where completion takes time. This implementation satisfies
 the initiation requirement; legal review must confirm the statements and
 exceptions for the planned distribution context. Source: [Apple account
 deletion guidance](https://developer.apple.com/support/offering-account-deletion-in-your-app/).
+
+The current released iOS build uses the existing participant deletion API
+contract. The backend deletion lifecycle removes submitted active-system data
+as well as an unused account, so this behaviour is compatible with the
+released app and requires only a backend/web deployment.
 
 ## Approval statement
 

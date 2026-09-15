@@ -256,10 +256,25 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
         )
 
         if request.scope == "account":
+            # A participant may already have made a study-scoped withdrawal or
+            # deletion request before choosing organisation-scoped account
+            # deletion through another still-valid study invitation.  Retain
+            # those minimised lifecycle records, but clear every live identity
+            # link before removing the participant profile.  Clearing only the
+            # current request would leave an earlier record pointing at the
+            # participant and can violate the database foreign key on
+            # PostgreSQL.
+            db.execute(
+                update(ParticipantPrivacyRequest)
+                .where(
+                    ParticipantPrivacyRequest.organisation_id == organisation_id,
+                    ParticipantPrivacyRequest.participant_id == participant_id,
+                )
+                .values(participant_id=None)
+            )
             participant = db.get(Participant, participant_id)
             if participant is not None and participant.organisation_id == organisation_id:
                 db.delete(participant)
-            request.participant_id = None
 
         request.categories_json = json.dumps(ACTIVE_DELETION_CATEGORIES)
         request.status = "completed"
