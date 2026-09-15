@@ -52,6 +52,7 @@
   </div>
   <div class="section">
     <p class="muted">Related records: enrolments {{ privacy_counts.enrolments }}, responses {{ privacy_counts.responses }}, messages {{ privacy_counts.messages }}, invitations {{ privacy_counts.invitations }}, evidence {{ privacy_counts.evidence }}</p>
+    <p class="muted">Deletion removes the participant account/profile and associated identifiable active-system data, including related submissions. It may pause only where a documented lawful retention exception requires controller review. Anonymisation is a separate action.</p>
     <form method="post" action="/participants/{{ participant.id }}/privacy/delete-request" class="inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="secondary">Start privacy action</button>
@@ -63,9 +64,8 @@
       <div class="field">
         <label>Action</label>
         <select name="mode">
-          <option value="auto">Auto (delete when safe, anonymise when related records exist)</option>
+          <option value="delete">Delete participant and associated personal data</option>
           <option value="anonymise">Anonymise</option>
-          <option value="delete">Delete (only when no related records exist)</option>
         </select>
       </div>
       <button class="danger" data-confirm="Confirm privacy action for this participant?">Execute privacy action</button>
