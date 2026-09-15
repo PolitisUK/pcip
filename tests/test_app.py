@@ -3290,7 +3290,7 @@ def test_researcher_is_blocked_from_admin_privacy_functions():
 
 
 def test_privacy_deletion_workflow_hard_deletes_without_related_records():
-    from app.models import AuditEvent, Participant
+    from app.models import Participant, ParticipantPrivacyRequest
     with client:
         client.cookies.clear()
         auth()
@@ -3310,6 +3310,10 @@ def test_privacy_deletion_workflow_hard_deletes_without_related_records():
             follow_redirects=False,
         )
         participant_id = int(created.headers['location'].rsplit('/', 1)[-1])
+        with SessionLocal() as db:
+            participant_row = db.get(Participant, participant_id)
+            assert participant_row is not None
+            organisation_id = participant_row.organisation_id
 
         start = post_with_csrf(f'/participants/{participant_id}/privacy/delete-request', follow_redirects=False)
         assert start.status_code == 303
@@ -3317,6 +3321,8 @@ def test_privacy_deletion_workflow_hard_deletes_without_related_records():
         detail = client.get(f'/participants/{participant_id}')
         token_match = re.search(r'name="workflow_token" value="([^"]+)"', detail.text)
         assert token_match is not None
+        assert 'Delete participant and associated personal data' in detail.text
+        assert 'Auto (delete when safe, anonymise when related records exist)' not in detail.text
         workflow_token = token_match.group(1)
 
         execute = post_with_csrf(
@@ -3330,15 +3336,21 @@ def test_privacy_deletion_workflow_hard_deletes_without_related_records():
         with SessionLocal() as db:
             row = db.get(Participant, participant_id)
             assert row is None
-            event = db.scalar(
-                select(AuditEvent)
-                .where(AuditEvent.action == 'privacy.participant_deleted', AuditEvent.entity_id == str(participant_id))
-                .order_by(AuditEvent.id.desc())
+            lifecycle = db.scalar(
+                select(ParticipantPrivacyRequest)
+                .where(
+                    ParticipantPrivacyRequest.organisation_id == organisation_id,
+                    ParticipantPrivacyRequest.request_type == 'deletion',
+                    ParticipantPrivacyRequest.scope == 'account',
+                )
+                .order_by(ParticipantPrivacyRequest.id.desc())
             )
-            assert event is not None
+            assert lifecycle is not None
+            assert lifecycle.status == 'completed'
+            assert lifecycle.participant_id is None
 
 
-def test_privacy_deletion_workflow_anonymises_when_related_records_exist():
+def test_privacy_anonymisation_workflow_remains_explicit_when_related_records_exist():
     from app.models import AuditEvent, Participant
     with client:
         client.cookies.clear()
@@ -3371,7 +3383,7 @@ def test_privacy_deletion_workflow_anonymises_when_related_records_exist():
 
         execute = post_with_csrf(
             f'/participants/{participant_id}/privacy/delete-execute',
-            data={'workflow_token': workflow_token, 'mode': 'auto'},
+            data={'workflow_token': workflow_token, 'mode': 'anonymise'},
             follow_redirects=False,
         )
         assert execute.status_code == 303
@@ -3389,6 +3401,223 @@ def test_privacy_deletion_workflow_anonymises_when_related_records_exist():
                 .order_by(AuditEvent.id.desc())
             )
             assert event is not None
+
+
+def test_researcher_privacy_delete_uses_account_lifecycle_after_submissions_and_prior_request():
+    """Website deletion must use the same full account lifecycle as the app."""
+    from app.models import (
+        ActivityResponse,
+        AuditEvent,
+        EvidenceFile,
+        Participant,
+        ParticipantAppAccessCode,
+        ParticipantInvitation,
+        ParticipantMessage,
+        ParticipantPrivacyRequest,
+        PublicAuthSession,
+        StudyEnrolment,
+    )
+    from app.security import token_hash
+
+    context = _prepare_participant_api_activity_response_context('researcher-privacy-delete')
+    unaffected = _prepare_participant_api_activity_response_context('researcher-privacy-untouched')
+    with client:
+        submitted = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'Synthetic submitted researcher deletion response', 'choices': []},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert submitted.status_code == 200
+        response_id = submitted.json()['response_id']
+
+    with SessionLocal() as db:
+        historical = ParticipantPrivacyRequest(
+            organisation_id=context['organisation_id'],
+            participant_id=context['participant_id'],
+            study_id=context['study_id'],
+            request_type='withdrawal',
+            scope='study',
+            status='completed',
+            categories_json='["study_access"]',
+            completed_at=now(),
+        )
+        db.add(historical)
+        db.add(ParticipantMessage(
+            organisation_id=context['organisation_id'], study_id=context['study_id'],
+            participant_id=context['participant_id'], sender_type='participant',
+            body='Synthetic researcher-deletion message',
+        ))
+        db.add(EvidenceFile(
+            organisation_id=context['organisation_id'], study_id=context['study_id'],
+            activity_id=context['activity_id'], participant_id=context['participant_id'],
+            response_id=response_id, original_name='synthetic-delete.txt',
+            stored_name='synthetic-researcher-delete-evidence.txt', content_type='text/plain',
+        ))
+        db.add(ParticipantAppAccessCode(
+            organisation_id=context['organisation_id'], participant_invitation_id=context['invitation_id'],
+            code_hash=token_hash('synthetic-researcher-delete-code'),
+            expires_at=now() + timedelta(minutes=30),
+        ))
+        db.commit()
+        historical_id = historical.id
+
+    with client:
+        client.cookies.clear()
+        assert auth().status_code == 303
+        started = post_with_csrf(
+            f"/participants/{context['participant_id']}/privacy/delete-request",
+            follow_redirects=False,
+        )
+        assert started.status_code == 303
+        detail = client.get(f"/participants/{context['participant_id']}")
+        token_match = re.search(r'name="workflow_token" value="([^"]+)"', detail.text)
+        assert token_match is not None
+        deleted = post_with_csrf(
+            f"/participants/{context['participant_id']}/privacy/delete-execute",
+            data={'workflow_token': token_match.group(1), 'mode': 'delete'},
+            follow_redirects=False,
+        )
+        assert deleted.status_code == 303
+        assert deleted.headers['location'] == '/participants'
+        assert client.get(
+            '/api/v1/participant/activities',
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        ).status_code == 401
+
+    with SessionLocal() as db:
+        assert db.get(Participant, context['participant_id']) is None
+        assert db.get(Participant, unaffected['participant_id']) is not None
+        assert db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(EvidenceFile).where(EvidenceFile.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(ParticipantMessage).where(ParticipantMessage.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(StudyEnrolment).where(StudyEnrolment.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(ParticipantAppAccessCode).where(ParticipantAppAccessCode.participant_invitation_id == context['invitation_id'])) is None
+        assert db.scalar(select(PublicAuthSession).where(PublicAuthSession.participant_invitation_id == context['invitation_id'])) is None
+        assert db.get(ParticipantPrivacyRequest, historical_id).participant_id is None
+        lifecycle_rows = db.scalars(
+            select(ParticipantPrivacyRequest).where(
+                ParticipantPrivacyRequest.organisation_id == context['organisation_id'],
+                ParticipantPrivacyRequest.participant_id.is_(None),
+                ParticipantPrivacyRequest.request_type == 'deletion',
+            )
+        ).all()
+        assert any(row.status == 'completed' and row.scope == 'account' for row in lifecycle_rows)
+        assert db.scalar(select(AuditEvent).where(
+            AuditEvent.action == 'privacy.participant_anonymised',
+            AuditEvent.entity_id == str(context['participant_id']),
+        )) is None
+
+
+def test_researcher_privacy_delete_reports_retention_review_without_claiming_success():
+    from app.models import Participant, ParticipantPrivacyRequest, StudyGovernance
+
+    context = _prepare_participant_api_activity_response_context('researcher-privacy-retention')
+    with SessionLocal() as db:
+        governance = db.scalar(select(StudyGovernance).where(StudyGovernance.study_id == context['study_id']))
+        if governance is None:
+            governance = StudyGovernance(
+                organisation_id=context['organisation_id'], study_id=context['study_id'],
+            )
+            db.add(governance)
+        original_exception = governance.deletion_retention_exception or ''
+        governance.deletion_retention_exception = 'Controller retention decision requires review.'
+        db.commit()
+
+    with client:
+        client.cookies.clear()
+        assert auth().status_code == 303
+        assert post_with_csrf(
+            f"/participants/{context['participant_id']}/privacy/delete-request",
+            follow_redirects=False,
+        ).status_code == 303
+        detail = client.get(f"/participants/{context['participant_id']}")
+        token_match = re.search(r'name="workflow_token" value="([^"]+)"', detail.text)
+        assert token_match is not None
+        result = post_with_csrf(
+            f"/participants/{context['participant_id']}/privacy/delete-execute",
+            data={'workflow_token': token_match.group(1), 'mode': 'delete'},
+            follow_redirects=False,
+        )
+        assert result.status_code == 303
+        assert result.headers['location'] == f"/participants/{context['participant_id']}#privacy"
+        page = client.get(result.headers['location'])
+        assert 'requires controller review before deletion can complete' in page.text
+        assert 'were deleted' not in page.text
+
+    with SessionLocal() as db:
+        participant_row = db.get(Participant, context['participant_id'])
+        assert participant_row is not None
+        request_row = db.scalar(select(ParticipantPrivacyRequest).where(
+            ParticipantPrivacyRequest.organisation_id == context['organisation_id'],
+            ParticipantPrivacyRequest.participant_id == context['participant_id'],
+            ParticipantPrivacyRequest.request_type == 'deletion',
+        ))
+        assert request_row is not None
+        assert request_row.status == 'requires_controller_review'
+        governance = db.scalar(select(StudyGovernance).where(StudyGovernance.study_id == context['study_id']))
+        assert governance is not None
+        governance.deletion_retention_exception = original_exception
+        db.commit()
+
+
+def test_researcher_privacy_delete_storage_failure_is_not_reported_as_success(monkeypatch):
+    from app.models import ActivityResponse, EvidenceFile, Participant, ParticipantPrivacyRequest
+    import app.main as main_module
+
+    context = _prepare_participant_api_activity_response_context('researcher-privacy-storage-failure')
+    with SessionLocal() as db:
+        response_row = ActivityResponse(
+            organisation_id=context['organisation_id'], study_id=context['study_id'],
+            activity_id=context['activity_id'], participant_id=context['participant_id'], value_json='{}',
+        )
+        db.add(response_row)
+        db.flush()
+        db.add(EvidenceFile(
+            organisation_id=context['organisation_id'], study_id=context['study_id'],
+            activity_id=context['activity_id'], participant_id=context['participant_id'],
+            response_id=response_row.id, original_name='retry.txt',
+            stored_name='synthetic-researcher-retry.txt', content_type='text/plain',
+        ))
+        db.commit()
+
+    def unavailable(_key):
+        raise RuntimeError('storage unavailable')
+
+    monkeypatch.setattr(main_module.storage, 'delete', unavailable)
+    with client:
+        client.cookies.clear()
+        assert auth().status_code == 303
+        assert post_with_csrf(
+            f"/participants/{context['participant_id']}/privacy/delete-request",
+            follow_redirects=False,
+        ).status_code == 303
+        detail = client.get(f"/participants/{context['participant_id']}")
+        token_match = re.search(r'name="workflow_token" value="([^"]+)"', detail.text)
+        assert token_match is not None
+        result = post_with_csrf(
+            f"/participants/{context['participant_id']}/privacy/delete-execute",
+            data={'workflow_token': token_match.group(1), 'mode': 'delete'},
+            follow_redirects=False,
+        )
+        assert result.status_code == 303
+        assert result.headers['location'] == f"/participants/{context['participant_id']}#privacy"
+        page = client.get(result.headers['location'])
+        assert 'Deletion is being safely retried and is not yet complete' in page.text
+        assert 'were deleted' not in page.text
+
+    with SessionLocal() as db:
+        assert db.get(Participant, context['participant_id']) is not None
+        request_row = db.scalar(select(ParticipantPrivacyRequest).where(
+            ParticipantPrivacyRequest.organisation_id == context['organisation_id'],
+            ParticipantPrivacyRequest.participant_id == context['participant_id'],
+            ParticipantPrivacyRequest.request_type == 'deletion',
+        ))
+        assert request_row is not None
+        assert request_row.status == 'failed_retrying'
+        assert request_row.retriable is True
 
 
 def test_privacy_retention_apply_processes_configured_participants_and_audits():

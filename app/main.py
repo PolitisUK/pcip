@@ -4174,33 +4174,53 @@ def participant_delete_request(participant_id:int,request:Request,u=Depends(role
 
 
 @app.post("/participants/{participant_id}/privacy/delete-execute")
-def participant_delete_execute(participant_id:int,request:Request,workflow_token:str=Form(""),mode:str=Form("auto"),u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def participant_delete_execute(participant_id:int,request:Request,workflow_token:str=Form(""),mode:str=Form("delete"),u=Depends(roles("owner","admin")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id)
     expected = request.session.get(privacy_workflow_key(p.id))
     if not expected or not workflow_token or not secrets.compare_digest(expected, workflow_token):
         raise HTTPException(400, "Privacy deletion confirmation is missing or expired.")
     request.session.pop(privacy_workflow_key(p.id), None)
-    if mode not in {"auto", "delete", "anonymise"}:
+    if mode not in {"delete", "anonymise"}:
         raise HTTPException(400, "Invalid privacy action.")
-    counts = participant_related_counts(db, p.id, u.organisation_id)
-    has_related = participant_has_related_data(counts)
 
-    if mode == "delete" and has_related:
-        raise HTTPException(400, "Deletion is not available for participants with related records. Use anonymisation.")
-
-    applied = mode
-    if mode == "auto":
-        applied = "anonymise" if has_related else "delete"
-
-    if applied == "delete":
-        reference = p.reference
-        pid = p.id
-        db.delete(p)
-        audit(db,u.organisation_id,u.id,"privacy.participant_deleted","participant",pid,json.dumps({"reference": reference, "counts": counts}))
+    if mode == "delete":
+        # Match the participant-facing account-deletion lifecycle.  Access is
+        # revoked before potentially retryable external-storage work, and the
+        # lifecycle service removes participant-linked records rather than
+        # falling back to researcher-side anonymisation.
+        revoke_participant_access(
+            db,
+            organisation_id=u.organisation_id,
+            participant_id=p.id,
+            study_id=None,
+        )
+        p.consent_status = ConsentStatus.withdrawn.value
+        p.status = ParticipantStatus.withdrawn.value
+        privacy_request = ParticipantPrivacyRequest(
+            organisation_id=u.organisation_id,
+            participant_id=p.id,
+            study_id=None,
+            request_type="deletion",
+            scope="account",
+            status="received",
+        )
+        db.add(privacy_request)
+        db.flush()
+        request_id = privacy_request.id
         db.commit()
-        return RedirectResponse("/participants",303)
+        completed = process_deletion_request(db, storage, privacy_request)
+        current = db.get(ParticipantPrivacyRequest, request_id)
+        if completed:
+            set_flash(request, "success", "Participant account and associated active-system data were deleted.")
+            return RedirectResponse("/participants",303)
+        if current is not None and current.status == "requires_controller_review":
+            set_flash(request, "notice", "Participant access has ended. A documented retention exception requires controller review before deletion can complete.")
+        else:
+            set_flash(request, "notice", "Participant access has ended. Deletion is being safely retried and is not yet complete.")
+        return RedirectResponse(f"/participants/{participant_id}#privacy",303)
 
     anonymise_participant_record(p)
+    counts = participant_related_counts(db, p.id, u.organisation_id)
     audit(db,u.organisation_id,u.id,"privacy.participant_anonymised","participant",p.id,json.dumps({"counts": counts}))
     db.commit()
     return RedirectResponse(f"/participants/{p.id}#privacy",303)
