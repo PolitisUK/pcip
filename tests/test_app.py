@@ -10230,6 +10230,123 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         assert request_row.participant_id is None
 
 
+def test_participant_api_account_deletion_clears_historical_privacy_request_identity_links():
+    """A prior study request must not block a later account deletion.
+
+    The retained lifecycle records are deliberately minimised: they remain as
+    accountability evidence, but no longer point to the deleted participant.
+    This also exercises the PostgreSQL foreign-key path which cannot be
+    represented by a dangling historical privacy request.
+    """
+    from app.models import (
+        ActivityResponse,
+        EvidenceFile,
+        Participant,
+        ParticipantAppAccessCode,
+        ParticipantInvitation,
+        ParticipantMessage,
+        ParticipantPrivacyRequest,
+        PublicAuthSession,
+        StudyEnrolment,
+    )
+    from app.security import token_hash
+
+    context = _prepare_participant_api_activity_response_context('api-privacy-history-link')
+    unaffected = _prepare_participant_api_activity_response_context('api-privacy-history-unaffected')
+
+    # This is the same submitted-response route the released mobile client
+    # uses; the participant has consented in the context helper above.
+    with client:
+        submitted = client.post(
+            f"/api/v1/participant/activities/{context['activity_id']}/submit",
+            json={'answer': 'Synthetic submitted response', 'choices': []},
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert submitted.status_code == 200
+        response_id = submitted.json()['response_id']
+
+    with SessionLocal() as db:
+        historical = ParticipantPrivacyRequest(
+            organisation_id=context['organisation_id'],
+            participant_id=context['participant_id'],
+            study_id=context['study_id'],
+            request_type='withdrawal',
+            scope='study',
+            status='completed',
+            categories_json='["study_access"]',
+            completed_at=now(),
+        )
+        db.add(historical)
+        db.add(
+            ParticipantMessage(
+                organisation_id=context['organisation_id'],
+                study_id=context['study_id'],
+                participant_id=context['participant_id'],
+                sender_type='participant',
+                body='Synthetic participant message',
+            )
+        )
+        db.add(
+            EvidenceFile(
+                organisation_id=context['organisation_id'],
+                study_id=context['study_id'],
+                activity_id=context['activity_id'],
+                participant_id=context['participant_id'],
+                response_id=response_id,
+                original_name='synthetic-evidence.txt',
+                stored_name='synthetic-history-link-evidence.txt',
+                content_type='text/plain',
+            )
+        )
+        db.add(
+            ParticipantAppAccessCode(
+                organisation_id=context['organisation_id'],
+                participant_invitation_id=context['invitation_id'],
+                code_hash=token_hash('synthetic-history-link-code'),
+                expires_at=now() + timedelta(minutes=30),
+            )
+        )
+        db.commit()
+        historical_id = historical.id
+
+    with client:
+        response = client.post(
+            '/api/v1/participant/privacy/deletion-requests',
+            json={'mode_preference': 'delete', 'scope': 'account', 'confirmed': True},
+            headers={
+                'Authorization': f"Bearer {context['api_token']}",
+                'Idempotency-Key': 'deletion-history-link-1234',
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 202
+        assert response.json()['status'] == 'completed'
+        revoked_session = client.get(
+            '/api/v1/participant/activities',
+            headers={'Authorization': f"Bearer {context['api_token']}"},
+            follow_redirects=False,
+        )
+        assert revoked_session.status_code == 401
+
+    with SessionLocal() as db:
+        assert db.get(Participant, context['participant_id']) is None
+        assert db.get(Participant, unaffected['participant_id']) is not None
+        assert db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(EvidenceFile).where(EvidenceFile.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(ParticipantMessage).where(ParticipantMessage.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(StudyEnrolment).where(StudyEnrolment.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(ParticipantAppAccessCode).where(ParticipantAppAccessCode.participant_invitation_id == context['invitation_id'])) is None
+        assert db.scalar(select(PublicAuthSession).where(PublicAuthSession.participant_invitation_id == context['invitation_id'])) is None
+        historical = db.get(ParticipantPrivacyRequest, historical_id)
+        current = db.get(ParticipantPrivacyRequest, response.json()['request_id'])
+        assert historical is not None and historical.participant_id is None
+        assert current is not None and current.participant_id is None
+        assert historical.status == 'completed'
+        assert current.status == 'completed'
+
+
 def test_participant_api_account_deletion_rejects_cross_tenant_study_without_revoking_access():
     from app.models import Organisation, Participant, ParticipantInvitation, Project, Study, StudyEnrolment, User
 
