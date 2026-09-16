@@ -3318,6 +3318,18 @@ def page_url(request: Request, page: int) -> str:
     return f"{request.url.path}?{urlencode(params)}"
 
 
+def optional_positive_query_id(value: str | None, field: str) -> int | None:
+    """Normalise a blank optional selector without weakening ID validation."""
+    if value is None or not value.strip():
+        return None
+    if not re.fullmatch(r"[0-9]+", value.strip()):
+        raise HTTPException(422, f"{field} must be a positive integer.")
+    identifier = int(value.strip())
+    if identifier < 1:
+        raise HTTPException(422, f"{field} must be a positive integer.")
+    return identifier
+
+
 @app.get("/projects/{project_id}/workspace", response_class=HTMLResponse)
 def project_workspace(project_id: int, request: Request, u=Depends(current_user), db: Session = Depends(get_db)):
     project_row, studies = project_workspace_scope(db, u, project_id)
@@ -3338,19 +3350,21 @@ def project_workspace(project_id: int, request: Request, u=Depends(current_user)
 
 @app.get("/projects/{project_id}/workspace/entries", response_class=HTMLResponse)
 def project_workspace_entries_page(
-    project_id: int, request: Request, participant_id: int | None = Query(None, ge=1), prompt_id: int | None = Query(None, ge=1),
+    project_id: int, request: Request, participant_id: str | None = Query(None, max_length=20), prompt_id: str | None = Query(None, max_length=20),
     code: str = Query("", max_length=120), q: str = Query("", max_length=200), date_from: str = Query("", max_length=10), date_to: str = Query("", max_length=10),
     evidence: str = Query("all", pattern="^(all|yes|no)$"), order: str = Query("newest", pattern="^(newest|oldest)$"), page: int = Query(1, ge=1),
     u=Depends(current_user), db: Session = Depends(get_db),
 ):
     project_row, studies = project_workspace_scope(db, u, project_id)
-    items, total, pages = project_workspace_entries(db, u, studies, participant_id=participant_id, prompt_id=prompt_id, code=code, q=q, date_from=date_from, date_to=date_to, evidence=evidence, newest_first=order == "newest", page=page)
+    selected_participant_id = optional_positive_query_id(participant_id, "Participant")
+    selected_prompt_id = optional_positive_query_id(prompt_id, "Prompt")
+    items, total, pages = project_workspace_entries(db, u, studies, participant_id=selected_participant_id, prompt_id=selected_prompt_id, code=code, q=q, date_from=date_from, date_to=date_to, evidence=evidence, newest_first=order == "newest", page=page)
     study_ids = [row.id for row in studies]
     participant_rows = db.scalars(select(Participant).join(StudyEnrolment, StudyEnrolment.participant_id == Participant.id).where(Participant.organisation_id == u.organisation_id, StudyEnrolment.organisation_id == u.organisation_id, StudyEnrolment.study_id.in_(study_ids)).distinct().order_by(Participant.reference)).all() if study_ids else []
     prompts = db.scalars(select(Activity).where(Activity.organisation_id == u.organisation_id, Activity.study_id.in_(study_ids)).order_by(Activity.position, Activity.title)).all() if study_ids else []
     response_rows = db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id == u.organisation_id, ActivityResponse.study_id.in_(study_ids), ActivityResponse.status == "submitted").limit(5000)).all() if study_ids else []
     codes = [name for name, _ in code_counts(response_rows).most_common()]
-    return render(request, "research_entries.html", user=u, **_workspace_context(project_row, studies), items=items, total=total, pages=pages, page=page, previous_url=page_url(request, page - 1) if page > 1 else None, next_url=page_url(request, page + 1) if page < pages else None, participant_rows=participant_rows, prompts=prompts, codes=codes, filters={"participant_id": participant_id, "prompt_id": prompt_id, "code": code, "q": q, "date_from": date_from, "date_to": date_to, "evidence": evidence, "order": order})
+    return render(request, "research_entries.html", user=u, **_workspace_context(project_row, studies), items=items, total=total, pages=pages, page=page, previous_url=page_url(request, page - 1) if page > 1 else None, next_url=page_url(request, page + 1) if page < pages else None, participant_rows=participant_rows, prompts=prompts, codes=codes, filters={"participant_id": selected_participant_id, "prompt_id": selected_prompt_id, "code": code, "q": q, "date_from": date_from, "date_to": date_to, "evidence": evidence, "order": order})
 
 
 @app.get("/projects/{project_id}/workspace/participants", response_class=HTMLResponse)
