@@ -206,6 +206,25 @@ def test_worker_calls_only_the_existing_lookup_cli_and_emits_non_sensitive_resul
     assert json.loads(rendered)["result"]["user_id"] == 7
 
 
+def test_worker_calls_only_fixed_alembic_lookup_and_emits_minimal_result(monkeypatch, capsys):
+    message, request = request_message(operation="get-alembic-revision")
+    request.pop("email")
+    message.body = [json.dumps(request).encode()]
+    receiver = FakeReceiver([message])
+    captured = []
+
+    def fixed_lookup():
+        captured.append(True)
+        return SimpleNamespace(approved_result=lambda: {"alembic_revision": "0023"})
+
+    monkeypatch.setattr(worker.get_alembic_revision, "execute_get_alembic_revision", fixed_lookup)
+    assert worker.main(client_factory=lambda _namespace: FakeClient(receiver), environ=production_environment()) == 0
+
+    assert captured == [True]
+    assert receiver.completed == [message]
+    assert json.loads(capsys.readouterr().out)["result"] == {"alembic_revision": "0023"}
+
+
 def test_worker_calls_only_fixed_platform_admin_dry_run_and_emits_approved_result(monkeypatch, capsys):
     message, request = request_message(operation="set-platform-admin-dry-run", user_id=7)
     receiver = FakeReceiver([message])
@@ -368,6 +387,10 @@ def test_worker_rejects_unapproved_dry_run_output(monkeypatch, capsys, result):
         {"operation": "set-platform-admin-dry-run", "user_id": 7, "command": "id"},
         {"operation": "set-platform-admin-dry-run", "user_id": 7, "module": "os"},
         {"operation": "set-platform-admin-dry-run", "user_id": 7, "arguments": []},
+        {"operation": "get-alembic-revision", "email": "existing@example.org"},
+        {"operation": "get-alembic-revision", "user_id": 7},
+        {"operation": "get-alembic-revision", "sql": "SELECT 1"},
+        {"operation": "get-alembic-revision", "table": "alembic_version"},
         {"email": "existing@example.org\n--unexpected"},
         {"correlation_id": "not-a-uuid"},
         {"unexpected": "value"},
@@ -429,7 +452,12 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "- lookup-user-identity" in workflow
     assert "- set-platform-admin-dry-run" in workflow
     assert "- set-platform-admin" in workflow
+    assert "- get-alembic-revision" in workflow
     assert 'case "$OPERATION" in' in workflow
+    assert "get-alembic-revision)" in workflow
+    assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/get_alembic_revision.py"' in workflow
+    assert 'ALEMBIC_REVISION_OPERATION = "get-alembic-revision"' in workflow
+    assert "get_alembic_revision.execute_get_alembic_revision" in workflow
     assert "set-platform-admin-dry-run)" in workflow
     assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/platform_admin_dry_run.py"' in workflow
     assert 'git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py"' in workflow
@@ -457,6 +485,8 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "Production is not configured for the supplied immutable image." in workflow
     assert "scripts.production_operation_worker" in workflow
     assert "ContainerAppConsoleLogs" in workflow
+    assert '{correlation_id: $correlation_id, operation: $operation}' in workflow
+    assert 'keys | sort) == ["alembic_revision"]' in workflow
 
 
 def test_operations_workflow_reads_app_metadata_without_publishing_access():
@@ -731,6 +761,7 @@ def test_worker_identity_checks_reject_missing_or_mismatched_runtime_client_id()
 def test_workflow_result_contract_is_limited_to_approved_non_sensitive_fields():
     workflow = Path(".github/workflows/production-operation.yml").read_text()
 
+    assert '["alembic_revision"]' in workflow
     assert "[\"active\", \"is_platform_admin\", \"memberships\", \"user_id\"]" in workflow
     assert "[\"account_fields_unchanged\", \"active\", \"current_is_platform_admin\", \"intended_is_platform_admin\", \"memberships\", \"memberships_unchanged\", \"user_id\", \"would_change\"]" in workflow
     assert "(.result.user_id | tostring) == $user_id" in workflow
@@ -855,6 +886,31 @@ def test_operation_result_parser_accepts_only_exact_platform_admin_dry_run_schem
         ) == []
 
 
+def test_operation_result_parser_accepts_only_exact_alembic_revision_schema():
+    correlation_id = "11111111-1111-4111-8111-111111111111"
+    result = {"alembic_revision": "0023"}
+    line = json.dumps({"correlation_id": correlation_id, "status": "succeeded", "result": result}, sort_keys=True)
+
+    assert _parse_approved_operation_logs(
+        [line], correlation_id, operation="get-alembic-revision"
+    ) == [json.loads(line)]
+
+    for invalid in (
+        {"alembic_revision": "head"},
+        {"alembic_revision": "023"},
+        {"alembic_revision": 23},
+        {"alembic_revision": "0023", "extra": True},
+        {},
+    ):
+        invalid_line = json.dumps(
+            {"correlation_id": correlation_id, "status": "succeeded", "result": invalid},
+            sort_keys=True,
+        )
+        assert _parse_approved_operation_logs(
+            [invalid_line], correlation_id, operation="get-alembic-revision"
+        ) == []
+
+
 def test_operation_result_parser_accepts_only_exact_platform_admin_enable_schema():
     correlation_id = "11111111-1111-4111-8111-111111111111"
     result = {
@@ -937,11 +993,13 @@ def test_fixed_operation_modules_are_packaged_but_generic_admin_command_remains_
     ci = Path(".github/workflows/ci.yml").read_text()
 
     assert "scripts/*" in dockerignore
+    assert "!scripts/get_alembic_revision.py" in dockerignore
     assert "!scripts/platform_admin_dry_run.py" in dockerignore
     assert "!scripts/platform_admin_enable.py" in dockerignore
     assert "!scripts/production_operation_worker.py" in dockerignore
     assert "!scripts/set_platform_admin.py" not in dockerignore
     assert "test -f /app/scripts/platform_admin_dry_run.py" in ci
+    assert "test -f /app/scripts/get_alembic_revision.py" in ci
     assert "test -f /app/scripts/platform_admin_enable.py" in ci
     assert "test ! -e /app/scripts/set_platform_admin.py" in ci
 
