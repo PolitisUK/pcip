@@ -26,11 +26,12 @@ environment secrets; never place them in workflow inputs or repository files.
 
 ## Migration decision
 
-The candidate target is Alembic `0014`. The release operator obtains the
-current revision through an approved, read-only production database query and
-records it in the promotion request. At the same time, the operator runs the
-`0006` precondition query below and records a zero result. The local rehearsal
-from `0005` to `0013` passes.
+The release operator obtains the current revision through the protected,
+fixed `get-alembic-revision` production operation and records it in the
+promotion request. This operation performs only the approved read-only
+Alembic-version lookup; it is not a general database-query facility. Do not
+substitute a historical revision. Any legacy migration-specific precondition
+evidence remains applicable only where the candidate contains that migration.
 
 ```sql
 SELECT version_num FROM alembic_version;

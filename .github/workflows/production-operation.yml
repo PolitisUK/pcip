@@ -11,9 +11,10 @@ on:
           - lookup-user-identity
           - set-platform-admin-dry-run
           - set-platform-admin
+          - get-alembic-revision
       email:
-        description: Exact email for the approved read-only operation. It is masked and never added to summaries.
-        required: true
+        description: Exact email for an identity or platform-admin operation. It is not used by the Alembic lookup.
+        required: false
         type: string
       user_id:
         description: Verified internal user ID; required only for the platform-admin dry run.
@@ -83,6 +84,13 @@ jobs:
             test -n "${!value}" || { echo "$value is required." >&2; exit 1; }
           done
           case "$OPERATION" in
+            get-alembic-revision)
+              test -z "$OPERATION_EMAIL" && test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
+              git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/get_alembic_revision.py" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              worker_source=$(git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py")
+              grep -Fq 'ALEMBIC_REVISION_OPERATION = "get-alembic-revision"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              grep -Fq 'get_alembic_revision.execute_get_alembic_revision' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              ;;
             lookup-user-identity)
               test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
               ;;
@@ -109,9 +117,11 @@ jobs:
           [[ "$PRODUCTION_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "production_image_digest must be immutable." >&2; exit 1; }
           [[ "$OPERATIONS_WORKER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "operations worker digest must be immutable." >&2; exit 1; }
           [[ "$OPERATIONS_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "operations worker provenance revision is invalid." >&2; exit 1; }
-          test "${#OPERATION_EMAIL}" -le 254 || { echo "The approved operation input was rejected." >&2; exit 1; }
-          [[ "$OPERATION_EMAIL" != *$'\n'* && "$OPERATION_EMAIL" != *$'\r'* && "$OPERATION_EMAIL" == *@* ]] || { echo "The approved operation input was rejected." >&2; exit 1; }
-          echo "::add-mask::$OPERATION_EMAIL"
+          if test "$OPERATION" != "get-alembic-revision"; then
+            test "${#OPERATION_EMAIL}" -le 254 || { echo "The approved operation input was rejected." >&2; exit 1; }
+            [[ "$OPERATION_EMAIL" != *$'\n'* && "$OPERATION_EMAIL" != *$'\r'* && "$OPERATION_EMAIL" == *@* ]] || { echo "The approved operation input was rejected." >&2; exit 1; }
+            echo "::add-mask::$OPERATION_EMAIL"
+          fi
           git cat-file -e "${RELEASE_SHA}^{commit}"
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo "The target release must be merged into main." >&2; exit 1; }
           az acr manifest show-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY@$PRODUCTION_IMAGE_DIGEST" --query digest -o tsv | grep -qx "$PRODUCTION_IMAGE_DIGEST"
@@ -178,6 +188,10 @@ jobs:
           request_file=$(mktemp)
           trap 'rm -f "$request_file"' EXIT
           case "$OPERATION" in
+            get-alembic-revision)
+              jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" \
+                '{correlation_id: $correlation_id, operation: $operation}' > "$request_file"
+              ;;
             lookup-user-identity)
               jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" --arg email "$OPERATION_EMAIL" \
                 '{correlation_id: $correlation_id, operation: $operation, email: $email}' > "$request_file"
@@ -234,6 +248,11 @@ jobs:
                   .status == "succeeded" and
                   (.result | type == "object") and
                   (
+                    (
+                      $operation == "get-alembic-revision" and
+                      (.result | (keys | sort) == ["alembic_revision"]) and
+                      (.result.alembic_revision | strings | (match("^[0-9]{4}$").string | length == 4))
+                    ) or
                     (
                       $operation == "lookup-user-identity" and
                       (.result | (keys | sort) == ["active", "is_platform_admin", "memberships", "user_id"]) and
