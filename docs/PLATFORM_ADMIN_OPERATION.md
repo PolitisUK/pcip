@@ -22,9 +22,10 @@ the dedicated `AZURE_PRODUCTION_OPERATIONS_CLIENT_ID` OIDC identity; it must
 never fall back to the broader release-promotion identity.
 
 The workflow accepts only the enumerated fixed operations
-`lookup-user-identity`, `set-platform-admin-dry-run`, and
-`set-platform-admin`. The final operation is a separate protected write; it is
-not controlled by a boolean or flag on the dry run.
+`lookup-user-identity`, `set-platform-admin-dry-run`, `set-platform-admin`,
+and `get-alembic-revision`. The final platform-administration operation is a
+separate protected write; it is not controlled by a boolean or flag on the dry
+run.
 It does not accept an arbitrary shell command, Python module, CLI flags, or SQL.
 It verifies the supplied release SHA against three consecutive production
 readiness responses, the supplied immutable application digest on App Service,
@@ -32,6 +33,25 @@ and the separately approved immutable worker digest and source provenance on
 the Container Apps job. The supplied email is masked, is not written to
 the step summary, and is carried only in the short-lived queue message; the
 worker does not log it or persist it in application data.
+
+## Fixed release-evidence lookup
+
+`get-alembic-revision` is a fixed, read-only release-evidence operation used
+during production release pre-flight. It accepts neither an email nor any
+other caller-controlled operation parameter. Its queue request contains only a
+correlation ID and the allowlisted operation name. The worker executes exactly
+`SELECT version_num FROM alembic_version` in a PostgreSQL read-only transaction,
+requires exactly one four-digit revision, always rolls back, and returns only:
+
+```json
+{"alembic_revision":"0023"}
+```
+
+It is not arbitrary SQL access, a database console, a migration operation, or
+a generic administrative command. Missing, multiple, or malformed revision
+rows and any unavailable production-operations component fail closed. The
+protected workflow validates the exact result schema before displaying this
+non-secret release evidence.
 
 Before first use, an infrastructure owner must separately approve and deploy
 `infra/production-operations.bicep` with the digest of a release that contains

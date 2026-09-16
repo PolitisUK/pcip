@@ -19,13 +19,19 @@ from uuid import UUID
 from azure.identity import DefaultAzureCredential
 from azure.servicebus import ServiceBusClient
 
-from scripts import lookup_user_identity, platform_admin_dry_run, platform_admin_enable
+from scripts import (
+    get_alembic_revision,
+    lookup_user_identity,
+    platform_admin_dry_run,
+    platform_admin_enable,
+)
 
 SERVICE_BUS_NAMESPACE_ENV = "PCIP_OPERATIONS_SERVICEBUS_NAMESPACE"
 SERVICE_BUS_QUEUE_ENV = "PCIP_OPERATIONS_QUEUE"
 LOOKUP_OPERATION = "lookup-user-identity"
 PLATFORM_ADMIN_DRY_RUN_OPERATION = "set-platform-admin-dry-run"
 PLATFORM_ADMIN_ENABLE_OPERATION = "set-platform-admin"
+ALEMBIC_REVISION_OPERATION = "get-alembic-revision"
 
 
 class ProductionOperationError(RuntimeError):
@@ -36,7 +42,7 @@ class ProductionOperationError(RuntimeError):
 class OperationRequest:
     correlation_id: str
     operation: str
-    email: str
+    email: str | None = None
     user_id: int | None = None
 
 
@@ -62,9 +68,8 @@ def parse_request(body: bytes) -> OperationRequest:
     if not isinstance(payload, dict):
         raise ProductionOperationError("Production operation refused.")
     correlation_id = payload.get("correlation_id")
-    email = payload.get("email")
     operation = payload.get("operation")
-    if not isinstance(correlation_id, str) or not isinstance(email, str):
+    if not isinstance(correlation_id, str) or not isinstance(operation, str):
         raise ProductionOperationError("Production operation refused.")
     try:
         parsed_id = UUID(correlation_id)
@@ -72,6 +77,15 @@ def parse_request(body: bytes) -> OperationRequest:
         raise ProductionOperationError("Production operation refused.") from exc
     if (
         str(parsed_id) != correlation_id.lower()
+    ):
+        raise ProductionOperationError("Production operation refused.")
+    if operation == ALEMBIC_REVISION_OPERATION:
+        if set(payload) != {"correlation_id", "operation"}:
+            raise ProductionOperationError("Production operation refused.")
+        return OperationRequest(correlation_id=correlation_id, operation=operation)
+    email = payload.get("email")
+    if (
+        not isinstance(email, str)
         or not email
         or len(email) > 254
         or "\n" in email
@@ -138,6 +152,19 @@ def _valid_memberships(value: Any) -> bool:
 
 
 def _validated_result(request: OperationRequest) -> dict[str, Any]:
+    if request.operation == ALEMBIC_REVISION_OPERATION:
+        try:
+            result = get_alembic_revision.execute_get_alembic_revision().approved_result()
+        except get_alembic_revision.AlembicRevisionLookupError as exc:
+            raise ProductionOperationError("Production operation refused.") from exc
+        if (
+            set(result) != {"alembic_revision"}
+            or not isinstance(result["alembic_revision"], str)
+            or not result["alembic_revision"].isdigit()
+            or len(result["alembic_revision"]) != 4
+        ):
+            raise ProductionOperationError("Production operation refused.")
+        return result
     if request.operation == LOOKUP_OPERATION:
         result = _run_fixed_cli(lookup_user_identity.main, ["--email", request.email])
         if (
