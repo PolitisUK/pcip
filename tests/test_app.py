@@ -7651,6 +7651,123 @@ def _exchange_participant_api_session_with_payload(payload: dict):
     )
 
 
+def _password_credential_for_api(email_suffix: str = 'password-login'):
+    """Create a fictional, accepted participant with an explicit credential."""
+    from app.models import Participant, ParticipantInvitation, ParticipantPasswordCredential
+    from app.security import hash_password, token_hash
+
+    token, participant_id, study_id = _create_participant_invitation_for_api(email_suffix)
+    identifier = f"{unique_value('reviewer').lower()}@example.org"
+    password = 'A-long-test-password-123!'
+    with SessionLocal() as db:
+        invitation = db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash == token_hash(token)))
+        participant_row = db.get(Participant, participant_id)
+        assert invitation is not None and participant_row is not None
+        invitation.accepted_at = now()
+        participant_row.consent_status = 'granted'
+        participant_row.status = 'active'
+        credential = ParticipantPasswordCredential(
+            organisation_id=participant_row.organisation_id,
+            participant_id=participant_row.id,
+            participant_invitation_id=invitation.id,
+            login_identifier_normalised=identifier,
+            password_hash=hash_password(password),
+            enabled=True,
+        )
+        db.add(credential)
+        db.commit()
+        return identifier, password, participant_id, study_id, invitation.id, credential.id
+
+
+def _password_login(username: str, password: str):
+    return client.post(
+        '/api/v1/participant/session/password',
+        json={'username': username, 'password': password},
+        follow_redirects=False,
+    )
+
+
+def test_participant_password_login_issues_the_normal_scoped_session_and_preserves_code_flow():
+    from app.models import PublicAuthSession
+    from app.security import token_hash
+
+    identifier, password, participant_id, study_id, invitation_id, credential_id = _password_credential_for_api('password-success')
+    with client:
+        response = _password_login(identifier.upper(), password)
+    assert response.status_code == 200
+    assert response.headers.get('cache-control') == 'no-store'
+    body = response.json()
+    assert body['participant']['display_name'] == 'Participant API Auth'
+    assert body['invitation']['study_id'] == study_id
+    assert body['next_action'] == 'portal'
+    api_token = body['session']['access_token']
+    with SessionLocal() as db:
+        session_row = db.scalar(select(PublicAuthSession).where(PublicAuthSession.session_hash == token_hash(api_token)))
+        assert session_row is not None
+        assert session_row.participant_invitation_id == invitation_id
+        assert session_row.participant_password_credential_id == credential_id
+    # Password login must not disturb a normal one-time-code/invitation exchange.
+    token, _other_participant, _other_study = _create_participant_invitation_for_api('password-normal-flow')
+    with client:
+        assert _exchange_participant_api_session(token).status_code == 200
+
+
+def test_participant_password_login_rejects_unknown_wrong_disabled_and_revoked_credentials_without_secrets():
+    from app.models import ParticipantInvitation, ParticipantPasswordCredential
+
+    identifier, password, _participant_id, _study_id, invitation_id, credential_id = _password_credential_for_api('password-reject')
+    with client:
+        wrong = _password_login(identifier, 'not-the-password')
+        unknown = _password_login('unknown-reviewer@example.org', password)
+    for response in (wrong, unknown):
+        assert response.status_code == 401
+        assert response.json()['detail'] == 'Incorrect username or password.'
+        assert password not in response.text
+        assert identifier not in response.text
+    with SessionLocal() as db:
+        credential = db.get(ParticipantPasswordCredential, credential_id)
+        assert credential is not None
+        credential.enabled = False
+        db.commit()
+    with client:
+        assert _password_login(identifier, password).status_code == 401
+    with SessionLocal() as db:
+        credential = db.get(ParticipantPasswordCredential, credential_id)
+        invitation = db.get(ParticipantInvitation, invitation_id)
+        assert credential is not None and invitation is not None
+        credential.enabled = True
+        invitation.revoked_at = now()
+        db.commit()
+    with client:
+        assert _password_login(identifier, password).status_code == 401
+
+
+def test_password_authenticated_session_is_revoked_when_credential_is_disabled_or_invitation_is_revoked():
+    from app.models import ParticipantInvitation, ParticipantPasswordCredential
+
+    identifier, password, _participant_id, _study_id, invitation_id, credential_id = _password_credential_for_api('password-session-revocation')
+    with client:
+        response = _password_login(identifier, password)
+        assert response.status_code == 200
+        api_token = response.json()['session']['access_token']
+    with SessionLocal() as db:
+        credential = db.get(ParticipantPasswordCredential, credential_id)
+        assert credential is not None
+        credential.enabled = False
+        db.commit()
+    with client:
+        assert client.get('/api/v1/participant/session', headers={'Authorization': f'Bearer {api_token}'}).status_code == 401
+    with SessionLocal() as db:
+        credential = db.get(ParticipantPasswordCredential, credential_id)
+        invitation = db.get(ParticipantInvitation, invitation_id)
+        assert credential is not None and invitation is not None
+        credential.enabled = True
+        invitation.revoked_at = now()
+        db.commit()
+    with client:
+        assert _password_login(identifier, password).status_code == 401
+
+
 def test_participant_api_exchange_creates_hashed_bearer_session_without_cookie_and_no_store():
     from app.models import AuditEvent, PublicAuthSession
     from app.participant_api.auth import PARTICIPANT_API_SCOPE

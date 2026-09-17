@@ -64,7 +64,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0023" in revision.stdout
+    assert "0024" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -97,7 +97,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
     assert inserted.returncode == 0, inserted.stderr
 
     for command in (
-        [sys.executable, "-m", "alembic", "upgrade", "0023"],
+        [sys.executable, "-m", "alembic", "upgrade", "0024"],
         [sys.executable, "-m", "alembic", "current"],
         [sys.executable, "-m", "alembic", "check"],
     ):
@@ -111,7 +111,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0023" in result.stdout
+            assert "0024" in result.stdout
 
     active = subprocess.run(
         [
@@ -125,10 +125,19 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
     )
     assert active.returncode == 0, active.stderr
     assert active.stdout.strip() == "Existing organisation:active"
+    credentials = subprocess.run(
+        ["sqlite3", str(database_path), "PRAGMA table_info(participant_password_credentials);"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert credentials.returncode == 0, credentials.stderr
+    assert "password_hash" in credentials.stdout
+    assert "login_identifier_normalised" in credentials.stdout
 
     for command in (
         [sys.executable, "-m", "alembic", "downgrade", "0022"],
-        [sys.executable, "-m", "alembic", "upgrade", "0023"],
+        [sys.executable, "-m", "alembic", "upgrade", "0024"],
     ):
         result = subprocess.run(
             command,

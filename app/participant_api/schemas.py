@@ -22,6 +22,13 @@ class SessionExchangeRequest(BaseModel):
     device_hint: DeviceHint | None = None
 
 
+class PasswordSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=1, max_length=512)
+
+
 class SessionSwitchRequest(BaseModel):
     """Request a new, study-scoped session from an existing participant session."""
 

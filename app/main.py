@@ -40,6 +40,7 @@ from .models import (
     OutboxEmail,
     Participant,
     ParticipantAppAccessCode,
+    ParticipantPasswordCredential,
     ParticipantInvitation,
     ParticipantMessage,
     ParticipantPrivacyRequest,
@@ -189,6 +190,7 @@ from .participant_api.schemas import (
     ConsentAcceptanceResponse,
     SessionExchangeRequest,
     SessionExchangeResponse,
+    PasswordSessionRequest,
     SessionSwitchRequest,
     SessionInfo,
     SubmissionHistoryItem,
@@ -1695,11 +1697,26 @@ def _resolve_participant_api_context(
     session_row = resolve_participant_api_session(db, raw_token=raw_token)
     if not session_row:
         raise _participant_api_unauthorised()
+    password_credential_session = session_row.participant_password_credential_id is not None
+    if password_credential_session:
+        credential = db.get(
+            ParticipantPasswordCredential,
+            session_row.participant_password_credential_id,
+        )
+        if (
+            not credential
+            or not credential.enabled
+            or credential.participant_invitation_id != session_row.participant_invitation_id
+        ):
+            raise _participant_api_unauthorised()
     invitation = db.get(ParticipantInvitation, session_row.participant_invitation_id)
     if (
         not invitation
         or invitation.revoked_at
-        or not unexpired(invitation.expires_at)
+        # Explicitly provisioned reusable credentials remain bound to their
+        # accepted invitation, but do not inherit the invitation-link delivery
+        # expiry. Credential or invitation revocation still stops access.
+        or (not password_credential_session and not unexpired(invitation.expires_at))
         or not organisation_is_active(db, invitation.organisation_id)
     ):
         raise _participant_api_unauthorised()
@@ -4150,7 +4167,13 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
     position = dossier_ids.index(p.id) if p.id in dossier_ids else -1
     previous_participant = dossier_participants[position - 1] if position > 0 else None
     next_participant = dossier_participants[position + 1] if position >= 0 and position + 1 < len(dossier_participants) else None
-    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=[m for m in messages if not m.internal_note],internal_notes=[m for m in messages if m.internal_note],statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token,timeline=timeline,previous_participant=previous_participant,next_participant=next_participant)
+    password_credential = db.scalar(
+        select(ParticipantPasswordCredential).where(
+            ParticipantPasswordCredential.participant_id == p.id,
+            ParticipantPasswordCredential.organisation_id == u.organisation_id,
+        )
+    )
+    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=[m for m in messages if not m.internal_note],internal_notes=[m for m in messages if m.internal_note],statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token,timeline=timeline,previous_participant=previous_participant,next_participant=next_participant,password_credential=password_credential,can_manage_password_credential=u.role in {"owner", "admin"})
 
 
 @app.get("/participants/{participant_id}/export")
@@ -4297,6 +4320,69 @@ def update_participant(participant_id:int,name:str=Form(None),email:str=Form(Non
     try: json.loads(demographics_json or "{}")
     except json.JSONDecodeError: raise HTTPException(400,"Demographics must be valid JSON.")
     p.status=status_value; p.consent_status=consent_status; p.communication_preference=communication_preference; p.tags=tags.strip(); p.notes=notes.strip(); p.demographics_json=demographics_json or "{}"; audit(db,u.organisation_id,u.id,"participant.updated","participant",p.id,p.reference); db.commit(); return RedirectResponse(f"/participants/{p.id}",303)
+
+
+@app.post("/participants/{participant_id}/password-credential")
+def set_participant_password_credential(
+    participant_id: int,
+    invitation_id: int = Form(...),
+    login_identifier: str = Form(...),
+    password: str = Form(...),
+    enabled: bool = Form(False),
+    u=Depends(roles("owner", "admin")),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    """Provision or rotate one explicitly authorised reusable app credential.
+
+    This narrowly scoped, CSRF-protected workflow intentionally has no API that
+    returns credentials or hashes.  A credential can only be bound to an
+    accepted invitation for this participant in the current organisation.
+    """
+    p = participant(db, participant_id, u.organisation_id)
+    identifier = login_identifier.strip().lower()
+    if not identifier or len(identifier) > 255 or not password or len(password) > 512:
+        raise HTTPException(400, "Enter a valid username and password.")
+    invitation = db.scalar(select(ParticipantInvitation).where(
+        ParticipantInvitation.id == invitation_id,
+        ParticipantInvitation.organisation_id == u.organisation_id,
+        ParticipantInvitation.participant_id == p.id,
+    ))
+    if not invitation or invitation.revoked_at or not invitation.accepted_at or p.consent_status != ConsentStatus.granted.value:
+        raise HTTPException(400, "Choose an accepted participant invitation.")
+    credential = db.scalar(select(ParticipantPasswordCredential).where(
+        ParticipantPasswordCredential.participant_id == p.id,
+        ParticipantPasswordCredential.organisation_id == u.organisation_id,
+    ))
+    try:
+        if credential is None:
+            credential = ParticipantPasswordCredential(
+                organisation_id=u.organisation_id,
+                participant_id=p.id,
+                participant_invitation_id=invitation.id,
+                login_identifier_normalised=identifier,
+                password_hash=hash_password(password),
+                enabled=enabled,
+            )
+            db.add(credential)
+            action = "participant.password_credential_created"
+        else:
+            credential.participant_invitation_id = invitation.id
+            credential.login_identifier_normalised = identifier
+            credential.password_hash = hash_password(password)
+            credential.enabled = enabled
+            credential.rotated_at = now()
+            action = "participant.password_credential_rotated"
+            db.execute(update(PublicAuthSession).where(
+                PublicAuthSession.participant_password_credential_id == credential.id,
+                PublicAuthSession.revoked_at.is_(None),
+            ).values(revoked_at=now()))
+        audit(db, u.organisation_id, u.id, action, "participant_password_credential", credential.id, None)
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(409, "That username is already in use.") from error
+    return RedirectResponse(f"/participants/{p.id}", 303)
 @app.post("/studies/{study_id}/enrol")
 def enrol(study_id:int,participant_id:int=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); p=participant(db,participant_id,u.organisation_id)
@@ -5254,6 +5340,56 @@ def participant_api_session_exchange(
         invitation,
         participant_row,
     )
+
+
+@app.post("/api/v1/participant/session/password", response_model=SessionExchangeResponse)
+def participant_api_password_session(
+    payload: PasswordSessionRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """Exchange one explicitly enabled participant credential for the normal session."""
+    identifier = payload.username.strip().lower()
+    _enforce_rate_limit(
+        request, db, scope="participant_api_password_session",
+        ip_limit=settings.rate_limit_login_ip,
+        account_key=token_hash(identifier) if identifier else "missing",
+        account_limit=settings.rate_limit_login_account,
+    )
+    failure = HTTPException(401, "Incorrect username or password.")
+    credential = db.scalar(select(ParticipantPasswordCredential).where(
+        ParticipantPasswordCredential.login_identifier_normalised == identifier,
+        ParticipantPasswordCredential.enabled.is_(True),
+    )) if identifier else None
+    if not credential or not verify_password(payload.password, credential.password_hash):
+        raise failure
+    invitation = db.get(ParticipantInvitation, credential.participant_invitation_id)
+    participant_row = db.get(Participant, credential.participant_id)
+    if (
+        not invitation or not participant_row or invitation.participant_id != participant_row.id
+        or invitation.organisation_id != credential.organisation_id
+        or invitation.revoked_at
+        or not invitation.accepted_at or participant_row.consent_status != ConsentStatus.granted.value
+        or participant_row.status == ParticipantStatus.withdrawn.value
+        or not organisation_is_active(db, credential.organisation_id)
+    ):
+        raise failure
+    for existing in db.scalars(select(PublicAuthSession).where(
+        PublicAuthSession.scope == PARTICIPANT_API_SCOPE,
+        PublicAuthSession.participant_invitation_id == invitation.id,
+        PublicAuthSession.revoked_at.is_(None),
+    )):
+        existing.revoked_at = now()
+    raw_token, session_row = create_participant_api_session(
+        db, participant_invitation_id=invitation.id,
+        participant_password_credential_id=credential.id,
+        ttl_seconds=settings.session_max_age_seconds,
+    )
+    audit(db, credential.organisation_id, None, "participant.password_session_exchanged", "participant_password_credential", credential.id, "portal")
+    db.commit()
+    _cache_control_no_store(response)
+    return _participant_session_exchange_response(raw_token, session_row, invitation, participant_row)
 
 
 @app.get("/api/v1/participant/session", response_model=ParticipantSessionResponse)
