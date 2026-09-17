@@ -10772,6 +10772,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         Participant,
         Project,
         Study,
+        StudyEnrolment,
     )
 
     suffix = unique_value("workspace")
@@ -10800,6 +10801,11 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         )
         db.add_all([study, participant])
         db.flush()
+        db.add(StudyEnrolment(
+            organisation_id=administrator.organisation_id,
+            study_id=study.id,
+            participant_id=participant.id,
+        ))
         activity = Activity(
             organisation_id=administrator.organisation_id,
             study_id=study.id,
@@ -10833,21 +10839,44 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         )
         db.add(other_project)
         db.commit()
-        project_id, participant_id, other_project_id = project.id, participant.id, other_project.id
+        project_id, participant_id, activity_id, other_project_id = project.id, participant.id, activity.id, other_project.id
 
     with client:
         auth()
         overview = client.get(f"/projects/{project_id}/workspace")
+        projects = client.get("/projects")
+        analysis = client.get(f"/projects/{project_id}/workspace/analysis")
+        unfiltered_entries = client.get(f"/projects/{project_id}/workspace/entries")
+        blank_participant_entries = client.get(f"/projects/{project_id}/workspace/entries?participant_id=")
+        blank_prompt_entries = client.get(f"/projects/{project_id}/workspace/entries?prompt_id=%20%20")
+        combined_blank_entries = client.get(f"/projects/{project_id}/workspace/entries?q=complete&participant_id=&prompt_id=")
+        filtered_entries = client.get(f"/projects/{project_id}/workspace/entries?participant_id={participant_id}&prompt_id={activity_id}")
         entries = client.get(f"/projects/{project_id}/workspace/entries?code=Access")
         dossier = client.get(f"/participants/{participant_id}")
         assert overview.status_code == 200
         assert "Research workspace" in overview.text
+        assert f'href="/projects/{project_id}/workspace/analysis">Analysis</a>' in projects.text
+        assert analysis.status_code == 200
+        assert "Analysis" in analysis.text
+        assert unfiltered_entries.status_code == 200
+        assert blank_participant_entries.status_code == 200
+        assert blank_prompt_entries.status_code == 200
+        assert combined_blank_entries.status_code == 200
+        assert filtered_entries.status_code == 200
+        assert re.search(rf'<option value="{participant_id}"\s+selected>', filtered_entries.text)
+        assert re.search(rf'<option value="{activity_id}"\s+selected>', filtered_entries.text)
         assert entries.status_code == 200
         assert "The complete longitudinal account is visible in the workspace." in entries.text
         assert "Access &gt; delay" in entries.text
         assert dossier.status_code == 200
         assert "Longitudinal research timeline" in dossier.text
         assert client.get(f"/projects/{other_project_id}/workspace").status_code == 404
+        assert client.get(f"/projects/{other_project_id}/workspace/analysis").status_code == 404
+        for filter_name, label in (("participant_id", "Participant"), ("prompt_id", "Prompt")):
+            for invalid_id in ("invalid", "0", "-1"):
+                invalid = client.get(f"/projects/{project_id}/workspace/entries?{filter_name}={invalid_id}")
+                assert invalid.status_code == 422
+                assert f"{label} must be a positive integer." in invalid.text
 
     with client:
         client.cookies.clear()
