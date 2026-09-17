@@ -67,6 +67,33 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/participant/session/password:
+    post:
+      tags: [Session]
+      summary: Exchange an explicitly provisioned participant credential for a session.
+      description: >-
+        Available only to a participant with a dedicated, enabled reusable
+        credential. The response is deliberately identical to the one-time
+        code session exchange. Invalid usernames, disabled credentials and
+        incorrect passwords receive the same generic response.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordSessionRequest'
+      responses:
+        '200':
+          description: Session created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionExchangeResponse'
+        '401':
+          description: Incorrect username or password.
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /api/v1/participant/session:
     get:
       tags: [Session]
@@ -805,6 +832,19 @@ components:
           description: One-time post-consent app access code, or a legacy invitation token, accepted only at exchange.
         device_hint:
           $ref: '#/components/schemas/DeviceHint'
+    PasswordSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 255
+        password:
+          type: string
+          minLength: 1
+          maxLength: 512
     SessionSwitchRequest:
       type: object
       additionalProperties: false

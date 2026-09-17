@@ -25,6 +25,7 @@ import 'legal_privacy.dart';
 
 abstract class ParticipantApi {
   Future<Map<String, dynamic>> exchange(String invitation);
+  Future<Map<String, dynamic>> passwordLogin(String username, String password);
   Future<Map<String, dynamic>> session();
   Future<List<Map<String, dynamic>>> availableStudies();
   Future<Map<String, dynamic>> switchStudy(int studyId);
@@ -176,6 +177,14 @@ class Api implements ParticipantApi {
         category: 'network',
       );
     }
+    if (x.statusCode == 401 && path == '/api/v1/participant/session/password') {
+      throw const ApiError(
+        'Incorrect username or password.',
+        retryable: false,
+        category: 'password_rejected',
+        statusCode: 401,
+      );
+    }
     if (x.statusCode == 401) {
       throw const ApiError(
         'Your session has ended.',
@@ -214,6 +223,15 @@ class Api implements ParticipantApi {
     'POST',
     '/api/v1/participant/session/exchange',
     body: {'invitation_token': invitation},
+  );
+  @override
+  Future<Map<String, dynamic>> passwordLogin(
+    String username,
+    String password,
+  ) => request(
+    'POST',
+    '/api/v1/participant/session/password',
+    body: {'username': username, 'password': password},
   );
   @override
   Future<Map<String, dynamic>> session() =>
@@ -701,6 +719,34 @@ class _ParticipantAppState extends State<ParticipantApp> {
     if (mounted) setState(() {});
   }
 
+  Future<void> passwordLogin(String username, String password) async {
+    if (username.trim().isEmpty || password.isEmpty) {
+      error = 'Enter your username and password.';
+      if (mounted) setState(() {});
+      return;
+    }
+    final base = configuredApiBase();
+    if (base == null) {
+      error = 'This app is not configured to connect securely. Please contact your research team.';
+      if (mounted) setState(() {});
+      return;
+    }
+    try {
+      final first = make(base.toString(), null);
+      final result = await first.passwordLogin(username.trim(), password);
+      final token = (result['session'] as Map)['access_token'] as String;
+      await widget.store.save(base.toString(), token);
+      api = make(base.toString(), token);
+      await refreshSession();
+      error = null;
+    } on ApiError catch (e) {
+      error = e.message;
+    } catch (_) {
+      error = 'We could not connect. Please try again.';
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> accept(Map<String, String> documentHashes) async {
     try {
       await api!.consent(documentHashes);
@@ -772,7 +818,11 @@ class _ParticipantAppState extends State<ParticipantApp> {
     if (api == null)
       return MaterialApp(
         theme: participantTheme,
-        home: Invite(error: error, onJoin: join),
+        home: Invite(
+          error: error,
+          onJoin: join,
+          onPasswordLogin: passwordLogin,
+        ),
       );
     final participant = Map<String, dynamic>.from(session!['participant']);
     if (invitationRequiresConsent(session))
@@ -813,25 +863,44 @@ String availableStudiesLoadError(Object error) {
 }
 
 class Invite extends StatefulWidget {
-  const Invite({super.key, required this.error, required this.onJoin});
+  const Invite({
+    super.key,
+    required this.error,
+    required this.onJoin,
+    required this.onPasswordLogin,
+  });
   final String? error;
   final Future<void> Function(String) onJoin;
+  final Future<void> Function(String, String) onPasswordLogin;
   @override
   State<Invite> createState() => _InviteState();
 }
 
 class _InviteState extends State<Invite> {
   final code = TextEditingController();
+  final username = TextEditingController();
+  final password = TextEditingController();
+  bool passwordMode = false;
   bool waiting = false;
   @override
   void dispose() {
     code.dispose();
+    username.dispose();
+    password.dispose();
     super.dispose();
   }
 
   Future<void> submit() async {
     setState(() => waiting = true);
     await widget.onJoin(code.text.trim());
+    if (mounted) setState(() => waiting = false);
+  }
+
+  Future<void> submitPassword() async {
+    setState(() => waiting = true);
+    await widget.onPasswordLogin(username.text.trim(), password.text);
+    // Never retain a password after an authentication attempt.
+    password.clear();
     if (mounted) setState(() => waiting = false);
   }
 
@@ -879,22 +948,74 @@ class _InviteState extends State<Invite> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'After reviewing and consenting on the secure website, enter the one-time app code shown in your participant portal.',
-                      ),
-                      const SizedBox(height: 20),
-                      TextField(
-                        controller: code,
-                        autofillHints: const [AutofillHints.oneTimeCode],
-                        textCapitalization: TextCapitalization.characters,
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) => submit(),
-                        decoration: const InputDecoration(
-                          labelText: 'One-time app code',
-                          hintText: 'CC-XXXX-XXXX-XXXX-XXXX',
+                      const SizedBox(height: 16),
+                      Semantics(
+                        label: 'Sign-in method',
+                        child: SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment(
+                              value: false,
+                              label: Text('One-time code'),
+                            ),
+                            ButtonSegment(
+                              value: true,
+                              label: Text('Username & password'),
+                            ),
+                          ],
+                          selected: {passwordMode},
+                          onSelectionChanged: waiting
+                              ? null
+                              : (selection) => setState(
+                                  () => passwordMode = selection.first,
+                                ),
                         ),
                       ),
+                      const SizedBox(height: 20),
+                      if (!passwordMode) ...[
+                        const Text(
+                          'After reviewing and consenting on the secure website, enter the one-time app code shown in your participant portal.',
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: code,
+                          autofillHints: const [AutofillHints.oneTimeCode],
+                          textCapitalization: TextCapitalization.characters,
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => submit(),
+                          decoration: const InputDecoration(
+                            labelText: 'One-time app code',
+                            hintText: 'CC-XXXX-XXXX-XXXX-XXXX',
+                          ),
+                        ),
+                      ] else ...[
+                        const Text(
+                          'Sign in with the username and password provided for your study access.',
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: username,
+                          autofillHints: const [AutofillHints.username],
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
+                          decoration: const InputDecoration(
+                            labelText: 'Username or email',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: password,
+                          autofocus: false,
+                          obscureText: true,
+                          enableSuggestions: false,
+                          autocorrect: false,
+                          autofillHints: const [AutofillHints.password],
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => submitPassword(),
+                          decoration: const InputDecoration(
+                            labelText: 'Password',
+                          ),
+                        ),
+                      ],
                       if (widget.error != null)
                         Semantics(
                           liveRegion: true,
@@ -911,9 +1032,15 @@ class _InviteState extends State<Invite> {
                       SizedBox(
                         height: 50,
                         child: FilledButton(
-                          onPressed: waiting ? null : submit,
+                          onPressed: waiting
+                              ? null
+                              : (passwordMode ? submitPassword : submit),
                           child: Text(
-                            waiting ? 'Checking code…' : 'Continue securely',
+                            waiting
+                                ? 'Signing in…'
+                                : (passwordMode
+                                      ? 'Sign in'
+                                      : 'Continue securely'),
                           ),
                         ),
                       ),
@@ -922,8 +1049,10 @@ class _InviteState extends State<Invite> {
                 ),
               ),
               const SizedBox(height: 18),
-              const Text(
-                'Your code is single-use and expires after 30 minutes.',
+              Text(
+                passwordMode
+                    ? 'Use the sign-in method provided for your study access.'
+                    : 'Your code is single-use and expires after 30 minutes.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white70),
               ),

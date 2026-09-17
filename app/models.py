@@ -514,6 +514,25 @@ class ParticipantAppAccessCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ParticipantPasswordCredential(Base):
+    """An explicitly enabled reusable credential for one accepted participant invitation."""
+
+    __tablename__ = "participant_password_credentials"
+    __table_args__ = (
+        UniqueConstraint("participant_invitation_id"),
+        UniqueConstraint("participant_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    participant_id: Mapped[int] = mapped_column(ForeignKey("participants.id"), index=True)
+    participant_invitation_id: Mapped[int] = mapped_column(ForeignKey("participant_invitations.id"), index=True)
+    login_identifier_normalised: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Invitation(Base):
     __tablename__ = "invitations"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -556,6 +575,7 @@ class PublicAuthSession(Base):
     password_reset_id: Mapped[int | None] = mapped_column(ForeignKey("password_resets.id"), nullable=True, index=True)
     invitation_id: Mapped[int | None] = mapped_column(ForeignKey("invitations.id"), nullable=True, index=True)
     participant_invitation_id: Mapped[int | None] = mapped_column(ForeignKey("participant_invitations.id"), nullable=True, index=True)
+    participant_password_credential_id: Mapped[int | None] = mapped_column(ForeignKey("participant_password_credentials.id"), nullable=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

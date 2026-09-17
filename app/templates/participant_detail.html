@@ -39,6 +39,28 @@
   </div>
 </section>
 
+{% if can_manage_password_credential %}
+<section class="card section" id="app-password-credential">
+  <h2>Reusable app credential</h2>
+  <p class="muted">Use only for an explicitly authorised participant account. The password is stored securely and is never displayed again. Updating or disabling this credential immediately revokes its active app sessions.</p>
+  {% if password_credential %}
+  <p><strong>Status:</strong> {{ 'Enabled' if password_credential.enabled else 'Disabled' }} · <strong>Username:</strong> {{ password_credential.login_identifier_normalised }}{% if password_credential.rotated_at %} · last changed {{ password_credential.rotated_at.strftime('%d %b %Y') }}{% endif %}</p>
+  {% endif %}
+  <form method="post" action="/participants/{{ participant.id }}/password-credential" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="row">
+      <div class="field"><label for="credential-invitation">Accepted study invitation</label><select id="credential-invitation" name="invitation_id" required>{% for invitation in invitations if invitation.accepted_at and not invitation.revoked_at %}<option value="{{ invitation.id }}" {% if password_credential and password_credential.participant_invitation_id == invitation.id %}selected{% endif %}>{{ studies[invitation.study_id].title }} · accepted {{ invitation.accepted_at.strftime('%d %b %Y') }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="credential-username">Username or email</label><input id="credential-username" name="login_identifier" value="{{ password_credential.login_identifier_normalised if password_credential else '' }}" autocomplete="off" required></div>
+    </div>
+    <div class="row">
+      <div class="field"><label for="credential-password">New password</label><input id="credential-password" type="password" name="password" autocomplete="new-password" required></div>
+      <label><input type="checkbox" name="enabled" value="true" {% if not password_credential or password_credential.enabled %}checked{% endif %}> Enable reusable password sign-in</label>
+    </div>
+    <button data-confirm="Save this reusable credential and revoke any current password-authenticated sessions?">Save reusable credential</button>
+  </form>
+</section>
+{% endif %}
+
 {% if is_privacy_admin %}
 <section id="privacy" class="card card--warning section">
   <div class="section-head">

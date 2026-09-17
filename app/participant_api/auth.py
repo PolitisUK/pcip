@@ -21,6 +21,7 @@ def create_participant_api_session(
     db: Session,
     *,
     participant_invitation_id: int,
+    participant_password_credential_id: int | None = None,
     ttl_seconds: int,
 ) -> tuple[str, PublicAuthSession]:
     raw_token = new_token()
@@ -28,6 +29,7 @@ def create_participant_api_session(
         scope=PARTICIPANT_API_SCOPE,
         session_hash=token_hash(raw_token),
         participant_invitation_id=participant_invitation_id,
+        participant_password_credential_id=participant_password_credential_id,
         expires_at=_now() + timedelta(seconds=ttl_seconds),
     )
     db.add(row)
