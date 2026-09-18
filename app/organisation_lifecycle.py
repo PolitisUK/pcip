@@ -21,6 +21,7 @@ from .models import (
     Project,
     ResearchAnalysisSuggestion,
     ResearchTheme,
+    AnalysisTarget,
     Study,
     StudyAccess,
     StudyConsentBundle,
@@ -71,6 +72,7 @@ MEANINGFUL_ORGANISATION_MODELS = (
     (ResearchAnalysisSuggestion, "research analysis records"),
     (EvidenceConfidenceAssessment, "evidence assessments"),
     (ResearchTheme, "research themes"),
+    (AnalysisTarget, "analysis targets"),
     (OutboxEmail, "email delivery records"),
     (StudyAccess, "study access records"),
 )

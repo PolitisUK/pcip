@@ -11,11 +11,12 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from .models import (
     ActivityResponse,
+    AnalysisTarget,
     AuditEvent,
     EvidenceConfidenceAssessment,
     EvidenceFile,
@@ -107,6 +108,10 @@ def _delete_research_derivatives(
 ) -> None:
     if not response_ids:
         return
+    db.execute(delete(AnalysisTarget).where(
+        AnalysisTarget.organisation_id == organisation_id,
+        AnalysisTarget.activity_response_id.in_(response_ids),
+    ))
     suggestions_query = select(ResearchAnalysisSuggestion).where(
         ResearchAnalysisSuggestion.organisation_id == organisation_id,
         ResearchAnalysisSuggestion.source_response_id.in_(response_ids),
@@ -215,6 +220,15 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
             organisation_id=organisation_id,
             study_id=study_id,
             response_ids=response_ids,
+        )
+        db.execute(
+            delete(AnalysisTarget).where(
+                AnalysisTarget.organisation_id == organisation_id,
+                or_(
+                    AnalysisTarget.evidence_file_id.in_([row.id for row in evidence_rows]),
+                    AnalysisTarget.participant_id == participant_id,
+                ),
+            )
         )
         for row in evidence_rows:
             db.delete(row)

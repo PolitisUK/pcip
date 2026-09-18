@@ -10684,7 +10684,7 @@ def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_on
 
 
 def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_only_minimised_lifecycle_evidence():
-    from app.models import ActivityResponse, EvidenceFile, OutboxEmail, Participant, ParticipantAppAccessCode, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment
+    from app.models import AnalysisTarget, ActivityResponse, EvidenceFile, OutboxEmail, Participant, ParticipantAppAccessCode, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment, User
     from app.security import token_hash
 
     context = _prepare_participant_api_activity_response_context('api-privacy-deletion')
@@ -10697,7 +10697,16 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         )
         db.add(response_row); db.flush()
         db.add(ParticipantMessage(organisation_id=context['organisation_id'], study_id=context['study_id'], participant_id=context['participant_id'], sender_type='participant', body='remove me'))
-        db.add(EvidenceFile(organisation_id=context['organisation_id'], study_id=context['study_id'], activity_id=context['activity_id'], participant_id=context['participant_id'], response_id=response_row.id, original_name='remove.txt', stored_name='delete-test.txt', content_type='text/plain'))
+        evidence_row = EvidenceFile(organisation_id=context['organisation_id'], study_id=context['study_id'], activity_id=context['activity_id'], participant_id=context['participant_id'], response_id=response_row.id, original_name='remove.txt', stored_name='delete-test.txt', content_type='text/plain')
+        db.add(evidence_row)
+        db.flush()
+        author = db.scalar(select(User).where(User.organisation_id == context['organisation_id']).order_by(User.id))
+        assert author is not None
+        db.add_all([
+            AnalysisTarget(organisation_id=context['organisation_id'], study_id=context['study_id'], target_type='activity_response', activity_response_id=response_row.id, anchor_json='{"start": 0, "end": 9}', created_by_id=author.id),
+            AnalysisTarget(organisation_id=context['organisation_id'], study_id=context['study_id'], target_type='evidence_file', evidence_file_id=evidence_row.id, anchor_json='{"region": "future"}', created_by_id=author.id),
+            AnalysisTarget(organisation_id=context['organisation_id'], study_id=context['study_id'], target_type='participant_case', participant_id=context['participant_id'], created_by_id=author.id),
+        ])
         db.add(ParticipantAppAccessCode(organisation_id=context['organisation_id'], participant_invitation_id=context['invitation_id'], code_hash=token_hash('account-deletion-code'), expires_at=now() + timedelta(minutes=30)))
         # Legacy rows have no verified participant link and must not be deleted
         # by recipient matching, even where their content might be sensitive.
@@ -10740,6 +10749,7 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         assert db.get(Participant, context['participant_id']) is None
         assert db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id == context['participant_id'])) is None
         assert db.scalar(select(EvidenceFile).where(EvidenceFile.participant_id == context['participant_id'])) is None
+        assert db.scalar(select(AnalysisTarget).where(AnalysisTarget.organisation_id == context['organisation_id'], AnalysisTarget.study_id == context['study_id'])) is None
         assert db.scalar(select(ParticipantMessage).where(ParticipantMessage.participant_id == context['participant_id'])) is None
         assert db.scalar(select(StudyEnrolment).where(StudyEnrolment.participant_id == context['participant_id'])) is None
         assert db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == context['participant_id'])) is None

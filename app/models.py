@@ -5,6 +5,7 @@ from enum import Enum
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Float,
@@ -689,6 +690,54 @@ class ResearchTheme(Base):
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AnalysisTarget(Base):
+    """A durable, scoped pointer to original research material.
+
+    This deliberately stores no participant text or media.  Its concrete
+    foreign keys retain referential integrity without a generic polymorphic
+    ``source_id``.  Future coding, annotations, regions and relationships can
+    point here while leaving source evidence authoritative.
+    """
+    __tablename__ = "analysis_targets"
+    __table_args__ = (
+        CheckConstraint(
+            "target_type IN ('activity_response', 'evidence_file', 'participant_case')",
+            name="ck_analysis_target_type",
+        ),
+        CheckConstraint(
+            "(target_type = 'activity_response' AND activity_response_id IS NOT NULL AND evidence_file_id IS NULL AND participant_id IS NULL) "
+            "OR (target_type = 'evidence_file' AND activity_response_id IS NULL AND evidence_file_id IS NOT NULL AND participant_id IS NULL) "
+            "OR (target_type = 'participant_case' AND activity_response_id IS NULL AND evidence_file_id IS NULL AND participant_id IS NOT NULL)",
+            name="ck_analysis_target_one_source",
+        ),
+        CheckConstraint(
+            "(authorship = 'researcher' AND created_by_id IS NOT NULL) OR authorship IN ('system', 'ai_suggestion')",
+            name="ck_analysis_target_authorship",
+        ),
+        Index("ix_analysis_targets_study_type", "organisation_id", "study_id", "target_type"),
+        Index("ix_analysis_targets_response", "activity_response_id"),
+        Index("ix_analysis_targets_evidence", "evidence_file_id"),
+        Index("ix_analysis_targets_participant", "participant_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    target_type: Mapped[str] = mapped_column(String(50), index=True)
+    activity_response_id: Mapped[int | None] = mapped_column(
+        ForeignKey("activity_responses.id"), nullable=True
+    )
+    evidence_file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("evidence_files.id"), nullable=True
+    )
+    participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id"), nullable=True)
+    anchor_json: Mapped[str] = mapped_column(Text, default="{}")
+    # A target's creator remains explicit so later objects can distinguish a
+    # researcher selecting material from system- or AI-proposed selections.
+    authorship: Mapped[str] = mapped_column(String(30), default="researcher", index=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class AuditEvent(Base):
