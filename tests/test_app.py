@@ -43,6 +43,28 @@ def test_research_workspace_reads_participant_api_answer_payloads():
     assert response_body('{"answer":"  Full app diary entry  ","choices":[]}') == 'Full app diary entry'
 
 
+def test_researcher_codebook_create_reparent_archive_and_restore():
+    from app.models import ResearchCode
+    with client:
+        client.cookies.clear(); auth()
+        studies = client.get('/studies')
+        study_id = int(studies.text.split('/studies/')[1].split('"')[0])
+        created = post_with_csrf(f'/studies/{study_id}/codebook', data={'name': 'Institutional trust', 'definition': 'Confidence in institutions', 'parent_code_id': ''}, follow_redirects=False)
+        assert created.status_code == 303
+        with SessionLocal() as db:
+            parent = db.scalar(select(ResearchCode).where(ResearchCode.study_id == study_id, ResearchCode.name == 'Institutional trust'))
+            assert parent is not None
+        assert post_with_csrf(f'/studies/{study_id}/codebook', data={'name': 'Trust in officers', 'definition': '', 'parent_code_id': str(parent.id)}, follow_redirects=False).status_code == 303
+        with SessionLocal() as db:
+            child = db.scalar(select(ResearchCode).where(ResearchCode.study_id == study_id, ResearchCode.name == 'Trust in officers'))
+            assert child is not None and child.parent_code_id == parent.id
+        assert post_with_csrf(f'/studies/{study_id}/codebook/{child.id}/edit', data={'name': 'Trust in officers', 'definition': 'Revised', 'parent_code_id': ''}, follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/codebook/{child.id}/archive', follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/codebook/{child.id}/restore', follow_redirects=False).status_code == 303
+        page = client.get(f'/studies/{study_id}/codebook')
+        assert page.status_code == 200 and 'Institutional trust' in page.text and 'Trust in officers' in page.text
+
+
 @pytest.fixture(scope='session', autouse=True)
 def cleanup_test_database():
     yield

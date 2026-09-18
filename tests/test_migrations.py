@@ -64,7 +64,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0025" in revision.stdout
+    assert "0026" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -111,7 +111,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0025" in result.stdout
+            assert "0026" in result.stdout
 
     active = subprocess.run(
         [
@@ -225,6 +225,23 @@ def test_analysis_targets_migration_enforces_concrete_sources_and_tenant_scope(t
     )
     assert foreign_creator_update.returncode != 0
     assert "researcher is outside organisation" in foreign_creator_update.stderr
+    codebook = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO research_codes (id, organisation_id, study_id, name, definition, created_by_id, created_at, updated_at) VALUES (1, 1, 1, 'Trust', 'Institutional trust', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP); INSERT INTO research_codes (id, organisation_id, study_id, name, definition, parent_code_id, created_by_id, created_at, updated_at) VALUES (2, 1, 1, 'Trust in officers', '', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);"],
+        capture_output=True, text=True, check=False,
+    )
+    assert codebook.returncode == 0, codebook.stderr
+    foreign_code_creator = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO research_codes (organisation_id, study_id, name, definition, created_by_id, created_at, updated_at) VALUES (1, 1, 'Foreign', '', 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);"],
+        capture_output=True, text=True, check=False,
+    )
+    assert foreign_code_creator.returncode != 0
+    assert "creator is outside organisation" in foreign_code_creator.stderr
+    circular_code = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE research_codes SET parent_code_id = 2 WHERE id = 1;"],
+        capture_output=True, text=True, check=False,
+    )
+    assert circular_code.returncode != 0
+    assert "hierarchy is circular" in circular_code.stderr
     invalid_scope = subprocess.run(
         ["sqlite3", str(database_path), "INSERT INTO analysis_targets (organisation_id, study_id, target_type, activity_response_id, anchor_json, authorship, created_by_id, created_at) VALUES (2, 1, 'activity_response', 1, '{}', 'researcher', 1, CURRENT_TIMESTAMP);"],
         capture_output=True, text=True, check=False,

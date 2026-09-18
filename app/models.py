@@ -692,6 +692,27 @@ class ResearchTheme(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class ResearchCode(Base):
+    """A researcher-managed analytical label, distinct from a theme or finding."""
+    __tablename__ = "research_codes"
+    __table_args__ = (
+        CheckConstraint("name <> ''", name="ck_research_code_name_nonblank"),
+        Index("ix_research_codes_study_parent", "organisation_id", "study_id", "parent_code_id"),
+        Index("ix_research_codes_study_archived", "organisation_id", "study_id", "archived_at"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    definition: Mapped[str] = mapped_column(Text, default="")
+    parent_code_id: Mapped[int | None] = mapped_column(ForeignKey("research_codes.id"), nullable=True)
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    archived_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class AnalysisTarget(Base):
     """A durable, scoped pointer to original research material.
 
