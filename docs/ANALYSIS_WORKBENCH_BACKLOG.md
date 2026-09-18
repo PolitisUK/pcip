@@ -18,7 +18,8 @@ one of three authoritative sources:
 The source links are concrete foreign keys, not a polymorphic type-and-ID
 relationship. Database check constraints enforce one valid source shape and
 make researcher, system, and AI-suggestion authorship explicit. SQLite and
-PostgreSQL scope checks reject cross-organisation or cross-study references.
+PostgreSQL scope checks reject cross-organisation or cross-study references,
+including researcher attribution to a user outside the target organisation.
 The study/type index supports deterministic study queries at longitudinal
 dataset scale; source indexes support efficient future annotation lookups.
 

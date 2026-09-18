@@ -197,7 +197,7 @@ def test_analysis_targets_migration_enforces_concrete_sources_and_tenant_scope(t
     schema = """
         PRAGMA foreign_keys = ON;
         INSERT INTO organisations (id, name, slug, created_at) VALUES (1, 'One', 'one', CURRENT_TIMESTAMP), (2, 'Two', 'two', CURRENT_TIMESTAMP);
-        INSERT INTO users (id, organisation_id, name, email, session_version, failed_login_count, role, is_platform_admin, is_active, created_at) VALUES (1, 1, 'Researcher', 'one@example.test', 1, 0, 'researcher', 0, 1, CURRENT_TIMESTAMP);
+        INSERT INTO users (id, organisation_id, name, email, session_version, failed_login_count, role, is_platform_admin, is_active, created_at) VALUES (1, 1, 'Researcher', 'one@example.test', 1, 0, 'researcher', 0, 1, CURRENT_TIMESTAMP), (2, 2, 'Foreign Researcher', 'two@example.test', 1, 0, 'researcher', 0, 1, CURRENT_TIMESTAMP);
         INSERT INTO projects (id, organisation_id, title, code, description, status, created_by_id, created_at, updated_at) VALUES (1, 1, 'Project', 'P1', '', 'draft', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
         INSERT INTO studies (id, organisation_id, project_id, title, code, description, methodology, status, demographics_schema_json, created_by_id, created_at, updated_at) VALUES (1, 1, 1, 'Study', 'S1', '', 'diary', 'draft', '[]', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
         INSERT INTO participants (id, organisation_id, reference, name, status, consent_status, communication_preference, tags, demographics_json, notes, created_by_id, created_at, updated_at) VALUES (1, 1, 'Case 1', 'Participant', 'active', 'granted', 'email', '', '{}', '', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
@@ -208,6 +208,23 @@ def test_analysis_targets_migration_enforces_concrete_sources_and_tenant_scope(t
     """
     inserted = subprocess.run(["sqlite3", str(database_path), schema], capture_output=True, text=True, check=False)
     assert inserted.returncode == 0, inserted.stderr
+    system_target = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO analysis_targets (organisation_id, study_id, target_type, activity_response_id, anchor_json, authorship, created_at) VALUES (1, 1, 'activity_response', 1, '{}', 'system', CURRENT_TIMESTAMP);"],
+        capture_output=True, text=True, check=False,
+    )
+    assert system_target.returncode == 0, system_target.stderr
+    foreign_creator = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO analysis_targets (organisation_id, study_id, target_type, activity_response_id, anchor_json, authorship, created_by_id, created_at) VALUES (1, 1, 'activity_response', 1, '{}', 'researcher', 2, CURRENT_TIMESTAMP);"],
+        capture_output=True, text=True, check=False,
+    )
+    assert foreign_creator.returncode != 0
+    assert "researcher is outside organisation" in foreign_creator.stderr
+    foreign_creator_update = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE analysis_targets SET created_by_id = 2 WHERE id = 1;"],
+        capture_output=True, text=True, check=False,
+    )
+    assert foreign_creator_update.returncode != 0
+    assert "researcher is outside organisation" in foreign_creator_update.stderr
     invalid_scope = subprocess.run(
         ["sqlite3", str(database_path), "INSERT INTO analysis_targets (organisation_id, study_id, target_type, activity_response_id, anchor_json, authorship, created_by_id, created_at) VALUES (2, 1, 'activity_response', 1, '{}', 'researcher', 1, CURRENT_TIMESTAMP);"],
         capture_output=True, text=True, check=False,

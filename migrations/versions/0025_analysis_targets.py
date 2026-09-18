@@ -21,6 +21,9 @@ def _sqlite_scope_triggers() -> None:
             BEGIN
               SELECT RAISE(ABORT, 'analysis target study is outside organisation')
               WHERE NOT EXISTS (SELECT 1 FROM studies WHERE id = NEW.study_id AND organisation_id = NEW.organisation_id);
+              SELECT RAISE(ABORT, 'analysis target researcher is outside organisation')
+              WHERE NEW.authorship = 'researcher' AND NOT EXISTS
+                (SELECT 1 FROM users WHERE id = NEW.created_by_id AND organisation_id = NEW.organisation_id);
               SELECT RAISE(ABORT, 'analysis target response is outside study scope')
               WHERE NEW.target_type = 'activity_response' AND NOT EXISTS
                 (SELECT 1 FROM activity_responses WHERE id = NEW.activity_response_id AND organisation_id = NEW.organisation_id AND study_id = NEW.study_id);
@@ -40,6 +43,10 @@ def _postgres_scope_trigger() -> None:
         BEGIN
           IF NOT EXISTS (SELECT 1 FROM studies WHERE id = NEW.study_id AND organisation_id = NEW.organisation_id) THEN
             RAISE EXCEPTION 'analysis target study is outside organisation';
+          END IF;
+          IF NEW.authorship = 'researcher' AND NOT EXISTS
+            (SELECT 1 FROM users WHERE id = NEW.created_by_id AND organisation_id = NEW.organisation_id) THEN
+            RAISE EXCEPTION 'analysis target researcher is outside organisation';
           END IF;
           IF NEW.target_type = 'activity_response' AND NOT EXISTS
             (SELECT 1 FROM activity_responses WHERE id = NEW.activity_response_id AND organisation_id = NEW.organisation_id AND study_id = NEW.study_id) THEN
