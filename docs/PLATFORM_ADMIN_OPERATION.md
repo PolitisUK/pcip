@@ -23,7 +23,7 @@ never fall back to the broader release-promotion identity.
 
 The workflow accepts only the enumerated fixed operations
 `lookup-user-identity`, `set-platform-admin-dry-run`, `set-platform-admin`,
-and `get-alembic-revision`. The final platform-administration operation is a
+`get-alembic-revision`, and `get-latest-failed-account-deletion-status`. The final platform-administration operation is a
 separate protected write; it is not controlled by a boolean or flag on the dry
 run.
 It does not accept an arbitrary shell command, Python module, CLI flags, or SQL.
@@ -52,6 +52,28 @@ a generic administrative command. Missing, multiple, or malformed revision
 rows and any unavailable production-operations component fail closed. The
 protected workflow validates the exact result schema before displaying this
 non-secret release evidence.
+
+## Fixed failed account-deletion status lookup
+
+`get-latest-failed-account-deletion-status` is a parameterless, read-only
+diagnostic operation for the latest retryable account-scoped participant
+deletion failure. It accepts no participant, study, email, request ID, SQL, or
+other caller-controlled parameter. The worker deterministically selects only
+the newest `failed_retrying` account-scoped deletion lifecycle record, ordered
+by `requested_at` descending and then ID descending.
+
+When one exists, it returns only the privacy request ID, lifecycle status,
+retriable flag, retry count, stored error-code class, and a boolean (or `null`
+when the participant link is unavailable) indicating whether a linked study
+has a meaningful configured deletion-retention exception. It never returns a
+participant identifier, name, reference, email, study identifier/name,
+participant content, invitation detail, or retention-exception text. When no
+matching lifecycle record exists, it returns only `{"found":false}`.
+
+This is not a general privacy-request query facility, a database console, or
+arbitrary SQL access. The lookup is performed in a PostgreSQL read-only
+transaction that is always rolled back, and the protected workflow validates
+one of the two exact approved result schemas before displaying it.
 
 Before first use, an infrastructure owner must separately approve and deploy
 `infra/production-operations.bicep` with the digest of a release that contains

@@ -225,6 +225,80 @@ def test_worker_calls_only_fixed_alembic_lookup_and_emits_minimal_result(monkeyp
     assert json.loads(capsys.readouterr().out)["result"] == {"alembic_revision": "0023"}
 
 
+def test_worker_calls_only_fixed_failed_account_deletion_lookup_and_emits_minimal_result(monkeypatch, capsys):
+    message, request = request_message(operation="get-latest-failed-account-deletion-status")
+    request.pop("email")
+    message.body = [json.dumps(request).encode()]
+    receiver = FakeReceiver([message])
+    captured = []
+    expected = {
+        "privacy_request_id": 42,
+        "status": "failed_retrying",
+        "retriable": True,
+        "retry_count": 2,
+        "last_error_code": "StorageError",
+        "has_deletion_retention_exception": False,
+    }
+
+    def fixed_lookup():
+        captured.append(True)
+        return SimpleNamespace(approved_result=lambda: expected)
+
+    monkeypatch.setattr(
+        worker.get_latest_failed_account_deletion_status,
+        "execute_get_latest_failed_account_deletion_status",
+        fixed_lookup,
+    )
+    assert worker.main(client_factory=lambda _namespace: FakeClient(receiver), environ=production_environment()) == 0
+
+    assert captured == [True]
+    assert receiver.completed == [message]
+    rendered = json.loads(capsys.readouterr().out)["result"]
+    assert rendered == expected
+    assert set(rendered) == set(expected)
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"found": True},
+        {"found": False, "extra": True},
+        {
+            "privacy_request_id": 42,
+            "status": "failed_retrying",
+            "retriable": True,
+            "retry_count": 2,
+            "last_error_code": "StorageError",
+            "has_deletion_retention_exception": False,
+            "participant_email": "must-not-leave-worker@example.org",
+        },
+        {
+            "privacy_request_id": 42,
+            "status": "completed",
+            "retriable": True,
+            "retry_count": 2,
+            "last_error_code": "StorageError",
+            "has_deletion_retention_exception": False,
+        },
+    ],
+)
+def test_worker_rejects_unapproved_failed_account_deletion_output(monkeypatch, capsys, result):
+    message, request = request_message(operation="get-latest-failed-account-deletion-status")
+    request.pop("email")
+    message.body = [json.dumps(request).encode()]
+    receiver = FakeReceiver([message])
+    monkeypatch.setattr(
+        worker.get_latest_failed_account_deletion_status,
+        "execute_get_latest_failed_account_deletion_status",
+        lambda: SimpleNamespace(approved_result=lambda: result),
+    )
+
+    assert worker.main(client_factory=lambda _namespace: FakeClient(receiver), environ=production_environment()) == 2
+    captured = capsys.readouterr()
+    assert receiver.completed == [message]
+    assert "must-not-leave-worker@example.org" not in captured.out + captured.err
+
+
 def test_worker_calls_only_fixed_platform_admin_dry_run_and_emits_approved_result(monkeypatch, capsys):
     message, request = request_message(operation="set-platform-admin-dry-run", user_id=7)
     receiver = FakeReceiver([message])
@@ -391,6 +465,13 @@ def test_worker_rejects_unapproved_dry_run_output(monkeypatch, capsys, result):
         {"operation": "get-alembic-revision", "user_id": 7},
         {"operation": "get-alembic-revision", "sql": "SELECT 1"},
         {"operation": "get-alembic-revision", "table": "alembic_version"},
+        {"operation": "get-latest-failed-account-deletion-status", "email": "existing@example.org"},
+        {"operation": "get-latest-failed-account-deletion-status", "user_id": 7},
+        {"operation": "get-latest-failed-account-deletion-status", "participant_id": 20},
+        {"operation": "get-latest-failed-account-deletion-status", "study_id": 30},
+        {"operation": "get-latest-failed-account-deletion-status", "request_id": 40},
+        {"operation": "get-latest-failed-account-deletion-status", "sql": "SELECT 1"},
+        {"operation": "inspect-all-privacy-requests"},
         {"email": "existing@example.org\n--unexpected"},
         {"correlation_id": "not-a-uuid"},
         {"unexpected": "value"},
@@ -453,11 +534,16 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "- set-platform-admin-dry-run" in workflow
     assert "- set-platform-admin" in workflow
     assert "- get-alembic-revision" in workflow
+    assert "- get-latest-failed-account-deletion-status" in workflow
     assert 'case "$OPERATION" in' in workflow
     assert "get-alembic-revision)" in workflow
+    assert "get-latest-failed-account-deletion-status)" in workflow
     assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/get_alembic_revision.py"' in workflow
     assert 'ALEMBIC_REVISION_OPERATION = "get-alembic-revision"' in workflow
     assert "get_alembic_revision.execute_get_alembic_revision" in workflow
+    assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/get_latest_failed_account_deletion_status.py"' in workflow
+    assert 'FAILED_ACCOUNT_DELETION_STATUS_OPERATION = "get-latest-failed-account-deletion-status"' in workflow
+    assert "get_latest_failed_account_deletion_status.execute_get_latest_failed_account_deletion_status" in workflow
     assert "set-platform-admin-dry-run)" in workflow
     assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/platform_admin_dry_run.py"' in workflow
     assert 'git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py"' in workflow
@@ -487,6 +573,8 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "ContainerAppConsoleLogs" in workflow
     assert '{correlation_id: $correlation_id, operation: $operation}' in workflow
     assert 'keys | sort) == ["alembic_revision"]' in workflow
+    assert 'keys | sort) == ["found"]' in workflow
+    assert '"has_deletion_retention_exception", "last_error_code", "privacy_request_id", "retriable", "retry_count", "status"' in workflow
 
 
 def test_operations_workflow_reads_app_metadata_without_publishing_access():
@@ -911,6 +999,50 @@ def test_operation_result_parser_accepts_only_exact_alembic_revision_schema():
         ) == []
 
 
+def test_operation_result_parser_accepts_only_exact_failed_account_deletion_status_schema():
+    correlation_id = "11111111-1111-4111-8111-111111111111"
+    result = {
+        "privacy_request_id": 42,
+        "status": "failed_retrying",
+        "retriable": True,
+        "retry_count": 2,
+        "last_error_code": "StorageError",
+        "has_deletion_retention_exception": None,
+    }
+    line = json.dumps({"correlation_id": correlation_id, "status": "succeeded", "result": result}, sort_keys=True)
+
+    assert _parse_approved_operation_logs(
+        [line], correlation_id, operation="get-latest-failed-account-deletion-status"
+    ) == [json.loads(line)]
+
+    not_found_line = json.dumps(
+        {"correlation_id": correlation_id, "status": "succeeded", "result": {"found": False}},
+        sort_keys=True,
+    )
+    assert _parse_approved_operation_logs(
+        [not_found_line], correlation_id, operation="get-latest-failed-account-deletion-status"
+    ) == [json.loads(not_found_line)]
+
+    for invalid in (
+        {"found": True},
+        {"found": False, "extra": True},
+        {**result, "participant_id": 20},
+        {**result, "status": "completed"},
+        {**result, "privacy_request_id": 0},
+        {**result, "retry_count": -1},
+        {**result, "has_deletion_retention_exception": 1},
+        {**result, "has_deletion_retention_exception": "unknown"},
+        {key: value for key, value in result.items() if key != "last_error_code"},
+    ):
+        invalid_line = json.dumps(
+            {"correlation_id": correlation_id, "status": "succeeded", "result": invalid},
+            sort_keys=True,
+        )
+        assert _parse_approved_operation_logs(
+            [invalid_line], correlation_id, operation="get-latest-failed-account-deletion-status"
+        ) == []
+
+
 def test_operation_result_parser_accepts_only_exact_platform_admin_enable_schema():
     correlation_id = "11111111-1111-4111-8111-111111111111"
     result = {
@@ -994,12 +1126,14 @@ def test_fixed_operation_modules_are_packaged_but_generic_admin_command_remains_
 
     assert "scripts/*" in dockerignore
     assert "!scripts/get_alembic_revision.py" in dockerignore
+    assert "!scripts/get_latest_failed_account_deletion_status.py" in dockerignore
     assert "!scripts/platform_admin_dry_run.py" in dockerignore
     assert "!scripts/platform_admin_enable.py" in dockerignore
     assert "!scripts/production_operation_worker.py" in dockerignore
     assert "!scripts/set_platform_admin.py" not in dockerignore
     assert "test -f /app/scripts/platform_admin_dry_run.py" in ci
     assert "test -f /app/scripts/get_alembic_revision.py" in ci
+    assert "test -f /app/scripts/get_latest_failed_account_deletion_status.py" in ci
     assert "test -f /app/scripts/platform_admin_enable.py" in ci
     assert "test ! -e /app/scripts/set_platform_admin.py" in ci
 
