@@ -52,10 +52,28 @@ Alembic metadata checks remain part of CI.
 - Analytical objects added later should reference targets and retain their own
   author, provenance, and audit records.
 
-## AW-02 — researcher codebook and coding
+## AW-02 — Researcher Codebook — complete
 
-Next, introduce researcher-managed codes and hierarchical codebooks, then bind
-code applications to `AnalysisTarget`. Define code lifecycle, permissions,
-audit events, anchor validation, and deletion interactions before adding an
-editing UI. Themes, findings, relationships, matrices, visual maps, and AI
-suggestion workflows remain later backlog items.
+AW-02 introduces `ResearchCode`, a researcher-authored analytical label that
+is deliberately distinct from `ResearchTheme`. Codes are scoped to one study,
+retain creator and timestamps, can have one optional parent, and may be
+archived/restored without hard deletion. They do not store participant content
+and participant deletion does not remove the codebook.
+
+Alembic revision `0026` adds the model, indexes, and SQLite/PostgreSQL guards
+for organisation-scoped creator and parent references, self-parenting, circular
+hierarchies, and archived parents. Existing children remain attached when a
+parent is archived, preserving future analytical provenance; an archived code
+cannot be edited or selected as a new parent until restored.
+
+The study codebook UI follows existing study permissions: anyone with study
+read access can inspect it; edit/manage access can create, edit, re-parent,
+archive, and restore. Significant operations emit existing audit events.
+Tests cover migration guards, hierarchy operations, archive/restore, and the
+server-rendered workflow. AW-03 remains intentionally unimplemented.
+
+## AW-03 — Passage-level coding
+
+Add exact text selections and code applications against `AnalysisTarget`.
+Define versioned anchor validation, coding provenance, and participant-deletion
+cleanup for code applications. Do not infer themes or findings automatically.

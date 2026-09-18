@@ -49,6 +49,7 @@ from .models import (
     Project,
     ProjectStatus,
     ResearchAnalysisSuggestion,
+    ResearchCode,
     ResearchTheme,
     PublicAuthSession,
     PublicTokenExchange,
@@ -81,6 +82,7 @@ from .research_api import (
     ThemeResponse,
 )
 from .theme_explorer import create_theme, parse_suggestion_ids
+from .codebook import archive_code, create_code, restore_code, update_code
 from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
@@ -3426,7 +3428,69 @@ def project_workspace_themes(project_id: int, request: Request, u=Depends(curren
     for response in responses:
         for item in response_codes(response.value_json):
             participants_by_code.setdefault(item, set()).add(response.participant_id)
-    return render(request, "research_themes.html", user=u, **_workspace_context(project_row, studies), codes=counts.most_common(), participants_by_code=participants_by_code, source_limit_reached=len(responses) == 5000)
+    codebook_counts = dict(db.execute(select(ResearchCode.study_id, func.count(ResearchCode.id)).where(ResearchCode.organisation_id == u.organisation_id, ResearchCode.study_id.in_(study_ids), ResearchCode.archived_at.is_(None)).group_by(ResearchCode.study_id)).all()) if study_ids else {}
+    return render(request, "research_themes.html", user=u, **_workspace_context(project_row, studies), codes=counts.most_common(), participants_by_code=participants_by_code, source_limit_reached=len(responses) == 5000, codebook_counts=codebook_counts)
+
+
+def _study_codebook_rows(db: Session, user: User, study_row: Study, include_archived: bool):
+    rows = db.scalars(select(ResearchCode).where(ResearchCode.organisation_id == user.organisation_id, ResearchCode.study_id == study_row.id).order_by(ResearchCode.name, ResearchCode.id)).all()
+    by_parent: dict[int | None, list[ResearchCode]] = {}
+    for row in rows:
+        by_parent.setdefault(row.parent_code_id, []).append(row)
+    output: list[tuple[ResearchCode, int]] = []
+    def visit(parent_id: int | None, depth: int, ancestry: set[int]):
+        for row in by_parent.get(parent_id, []):
+            if row.id in ancestry: continue
+            if include_archived or row.archived_at is None: output.append((row, depth))
+            visit(row.id, depth + 1, ancestry | {row.id})
+    visit(None, 0, set())
+    return rows, output
+
+
+@app.get("/studies/{study_id}/codebook", response_class=HTMLResponse)
+def study_codebook(study_id: int, request: Request, include_archived: bool = Query(False), u=Depends(current_user), db: Session = Depends(get_db)):
+    s = study(db, study_id, u.organisation_id); permission = require_study_permission(db, u, s)
+    all_codes, code_rows = _study_codebook_rows(db, u, s, include_archived)
+    creators = {row.id: row for row in db.scalars(select(User).where(User.organisation_id == u.organisation_id, User.id.in_({code.created_by_id for code in all_codes}))).all()} if all_codes else {}
+    return render(request, "research_codebook.html", user=u, study=s, codes=all_codes, code_rows=code_rows, creators=creators, can_edit=permission in {"edit", "manage"}, include_archived=include_archived)
+
+
+@app.post("/studies/{study_id}/codebook")
+def create_research_code(study_id: int, name: str = Form(...), definition: str = Form(""), parent_code_id: int | None = Form(None), u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
+    try: row = create_code(db, u, s, name=name, definition=definition, parent_code_id=parent_code_id)
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+    db.flush(); audit(db, u.organisation_id, u.id, "research_code.created", "research_code", row.id, row.name); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/codebook", 303)
+
+
+@app.post("/studies/{study_id}/codebook/{code_id}/edit")
+def edit_research_code(study_id: int, code_id: int, name: str = Form(...), definition: str = Form(""), parent_code_id: int | None = Form(None), u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
+    row = db.scalar(select(ResearchCode).where(ResearchCode.id == code_id, ResearchCode.organisation_id == u.organisation_id, ResearchCode.study_id == s.id))
+    if row is None: raise HTTPException(404, "Code not found")
+    try: hierarchy_changed = update_code(db, row, name=name, definition=definition, parent_code_id=parent_code_id)
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+    audit(db, u.organisation_id, u.id, "research_code.hierarchy_changed" if hierarchy_changed else "research_code.edited", "research_code", row.id, row.name); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/codebook", 303)
+
+
+@app.post("/studies/{study_id}/codebook/{code_id}/archive")
+def archive_research_code(study_id: int, code_id: int, u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
+    row = db.scalar(select(ResearchCode).where(ResearchCode.id == code_id, ResearchCode.organisation_id == u.organisation_id, ResearchCode.study_id == s.id))
+    if row is None: raise HTTPException(404, "Code not found")
+    archive_code(row, u); audit(db, u.organisation_id, u.id, "research_code.archived", "research_code", row.id, row.name); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/codebook?include_archived=true", 303)
+
+
+@app.post("/studies/{study_id}/codebook/{code_id}/restore")
+def restore_research_code(study_id: int, code_id: int, u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
+    row = db.scalar(select(ResearchCode).where(ResearchCode.id == code_id, ResearchCode.organisation_id == u.organisation_id, ResearchCode.study_id == s.id))
+    if row is None: raise HTTPException(404, "Code not found")
+    restore_code(row); audit(db, u.organisation_id, u.id, "research_code.restored", "research_code", row.id, row.name); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/codebook?include_archived=true", 303)
 
 
 @app.get("/projects/{project_id}/workspace/analysis", response_class=HTMLResponse)
