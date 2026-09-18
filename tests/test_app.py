@@ -3620,6 +3620,104 @@ def test_researcher_privacy_delete_storage_failure_is_not_reported_as_success(mo
         assert request_row.retriable is True
 
 
+@pytest.mark.parametrize('missing_all', [False, True])
+def test_researcher_privacy_delete_completes_when_azure_evidence_blob_is_already_missing(monkeypatch, missing_all):
+    from azure.core.exceptions import ResourceNotFoundError
+    from app.models import (
+        ActivityResponse,
+        EvidenceFile,
+        Participant,
+        ParticipantPasswordCredential,
+        ParticipantPrivacyRequest,
+    )
+    from app.security import hash_password
+    from app.storage import AzureBlobStorage
+    import app.main as main_module
+
+    context = _prepare_participant_api_activity_response_context(
+        'researcher-privacy-missing-azure-blob-all'
+        if missing_all
+        else 'researcher-privacy-missing-azure-blob-one'
+    )
+    existing_key = 'synthetic-existing-azure-evidence.txt'
+    missing_key = 'synthetic-missing-azure-evidence.txt'
+    with SessionLocal() as db:
+        response_row = ActivityResponse(
+            organisation_id=context['organisation_id'], study_id=context['study_id'],
+            activity_id=context['activity_id'], participant_id=context['participant_id'], value_json='{}',
+        )
+        db.add(response_row)
+        db.flush()
+        for stored_name in (existing_key, missing_key):
+            db.add(EvidenceFile(
+                organisation_id=context['organisation_id'], study_id=context['study_id'],
+                activity_id=context['activity_id'], participant_id=context['participant_id'],
+                response_id=response_row.id, original_name='evidence.txt', stored_name=stored_name,
+                content_type='text/plain',
+            ))
+        credential = ParticipantPasswordCredential(
+            organisation_id=context['organisation_id'],
+            participant_id=context['participant_id'],
+            participant_invitation_id=context['invitation_id'],
+            login_identifier_normalised=unique_value('deletion-credential').lower(),
+            password_hash=hash_password('Synthetic-test-password-123!'),
+        )
+        db.add(credential)
+        db.commit()
+        credential_id = credential.id
+
+    class SyntheticAzureContainer:
+        def __init__(self):
+            self.deleted = []
+
+        def delete_blob(self, key, *, delete_snapshots):
+            self.deleted.append((key, delete_snapshots))
+            if missing_all or key == missing_key:
+                error = ResourceNotFoundError(message='synthetic absent blob')
+                error.error_code = 'BlobNotFound'
+                raise error
+
+    container = SyntheticAzureContainer()
+    azure_storage = object.__new__(AzureBlobStorage)
+    azure_storage.container = container
+    monkeypatch.setattr(main_module, 'storage', azure_storage)
+    with client:
+        client.cookies.clear()
+        assert auth().status_code == 303
+        assert post_with_csrf(
+            f"/participants/{context['participant_id']}/privacy/delete-request",
+            follow_redirects=False,
+        ).status_code == 303
+        detail = client.get(f"/participants/{context['participant_id']}")
+        token_match = re.search(r'name="workflow_token" value="([^"]+)"', detail.text)
+        assert token_match is not None
+        result = post_with_csrf(
+            f"/participants/{context['participant_id']}/privacy/delete-execute",
+            data={'workflow_token': token_match.group(1), 'mode': 'delete'},
+            follow_redirects=False,
+        )
+        assert result.status_code == 303
+        assert result.headers['location'] == '/participants'
+
+    assert {key for key, snapshots in container.deleted if snapshots == 'include'} == {
+        existing_key,
+        missing_key,
+    }
+    with SessionLocal() as db:
+        assert db.get(Participant, context['participant_id']) is None
+        assert db.scalar(select(EvidenceFile).where(EvidenceFile.participant_id == context['participant_id'])) is None
+        assert db.get(ParticipantPasswordCredential, credential_id) is None
+        request_row = db.scalar(select(ParticipantPrivacyRequest).where(
+            ParticipantPrivacyRequest.organisation_id == context['organisation_id'],
+            ParticipantPrivacyRequest.request_type == 'deletion',
+            ParticipantPrivacyRequest.scope == 'account',
+        ).order_by(ParticipantPrivacyRequest.id.desc()))
+        assert request_row is not None
+        assert request_row.status == 'completed'
+        assert request_row.retriable is False
+        assert request_row.last_error_code == ''
+
+
 def test_privacy_retention_apply_processes_configured_participants_and_audits():
     from app.models import AuditEvent, Participant
     original_days = settings.privacy_retention_days
@@ -3950,6 +4048,85 @@ def test_storage_limit_and_antivirus_test_signature(tmp_path):
         assert False, 'Expected upload limit rejection'
     except ValueError:
         pass
+
+
+def test_local_storage_delete_is_idempotent_for_an_already_missing_object(tmp_path):
+    from app.storage import LocalStorage
+
+    LocalStorage(tmp_path).delete('already-missing.txt')
+
+
+def test_azure_blob_storage_delete_treats_only_blob_not_found_as_success():
+    from azure.core.exceptions import ResourceNotFoundError
+    from app.storage import AzureBlobStorage
+
+    class SyntheticContainer:
+        def __init__(self):
+            self.calls = []
+
+        def delete_blob(self, key, *, delete_snapshots):
+            self.calls.append((key, delete_snapshots))
+            error = ResourceNotFoundError(message='synthetic absent blob')
+            error.error_code = 'BlobNotFound'
+            raise error
+
+    container = SyntheticContainer()
+    storage = object.__new__(AzureBlobStorage)
+    storage.container = container
+
+    storage.delete('evidence/already-missing.txt')
+
+    assert container.calls == [('evidence/already-missing.txt', 'include')]
+
+
+@pytest.mark.parametrize('error_factory', [
+    lambda: _azure_resource_not_found('ContainerNotFound'),
+    lambda: _azure_storage_error('ClientAuthenticationError'),
+    lambda: _azure_storage_error('HttpResponseError'),
+    lambda: _azure_storage_error('ServiceRequestError'),
+    lambda: _azure_storage_error('ServiceResponseError'),
+    lambda: RuntimeError('synthetic unexpected failure'),
+])
+def test_azure_blob_storage_delete_propagates_non_blob_not_found_failures(error_factory):
+    from app.storage import AzureBlobStorage
+
+    error = error_factory()
+
+    class SyntheticContainer:
+        def delete_blob(self, _key, *, delete_snapshots):
+            assert delete_snapshots == 'include'
+            raise error
+
+    storage = object.__new__(AzureBlobStorage)
+    storage.container = SyntheticContainer()
+
+    with pytest.raises(type(error)):
+        storage.delete('evidence/not-safe-to-ignore.txt')
+
+
+def _azure_resource_not_found(error_code):
+    from azure.core.exceptions import ResourceNotFoundError
+
+    error = ResourceNotFoundError(message='synthetic storage response')
+    error.error_code = error_code
+    return error
+
+
+def _azure_storage_error(name):
+    from azure.core.exceptions import (
+        ClientAuthenticationError,
+        HttpResponseError,
+        ServiceRequestError,
+        ServiceResponseError,
+    )
+
+    errors = {
+        'ClientAuthenticationError': ClientAuthenticationError,
+        'HttpResponseError': HttpResponseError,
+        'ServiceRequestError': ServiceRequestError,
+        'ServiceResponseError': ServiceResponseError,
+    }
+    return errors[name](message='synthetic storage failure')
 
 
 def test_defender_webhook_validation_and_unknown_result():

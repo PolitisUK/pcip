@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import secrets
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import BinaryIO, Protocol
-import secrets
-import tempfile
+
+from azure.core.exceptions import ResourceNotFoundError
 
 from .config import settings
 
@@ -25,7 +27,13 @@ class StorageBackend(Protocol):
 
     def ensure_ready(self) -> None: ...
     def save_stream(self, stream: BinaryIO, original_name: str, max_bytes: int) -> StoredObject: ...
-    def delete(self, key: str) -> None: ...
+    def delete(self, key: str) -> None:
+        """Delete one object; an already-absent object is a successful delete.
+
+        Implementations must propagate every other storage failure so callers
+        can preserve fail-safe retry behaviour.
+        """
+        ...
     def scan_result(self, key: str) -> tuple[str, str]: ...
     def download_url(self, key: str, filename: str, content_type: str, minutes: int = 5) -> str | None: ...
 
@@ -136,7 +144,20 @@ class AzureBlobStorage:
         )
 
     def delete(self, key: str) -> None:
-        self.container.delete_blob(key, delete_snapshots="include")
+        """Delete an Azure blob, treating only a missing blob as already deleted.
+
+        Azure reports both missing blobs and broader resource failures through
+        ``ResourceNotFoundError``.  Only the documented ``BlobNotFound`` code
+        is idempotent here; a missing container, bad configuration, or any
+        authentication, authorisation, transport, timeout, or service error
+        remains visible to the deletion lifecycle for retry.
+        """
+        try:
+            self.container.delete_blob(key, delete_snapshots="include")
+        except ResourceNotFoundError as exc:
+            if getattr(exc, "error_code", None) == "BlobNotFound":
+                return
+            raise
 
     def scan_result(self, key: str) -> tuple[str, str]:
         blob = self.container.get_blob_client(key)
