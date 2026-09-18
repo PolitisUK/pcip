@@ -23,6 +23,7 @@ scripts/*
 !scripts/seed_rivermere_demo.py
 !scripts/lookup_user_identity.py
 !scripts/get_alembic_revision.py
+!scripts/get_latest_failed_account_deletion_status.py
 !scripts/platform_admin_dry_run.py
 !scripts/platform_admin_enable.py
 !scripts/production_operation_worker.py

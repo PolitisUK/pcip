@@ -21,6 +21,7 @@ from azure.servicebus import ServiceBusClient
 
 from scripts import (
     get_alembic_revision,
+    get_latest_failed_account_deletion_status,
     lookup_user_identity,
     platform_admin_dry_run,
     platform_admin_enable,
@@ -32,6 +33,7 @@ LOOKUP_OPERATION = "lookup-user-identity"
 PLATFORM_ADMIN_DRY_RUN_OPERATION = "set-platform-admin-dry-run"
 PLATFORM_ADMIN_ENABLE_OPERATION = "set-platform-admin"
 ALEMBIC_REVISION_OPERATION = "get-alembic-revision"
+FAILED_ACCOUNT_DELETION_STATUS_OPERATION = "get-latest-failed-account-deletion-status"
 
 
 class ProductionOperationError(RuntimeError):
@@ -79,7 +81,10 @@ def parse_request(body: bytes) -> OperationRequest:
         str(parsed_id) != correlation_id.lower()
     ):
         raise ProductionOperationError("Production operation refused.")
-    if operation == ALEMBIC_REVISION_OPERATION:
+    if operation in {
+        ALEMBIC_REVISION_OPERATION,
+        FAILED_ACCOUNT_DELETION_STATUS_OPERATION,
+    }:
         if set(payload) != {"correlation_id", "operation"}:
             raise ProductionOperationError("Production operation refused.")
         return OperationRequest(correlation_id=correlation_id, operation=operation)
@@ -151,6 +156,35 @@ def _valid_memberships(value: Any) -> bool:
     )
 
 
+def _valid_failed_account_deletion_status(value: Any) -> bool:
+    if value == {"found": False}:
+        return True
+    if not isinstance(value, dict) or set(value) != {
+        "privacy_request_id",
+        "status",
+        "retriable",
+        "retry_count",
+        "last_error_code",
+        "has_deletion_retention_exception",
+    }:
+        return False
+    return (
+        type(value["privacy_request_id"]) is int
+        and value["privacy_request_id"] > 0
+        and value["status"] == "failed_retrying"
+        and type(value["retriable"]) is bool
+        and type(value["retry_count"]) is int
+        and value["retry_count"] >= 0
+        and isinstance(value["last_error_code"], str)
+        and len(value["last_error_code"]) <= 80
+        and (
+            value["has_deletion_retention_exception"] is True
+            or value["has_deletion_retention_exception"] is False
+            or value["has_deletion_retention_exception"] is None
+        )
+    )
+
+
 def _validated_result(request: OperationRequest) -> dict[str, Any]:
     if request.operation == ALEMBIC_REVISION_OPERATION:
         try:
@@ -163,6 +197,17 @@ def _validated_result(request: OperationRequest) -> dict[str, Any]:
             or not result["alembic_revision"].isdigit()
             or len(result["alembic_revision"]) != 4
         ):
+            raise ProductionOperationError("Production operation refused.")
+        return result
+    if request.operation == FAILED_ACCOUNT_DELETION_STATUS_OPERATION:
+        try:
+            result = (
+                get_latest_failed_account_deletion_status.execute_get_latest_failed_account_deletion_status()
+                .approved_result()
+            )
+        except get_latest_failed_account_deletion_status.FailedAccountDeletionStatusLookupError as exc:
+            raise ProductionOperationError("Production operation refused.") from exc
+        if not _valid_failed_account_deletion_status(result):
             raise ProductionOperationError("Production operation refused.")
         return result
     if request.operation == LOOKUP_OPERATION:

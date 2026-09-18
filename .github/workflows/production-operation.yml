@@ -12,12 +12,13 @@ on:
           - set-platform-admin-dry-run
           - set-platform-admin
           - get-alembic-revision
+          - get-latest-failed-account-deletion-status
       email:
-        description: Exact email for an identity or platform-admin operation. It is not used by the Alembic lookup.
+        description: Exact email for an identity or platform-admin operation. It is not used by parameterless read-only lookups.
         required: false
         type: string
       user_id:
-        description: Verified internal user ID; required only for the platform-admin dry run.
+        description: Verified internal user ID; required only for platform-admin operations.
         required: false
         type: string
       release_sha:
@@ -91,6 +92,13 @@ jobs:
               grep -Fq 'ALEMBIC_REVISION_OPERATION = "get-alembic-revision"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
               grep -Fq 'get_alembic_revision.execute_get_alembic_revision' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
               ;;
+            get-latest-failed-account-deletion-status)
+              test -z "$OPERATION_EMAIL" && test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
+              git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/get_latest_failed_account_deletion_status.py" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              worker_source=$(git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py")
+              grep -Fq 'FAILED_ACCOUNT_DELETION_STATUS_OPERATION = "get-latest-failed-account-deletion-status"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              grep -Fq 'get_latest_failed_account_deletion_status.execute_get_latest_failed_account_deletion_status' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              ;;
             lookup-user-identity)
               test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
               ;;
@@ -117,7 +125,7 @@ jobs:
           [[ "$PRODUCTION_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "production_image_digest must be immutable." >&2; exit 1; }
           [[ "$OPERATIONS_WORKER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "operations worker digest must be immutable." >&2; exit 1; }
           [[ "$OPERATIONS_WORKER_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "operations worker provenance revision is invalid." >&2; exit 1; }
-          if test "$OPERATION" != "get-alembic-revision"; then
+          if test "$OPERATION" != "get-alembic-revision" && test "$OPERATION" != "get-latest-failed-account-deletion-status"; then
             test "${#OPERATION_EMAIL}" -le 254 || { echo "The approved operation input was rejected." >&2; exit 1; }
             [[ "$OPERATION_EMAIL" != *$'\n'* && "$OPERATION_EMAIL" != *$'\r'* && "$OPERATION_EMAIL" == *@* ]] || { echo "The approved operation input was rejected." >&2; exit 1; }
             echo "::add-mask::$OPERATION_EMAIL"
@@ -188,7 +196,7 @@ jobs:
           request_file=$(mktemp)
           trap 'rm -f "$request_file"' EXIT
           case "$OPERATION" in
-            get-alembic-revision)
+            get-alembic-revision|get-latest-failed-account-deletion-status)
               jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" \
                 '{correlation_id: $correlation_id, operation: $operation}' > "$request_file"
               ;;
@@ -252,6 +260,21 @@ jobs:
                       $operation == "get-alembic-revision" and
                       (.result | (keys | sort) == ["alembic_revision"]) and
                       (.result.alembic_revision | strings | (match("^[0-9]{4}$").string | length == 4))
+                    ) or
+                    (
+                      $operation == "get-latest-failed-account-deletion-status" and
+                      (
+                        ((.result | (keys | sort) == ["found"]) and .result.found == false) or
+                        (
+                          (.result | (keys | sort) == ["has_deletion_retention_exception", "last_error_code", "privacy_request_id", "retriable", "retry_count", "status"]) and
+                          (.result.privacy_request_id | type == "number" and . > 0 and floor == .) and
+                          .result.status == "failed_retrying" and
+                          (.result.retriable | type == "boolean") and
+                          (.result.retry_count | type == "number" and . >= 0 and floor == .) and
+                          (.result.last_error_code | type == "string" and length <= 80) and
+                          ((.result.has_deletion_retention_exception | type) == "boolean" or (.result.has_deletion_retention_exception | type) == "null")
+                        )
+                      )
                     ) or
                     (
                       $operation == "lookup-user-identity" and
