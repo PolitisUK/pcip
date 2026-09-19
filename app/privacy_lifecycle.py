@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from .models import (
     ActivityResponse,
     AnalysisTarget,
+    CodeApplication,
     AuditEvent,
     EvidenceConfidenceAssessment,
     EvidenceFile,
@@ -108,6 +109,9 @@ def _delete_research_derivatives(
 ) -> None:
     if not response_ids:
         return
+    target_ids = set(db.scalars(select(AnalysisTarget.id).where(AnalysisTarget.organisation_id == organisation_id, AnalysisTarget.activity_response_id.in_(response_ids))))
+    if target_ids:
+        db.execute(delete(CodeApplication).where(CodeApplication.analysis_target_id.in_(target_ids)))
     db.execute(delete(AnalysisTarget).where(
         AnalysisTarget.organisation_id == organisation_id,
         AnalysisTarget.activity_response_id.in_(response_ids),

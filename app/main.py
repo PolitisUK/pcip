@@ -50,6 +50,8 @@ from .models import (
     ProjectStatus,
     ResearchAnalysisSuggestion,
     ResearchCode,
+    AnalysisTarget,
+    CodeApplication,
     ResearchTheme,
     PublicAuthSession,
     PublicTokenExchange,
@@ -83,6 +85,7 @@ from .research_api import (
 )
 from .theme_explorer import create_theme, parse_suggestion_ids
 from .codebook import archive_code, create_code, restore_code, update_code
+from .passage_coding import apply_codes
 from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
@@ -3384,6 +3387,30 @@ def project_workspace_entries_page(
     response_rows = db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id == u.organisation_id, ActivityResponse.study_id.in_(study_ids), ActivityResponse.status == "submitted").limit(5000)).all() if study_ids else []
     codes = [name for name, _ in code_counts(response_rows).most_common()]
     return render(request, "research_entries.html", user=u, **_workspace_context(project_row, studies), items=items, total=total, pages=pages, page=page, previous_url=page_url(request, page - 1) if page > 1 else None, next_url=page_url(request, page + 1) if page < pages else None, participant_rows=participant_rows, prompts=prompts, codes=codes, filters={"participant_id": selected_participant_id, "prompt_id": selected_prompt_id, "code": code, "q": q, "date_from": date_from, "date_to": date_to, "evidence": evidence, "order": order})
+
+@app.post("/studies/{study_id}/responses/{response_id}/code-applications")
+def create_code_application(study_id:int,response_id:int,start:int=Form(...),end:int=Form(...),code_ids:list[int]=Form(...),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    response=db.scalar(select(ActivityResponse).where(ActivityResponse.id==response_id,ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id==s.id))
+    if response is None: raise HTTPException(404,"Response not found")
+    body=response_body(response.value_json)
+    if not body: raise HTTPException(400,"Response has no textual content")
+    target=db.scalar(select(AnalysisTarget).where(AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.study_id==s.id,AnalysisTarget.activity_response_id==response.id))
+    if target is None:
+        target=AnalysisTarget(organisation_id=u.organisation_id,study_id=s.id,target_type="activity_response",activity_response_id=response.id,anchor_json="{}",created_by_id=u.id); db.add(target); db.flush()
+    try: rows=apply_codes(db,u,target=target,text=body,code_ids=code_ids,start=start,end=end)
+    except (ValueError,PermissionError) as exc: raise HTTPException(400,str(exc)) from exc
+    try: db.flush()
+    except IntegrityError: db.rollback(); raise HTTPException(409,"That exact code application already exists")
+    for row in rows: audit(db,u.organisation_id,u.id,"code_application.created","code_application",row.id,"passage coding")
+    db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
+
+@app.post("/studies/{study_id}/code-applications/{application_id}/delete")
+def remove_code_application(study_id:int,application_id:int,u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    row=db.scalar(select(CodeApplication).where(CodeApplication.id==application_id,CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id==s.id))
+    if row is None: raise HTTPException(404,"Code application not found")
+    audit(db,u.organisation_id,u.id,"code_application.removed","code_application",row.id,"passage coding"); db.delete(row); db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 
 @app.get("/projects/{project_id}/workspace/participants", response_class=HTMLResponse)

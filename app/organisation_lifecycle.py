@@ -23,6 +23,7 @@ from .models import (
     ResearchCode,
     ResearchTheme,
     AnalysisTarget,
+    CodeApplication,
     Study,
     StudyAccess,
     StudyConsentBundle,
@@ -75,6 +76,7 @@ MEANINGFUL_ORGANISATION_MODELS = (
     (ResearchTheme, "research themes"),
     (ResearchCode, "research codes"),
     (AnalysisTarget, "analysis targets"),
+    (CodeApplication, "code applications"),
     (OutboxEmail, "email delivery records"),
     (StudyAccess, "study access records"),
 )
