@@ -85,7 +85,7 @@ from .research_api import (
 )
 from .theme_explorer import create_theme, parse_suggestion_ids
 from .codebook import archive_code, create_code, restore_code, update_code
-from .passage_coding import apply_codes
+from .passage_coding import apply_codes, verified_passage
 from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
@@ -3392,9 +3392,14 @@ def project_workspace_entries_page(
     code_map={x.id:x for x in db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id)).all()}
     users={x.id:x for x in db.scalars(select(User).where(User.organisation_id==u.organisation_id)).all()}
     active_codes=db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id.in_(study_ids),ResearchCode.archived_at.is_(None))).all() if study_ids else []
-    apps_by_response={}
-    for item in applications: apps_by_response.setdefault(next((r for r,t in targets.items() if t.id==item.analysis_target_id),None),[]).append(item)
-    return render(request, "research_entries.html", user=u, **_workspace_context(project_row, studies), items=items, total=total, pages=pages, page=page, previous_url=page_url(request, page - 1) if page > 1 else None, next_url=page_url(request, page + 1) if page < pages else None, participant_rows=participant_rows, prompts=prompts, codes=codes, filters={"participant_id": selected_participant_id, "prompt_id": selected_prompt_id, "code": code, "q": q, "date_from": date_from, "date_to": date_to, "evidence": evidence, "order": order}, targets=targets, applications=apps_by_response, code_map=code_map, users=users, active_codes=active_codes)
+    apps_by_response={}; app_passages={}
+    response_map={item["response"].id:item["body"] for item in items}
+    for item in applications:
+        response_id=next((r for r,t in targets.items() if t.id==item.analysis_target_id),None)
+        apps_by_response.setdefault(response_id,[]).append(item)
+        app_passages[item.id]=verified_passage(response_map.get(response_id,""),item.anchor_json)
+    study_editability={row.id: study_permission(db,u,row) in {"edit","manage"} for row in studies}
+    return render(request, "research_entries.html", user=u, **_workspace_context(project_row, studies), items=items, total=total, pages=pages, page=page, previous_url=page_url(request, page - 1) if page > 1 else None, next_url=page_url(request, page + 1) if page < pages else None, participant_rows=participant_rows, prompts=prompts, codes=codes, filters={"participant_id": selected_participant_id, "prompt_id": selected_prompt_id, "code": code, "q": q, "date_from": date_from, "date_to": date_to, "evidence": evidence, "order": order}, targets=targets, applications=apps_by_response, app_passages=app_passages, code_map=code_map, users=users, active_codes=active_codes, study_editability=study_editability)
 
 @app.post("/studies/{study_id}/responses/{response_id}/code-applications")
 def create_code_application(study_id:int,response_id:int,start:int=Form(...),end:int=Form(...),code_ids:list[int]=Form(...),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):

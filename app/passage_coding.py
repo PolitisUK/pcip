@@ -12,6 +12,19 @@ def text_anchor(text: str, start: int, end: int) -> str:
     selected = text[start:end]
     return json.dumps({"version": 1, "start": start, "end": end, "fingerprint": hashlib.sha256(selected.encode()).hexdigest()}, separators=(",", ":"))
 
+def verified_passage(text: str, anchor_json: str) -> str | None:
+    """Return only a passage whose version, offsets and fingerprint verify."""
+    try:
+        anchor = json.loads(anchor_json)
+        if not isinstance(anchor, dict) or anchor.get("version") != 1: return None
+        start, end = anchor["start"], anchor["end"]
+        if not isinstance(start, int) or not isinstance(end, int): return None
+        selected = text[start:end]
+        if start < 0 or start >= end or end > len(text): return None
+        if hashlib.sha256(selected.encode()).hexdigest() != anchor.get("fingerprint"): return None
+        return selected
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError): return None
+
 
 def apply_codes(db: Session, user: User, *, target: AnalysisTarget, text: str, code_ids: list[int], start: int, end: int):
     if target.organisation_id != user.organisation_id or target.target_type != "activity_response": raise PermissionError("Target is unavailable")
