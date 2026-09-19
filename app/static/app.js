@@ -107,3 +107,20 @@ document.querySelectorAll("[data-organisation-form]").forEach(function (form) {
     slugWasEdited = true;
   });
 });
+document.addEventListener('selectionchange', () => {
+  const selection = getSelection();
+  if (!selection || !selection.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  const node = range.commonAncestorContainer;
+  const body = node.nodeType === Node.ELEMENT_NODE
+    ? node.closest('.entry-card__body')
+    : node.parentElement?.closest('.entry-card__body');
+  if (!body || !body.contains(range.startContainer) || !body.contains(range.endContainer)) return;
+  const before = document.createRange(); before.selectNodeContents(body); before.setEnd(range.startContainer, range.startOffset);
+  const start = [...before.toString()].length, end = start + [...range.toString()].length;
+  const form = body.closest('.entry-card')?.querySelector('.coding-form');
+  if (!form || end <= start) return;
+  form.querySelector('.start').value = start; form.querySelector('.end').value = end;
+  form.querySelector('.selection-status').textContent = `Selected passage: “${range.toString()}”`;
+  form.querySelector('button').disabled = false;
+});
