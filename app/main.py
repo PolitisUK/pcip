@@ -3391,7 +3391,10 @@ def project_workspace_entries_page(
     applications=db.scalars(select(CodeApplication).where(CodeApplication.organisation_id==u.organisation_id,CodeApplication.analysis_target_id.in_([x.id for x in targets.values()]))).all() if targets else []
     code_map={x.id:x for x in db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id)).all()}
     users={x.id:x for x in db.scalars(select(User).where(User.organisation_id==u.organisation_id)).all()}
-    active_codes=db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id.in_(study_ids),ResearchCode.archived_at.is_(None))).all() if study_ids else []
+    active_code_rows=db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id.in_(study_ids),ResearchCode.archived_at.is_(None))).all() if study_ids else []
+    active_codes={}
+    for code_row in active_code_rows:
+        active_codes.setdefault(code_row.study_id, []).append(code_row)
     apps_by_response={}; app_passages={}
     response_map={item["response"].id:item["body"] for item in items}
     for item in applications:
