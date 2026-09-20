@@ -26,6 +26,7 @@ from .models import (
     CodeApplication,
     ResearchAnnotation,
     ResearchMemo,
+    AnalyticalRelationship,
     Study,
     StudyAccess,
     StudyConsentBundle,
@@ -81,6 +82,7 @@ MEANINGFUL_ORGANISATION_MODELS = (
     (CodeApplication, "code applications"),
     (ResearchAnnotation, "research annotations"),
     (ResearchMemo, "research memos"),
+    (AnalyticalRelationship, "analytical relationships"),
     (OutboxEmail, "email delivery records"),
     (StudyAccess, "study access records"),
 )

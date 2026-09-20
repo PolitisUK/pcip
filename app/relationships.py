@@ -1,0 +1,37 @@
+from sqlalchemy import and_, delete, or_, select
+from sqlalchemy.orm import Session
+
+from .models import AnalysisTarget, AnalyticalRelationship, CodeApplication, ResearchAnnotation, ResearchCode, ResearchMemo, ResearchTheme, User
+
+
+RELATIONSHIP_TYPES = ("supports", "contradicts", "explains", "relates_to", "precedes", "follows", "refines")
+OBJECT_MODELS = {"analysis_target": AnalysisTarget, "code_application": CodeApplication, "annotation": ResearchAnnotation, "memo": ResearchMemo, "code": ResearchCode, "theme": ResearchTheme}
+
+
+def parse_object_ref(value: str) -> tuple[str, int]:
+    try:
+        object_type, raw_id = value.split(":", 1); object_id = int(raw_id)
+    except (ValueError, AttributeError) as exc:
+        raise ValueError("Analytical object reference is invalid") from exc
+    if object_type not in OBJECT_MODELS or object_id < 1:
+        raise ValueError("Analytical object reference is invalid")
+    return object_type, object_id
+
+
+def create_relationship(db: Session, user: User, *, study_id: int, source_ref: str, relationship_type: str, target_ref: str, rationale: str) -> AnalyticalRelationship:
+    source_type, source_id = parse_object_ref(source_ref); target_type, target_id = parse_object_ref(target_ref)
+    if relationship_type not in RELATIONSHIP_TYPES: raise ValueError("Relationship type is invalid")
+    if (source_type, source_id) == (target_type, target_id): raise ValueError("An object cannot relate to itself")
+    for object_type, object_id in ((source_type, source_id), (target_type, target_id)):
+        model = OBJECT_MODELS[object_type]
+        if db.scalar(select(model.id).where(model.id==object_id,model.organisation_id==user.organisation_id,model.study_id==study_id)) is None:
+            raise ValueError("Analytical object is unavailable")
+    note=rationale.strip()
+    if len(note)>2000: raise ValueError("Relationship rationale is too long")
+    row=AnalyticalRelationship(organisation_id=user.organisation_id,study_id=study_id,source_type=source_type,source_id=source_id,relationship_type=relationship_type,target_type=target_type,target_id=target_id,rationale=note,created_by_id=user.id)
+    db.add(row); return row
+
+
+def remove_object_relationships(db: Session, object_type: str, object_ids: set[int]) -> None:
+    if object_type not in OBJECT_MODELS or not object_ids: return
+    db.execute(delete(AnalyticalRelationship).where(or_(and_(AnalyticalRelationship.source_type==object_type,AnalyticalRelationship.source_id.in_(object_ids)),and_(AnalyticalRelationship.target_type==object_type,AnalyticalRelationship.target_id.in_(object_ids)))))

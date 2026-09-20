@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -20,6 +20,7 @@ from .models import (
     CodeApplication,
     ResearchAnnotation,
     ResearchMemo,
+    AnalyticalRelationship,
     AuditEvent,
     EvidenceConfidenceAssessment,
     EvidenceFile,
@@ -64,6 +65,14 @@ def _json_ids(value: str) -> set[int]:
     except json.JSONDecodeError:
         return set()
     return {item for item in decoded if isinstance(item, int)} if isinstance(decoded, list) else set()
+
+
+def _delete_relationship_references(db: Session, object_type: str, object_ids: set[int]) -> None:
+    if object_ids:
+        db.execute(delete(AnalyticalRelationship).where(or_(
+            and_(AnalyticalRelationship.source_type == object_type, AnalyticalRelationship.source_id.in_(object_ids)),
+            and_(AnalyticalRelationship.target_type == object_type, AnalyticalRelationship.target_id.in_(object_ids)),
+        )))
 
 
 def revoke_participant_access(
@@ -113,10 +122,16 @@ def _delete_research_derivatives(
         return
     target_ids = set(db.scalars(select(AnalysisTarget.id).where(AnalysisTarget.organisation_id == organisation_id, AnalysisTarget.activity_response_id.in_(response_ids))))
     if target_ids:
+        _delete_relationship_references(db,"analysis_target",target_ids)
+        _delete_relationship_references(db,"code_application",set(db.scalars(select(CodeApplication.id).where(CodeApplication.analysis_target_id.in_(target_ids)))))
+        _delete_relationship_references(db,"annotation",set(db.scalars(select(ResearchAnnotation.id).where(ResearchAnnotation.analysis_target_id.in_(target_ids)))))
+        _delete_relationship_references(db,"memo",set(db.scalars(select(ResearchMemo.id).where(ResearchMemo.analysis_target_id.in_(target_ids)))))
         db.execute(delete(ResearchMemo).where(ResearchMemo.analysis_target_id.in_(target_ids)))
         db.execute(delete(ResearchAnnotation).where(ResearchAnnotation.analysis_target_id.in_(target_ids)))
         db.execute(delete(CodeApplication).where(CodeApplication.analysis_target_id.in_(target_ids)))
-    db.execute(delete(ResearchMemo).where(ResearchMemo.activity_response_id.in_(response_ids)))
+    response_memo_ids=set(db.scalars(select(ResearchMemo.id).where(ResearchMemo.activity_response_id.in_(response_ids))))
+    _delete_relationship_references(db,"memo",response_memo_ids)
+    db.execute(delete(ResearchMemo).where(ResearchMemo.id.in_(response_memo_ids)))
     db.execute(delete(AnalysisTarget).where(
         AnalysisTarget.organisation_id == organisation_id,
         AnalysisTarget.activity_response_id.in_(response_ids),
@@ -235,10 +250,16 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
             or_(AnalysisTarget.evidence_file_id.in_([row.id for row in evidence_rows]), AnalysisTarget.participant_id == participant_id),
         )))
         if other_target_ids:
+            _delete_relationship_references(db,"analysis_target",other_target_ids)
+            _delete_relationship_references(db,"code_application",set(db.scalars(select(CodeApplication.id).where(CodeApplication.analysis_target_id.in_(other_target_ids)))))
+            _delete_relationship_references(db,"annotation",set(db.scalars(select(ResearchAnnotation.id).where(ResearchAnnotation.analysis_target_id.in_(other_target_ids)))))
+            _delete_relationship_references(db,"memo",set(db.scalars(select(ResearchMemo.id).where(ResearchMemo.analysis_target_id.in_(other_target_ids)))))
             db.execute(delete(ResearchMemo).where(ResearchMemo.analysis_target_id.in_(other_target_ids)))
             db.execute(delete(ResearchAnnotation).where(ResearchAnnotation.analysis_target_id.in_(other_target_ids)))
             db.execute(delete(CodeApplication).where(CodeApplication.analysis_target_id.in_(other_target_ids)))
-        db.execute(delete(ResearchMemo).where(ResearchMemo.organisation_id == organisation_id, ResearchMemo.participant_id == participant_id))
+        participant_memo_ids=set(db.scalars(select(ResearchMemo.id).where(ResearchMemo.organisation_id == organisation_id, ResearchMemo.participant_id == participant_id)))
+        _delete_relationship_references(db,"memo",participant_memo_ids)
+        db.execute(delete(ResearchMemo).where(ResearchMemo.id.in_(participant_memo_ids)))
         db.execute(
             delete(AnalysisTarget).where(
                 AnalysisTarget.organisation_id == organisation_id,

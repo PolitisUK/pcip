@@ -141,3 +141,17 @@ are reused rather than duplicated. Historic archived codes remain visible,
 study permissions govern creation/removal, IDs are organisation/study/evidence
 scoped, actions are audited without participant content, and privacy deletion
 removes region applications before evidence targets and files.
+
+## AW-08 — Analytical relationships — complete
+
+`AnalyticalRelationship` records directional researcher assertions between
+analysis targets, code applications, annotations, memos, codes and themes. The
+controlled relationship vocabulary covers supports, contradicts, explains,
+relates to, precedes, follows and refines; rationale, author and timestamp are
+retained. Self-links and exact duplicate assertions are rejected.
+
+The study relationship workspace provides labelled object selection, inspection
+and permitted removal. Alembic revision `0030` validates both polymorphic ends,
+the author, organisation and study on INSERT and UPDATE in SQLite and
+PostgreSQL. The model is the canonical relationship system intended for later
+canvas use rather than a UI-specific graph store.

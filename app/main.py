@@ -54,6 +54,7 @@ from .models import (
     CodeApplication,
     ResearchAnnotation,
     ResearchMemo,
+    AnalyticalRelationship,
     ResearchTheme,
     PublicAuthSession,
     PublicTokenExchange,
@@ -91,6 +92,7 @@ from .passage_coding import apply_codes, verified_passage
 from .annotations import create_annotation, normalise_annotation_body
 from .memos import create_memo, memo_text
 from .image_regions import create_image_region, parsed_region
+from .relationships import RELATIONSHIP_TYPES, create_relationship, remove_object_relationships
 from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
@@ -3466,7 +3468,7 @@ def remove_code_application(study_id:int,application_id:int,u=Depends(current_us
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
     row=db.scalar(select(CodeApplication).where(CodeApplication.id==application_id,CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id==s.id))
     if row is None: raise HTTPException(404,"Code application not found")
-    audit(db,u.organisation_id,u.id,"code_application.removed","code_application",row.id,"passage coding"); db.delete(row); db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
+    audit(db,u.organisation_id,u.id,"code_application.removed","code_application",row.id,"passage coding"); remove_object_relationships(db,"code_application",{row.id}); db.delete(row); db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 
 @app.post("/studies/{study_id}/responses/{response_id}/annotations")
@@ -3504,7 +3506,7 @@ def update_research_annotation(study_id:int,annotation_id:int,body:str=Form(...,
 @app.post("/studies/{study_id}/annotations/{annotation_id}/delete")
 def remove_research_annotation(study_id:int,annotation_id:int,u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); row=editable_annotation(db,u,s,annotation_id)
-    audit(db,u.organisation_id,u.id,"research_annotation.removed","research_annotation",row.id,"passage annotation"); db.delete(row); db.commit()
+    audit(db,u.organisation_id,u.id,"research_annotation.removed","research_annotation",row.id,"passage annotation"); remove_object_relationships(db,"annotation",{row.id}); db.delete(row); db.commit()
     return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 
@@ -3565,6 +3567,48 @@ def set_research_memo_archive(study_id:int,memo_id:int,action:str,u=Depends(curr
     row.archived_at=now() if action=="archive" else None; row.archived_by_id=u.id if action=="archive" else None
     audit(db,u.organisation_id,u.id,f"research_memo.{action}d","research_memo",row.id,f"{row.scope_type} memo"); db.commit()
     return RedirectResponse(f"/studies/{s.id}/memos?include_archived=true",303)
+
+
+@app.get("/studies/{study_id}/relationships",response_class=HTMLResponse)
+def analytical_relationships_page(study_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); permission=require_study_permission(db,u,s)
+    targets=db.scalars(select(AnalysisTarget).where(AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.study_id==s.id).order_by(AnalysisTarget.id.desc()).limit(500)).all()
+    applications=db.scalars(select(CodeApplication).where(CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id==s.id).order_by(CodeApplication.id.desc()).limit(500)).all()
+    annotations=db.scalars(select(ResearchAnnotation).where(ResearchAnnotation.organisation_id==u.organisation_id,ResearchAnnotation.study_id==s.id).order_by(ResearchAnnotation.id.desc()).limit(500)).all()
+    memos=db.scalars(select(ResearchMemo).where(ResearchMemo.organisation_id==u.organisation_id,ResearchMemo.study_id==s.id).order_by(ResearchMemo.id.desc()).limit(500)).all()
+    codes=db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id==s.id).order_by(ResearchCode.name).limit(500)).all()
+    themes=db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id==u.organisation_id,ResearchTheme.study_id==s.id).order_by(ResearchTheme.name).limit(500)).all()
+    code_map={row.id:row for row in codes}; object_labels={}
+    object_labels.update({f"analysis_target:{row.id}":f"Target #{row.id} · {row.target_type.replace('_',' ')}" for row in targets})
+    object_labels.update({f"code_application:{row.id}":f"Code application #{row.id} · {code_map.get(row.research_code_id).name if code_map.get(row.research_code_id) else 'unavailable code'}" for row in applications})
+    object_labels.update({f"annotation:{row.id}":f"Annotation #{row.id} · {row.body[:80]}" for row in annotations})
+    object_labels.update({f"memo:{row.id}":f"Memo · {row.title}" for row in memos})
+    object_labels.update({f"code:{row.id}":f"Code · {row.name}" for row in codes})
+    object_labels.update({f"theme:{row.id}":f"Theme · {row.name}" for row in themes})
+    rows=db.scalars(select(AnalyticalRelationship).where(AnalyticalRelationship.organisation_id==u.organisation_id,AnalyticalRelationship.study_id==s.id).order_by(AnalyticalRelationship.created_at.desc()).limit(250)).all()
+    users={row.id:row for row in db.scalars(select(User).where(User.organisation_id==u.organisation_id)).all()}
+    return render(request,"research_relationships.html",user=u,study=s,project=db.get(Project,s.project_id),relationships=rows,relationship_types=RELATIONSHIP_TYPES,object_labels=object_labels,users=users,can_edit=permission in {"edit","manage"},can_remove={row.id:permission=="manage" or row.created_by_id==u.id for row in rows})
+
+
+@app.post("/studies/{study_id}/relationships")
+def create_analytical_relationship(study_id:int,source_ref:str=Form(...),relationship_type:str=Form(...),target_ref:str=Form(...),rationale:str=Form("",max_length=2000),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    try: row=create_relationship(db,u,study_id=s.id,source_ref=source_ref,relationship_type=relationship_type,target_ref=target_ref,rationale=rationale)
+    except ValueError as exc: raise HTTPException(400,str(exc)) from exc
+    try: db.flush()
+    except IntegrityError: db.rollback(); raise HTTPException(409,"That analytical relationship already exists")
+    audit(db,u.organisation_id,u.id,"analytical_relationship.created","analytical_relationship",row.id,relationship_type); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/relationships",303)
+
+
+@app.post("/studies/{study_id}/relationships/{relationship_id}/delete")
+def remove_analytical_relationship(study_id:int,relationship_id:int,u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); permission=require_study_permission(db,u,s,edit=True)
+    row=db.scalar(select(AnalyticalRelationship).where(AnalyticalRelationship.id==relationship_id,AnalyticalRelationship.organisation_id==u.organisation_id,AnalyticalRelationship.study_id==s.id))
+    if row is None: raise HTTPException(404,"Analytical relationship not found")
+    if row.created_by_id!=u.id and permission!="manage": raise HTTPException(403,"You cannot remove this relationship")
+    audit(db,u.organisation_id,u.id,"analytical_relationship.removed","analytical_relationship",row.id,row.relationship_type); db.delete(row); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/relationships",303)
 
 
 @app.get("/projects/{project_id}/workspace/participants", response_class=HTMLResponse)
@@ -3638,7 +3682,9 @@ def remove_image_evidence_region(evidence_id:int,target_id:int,u=Depends(current
     target=db.scalar(select(AnalysisTarget).where(AnalysisTarget.id==target_id,AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.study_id==s.id,AnalysisTarget.evidence_file_id==evidence_row.id,AnalysisTarget.target_type=="evidence_file"))
     if target is None: raise HTTPException(404,"Image region not found")
     if target.created_by_id!=u.id and permission!="manage": raise HTTPException(403,"You cannot remove this image region")
-    db.execute(delete(CodeApplication).where(CodeApplication.analysis_target_id==target.id)); db.execute(delete(ResearchAnnotation).where(ResearchAnnotation.analysis_target_id==target.id)); db.execute(delete(ResearchMemo).where(ResearchMemo.analysis_target_id==target.id))
+    application_ids=set(db.scalars(select(CodeApplication.id).where(CodeApplication.analysis_target_id==target.id))); annotation_ids=set(db.scalars(select(ResearchAnnotation.id).where(ResearchAnnotation.analysis_target_id==target.id))); memo_ids=set(db.scalars(select(ResearchMemo.id).where(ResearchMemo.analysis_target_id==target.id)))
+    remove_object_relationships(db,"analysis_target",{target.id}); remove_object_relationships(db,"code_application",application_ids); remove_object_relationships(db,"annotation",annotation_ids); remove_object_relationships(db,"memo",memo_ids)
+    db.execute(delete(CodeApplication).where(CodeApplication.id.in_(application_ids))); db.execute(delete(ResearchAnnotation).where(ResearchAnnotation.id.in_(annotation_ids))); db.execute(delete(ResearchMemo).where(ResearchMemo.id.in_(memo_ids)))
     audit(db,u.organisation_id,u.id,"evidence_region.removed","analysis_target",target.id,"image region"); db.delete(target); db.commit()
     return RedirectResponse(f"/evidence/{evidence_row.id}/analysis",303)
 
