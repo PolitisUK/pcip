@@ -33,6 +33,7 @@ from .models import (
     OutboxEmail,
     PublicAuthSession,
     ResearchAnalysisSuggestion,
+    ResearchFinding,
     ResearchTheme,
     StudyEnrolment,
     StudyGovernance,
@@ -138,6 +139,13 @@ def _delete_research_derivatives(
         suggestions_query = suggestions_query.where(ResearchAnalysisSuggestion.study_id == study_id)
     suggestion_ids = {row.id for row in db.scalars(suggestions_query)}
     if suggestion_ids:
+        finding_ids = set(db.scalars(select(ResearchFinding.id).where(
+            ResearchFinding.organisation_id == organisation_id,
+            ResearchFinding.originating_suggestion_id.in_(suggestion_ids),
+        )))
+        if finding_ids:
+            remove_analytical_references(db, {"finding": finding_ids})
+            db.execute(delete(ResearchFinding).where(ResearchFinding.id.in_(finding_ids)))
         for theme in db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id == organisation_id)):
             if _json_ids(theme.source_suggestion_ids_json) & suggestion_ids:
                 db.delete(theme)

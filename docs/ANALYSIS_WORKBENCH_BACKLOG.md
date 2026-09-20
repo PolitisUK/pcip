@@ -310,3 +310,32 @@ downgrade/re-upgrade paths are rehearsed. Participant deletion removes links to
 deleted participant-derived objects while retaining unrelated study-level
 researcher findings; no participant source material is copied into relationship
 or canvas records.
+
+## AW-15 — AI analytical assistance — complete
+
+The existing `ResearchAnalysisSuggestion` record remains the single machine
+assistance architecture. Suggestions are visibly labelled as AI-generated and
+retain their authoritative source response, creation time, provider/model,
+prompt and human-review provenance. Existing suggestions remain inspectable
+even when suggestion creation is unavailable. This deployment fails closed:
+there is no fabricated local output or external-provider call when an approved
+provider-backed job has not been configured.
+
+Researchers with study edit/manage permission can explicitly accept, reject or
+dismiss a suggestion. Rejection and dismissal require a recorded reason.
+Nothing in those dispositions creates or changes a researcher analytical
+object. An accepted suggestion can instead be converted through a separate
+researcher form into a new `ResearchFinding`; the researcher supplies the
+finding title and substantive text, becomes its author, and the original AI
+record changes to the `converted` disposition rather than having its authorship
+rewritten.
+
+Alembic revision `0034` adds the one-to-one originating-suggestion provenance
+pointer. SQLite and PostgreSQL INSERT/UPDATE guards require that any pointer
+belongs to the same organisation and study. The findings view exposes the
+originating suggestion and provider/model without presenting it as authorship.
+Review and conversion actions are audited, read-only study users receive no
+controls, and scoped lookups reject forged tenant/study identifiers. Participant
+deletion removes participant-derived suggestions and any converted findings
+that depend on them, including canonical relationship/canvas references, while
+unrelated study-level findings remain intact.

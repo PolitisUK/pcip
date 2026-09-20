@@ -147,7 +147,6 @@ def test_checkbox_control_rows_cannot_inherit_full_width_field_input_layout():
         css.index('.control-row input[type="checkbox"],'):
         css.index('}', css.index('.control-row input[type="checkbox"],'))
     ]
-
     assert 'width: 100%;' in field_input_rule
     assert 'grid-template-columns: var(--control-row-input) minmax(0, 1fr);' in control_row_rule
     assert 'inline-size: 1.1rem;' in control_input_rule
@@ -162,6 +161,99 @@ def test_checkbox_control_rows_cannot_inherit_full_width_field_input_layout():
         template = Path('app/templates', template_name).read_text()
         assert 'class="control-row"><input type="checkbox"' in template
 
+
+def test_ai_suggestion_review_conversion_and_provenance_are_explicit_and_scoped():
+    from app.models import Activity, ActivityResponse, AuditEvent, Participant, ResearchAnalysisSuggestion, ResearchFinding, Study, StudyMethodologyConfiguration
+
+    with client:
+        client.cookies.clear()
+        auth()
+        with SessionLocal() as db:
+            administrator = db.scalar(select(User).where(User.email == "admin@politis.local"))
+            study = db.scalar(select(Study).where(Study.organisation_id == administrator.organisation_id))
+            assert study is not None
+            configuration = db.scalar(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.study_id == study.id))
+            if configuration is None:
+                configuration = StudyMethodologyConfiguration(organisation_id=administrator.organisation_id, study_id=study.id)
+                db.add(configuration)
+            configuration.ai_enabled = True
+            participant = Participant(organisation_id=administrator.organisation_id, reference=unique_value("AI-P"), name="AI provenance participant", created_by_id=administrator.id)
+            activity = Activity(organisation_id=administrator.organisation_id, study_id=study.id, title="AI provenance source")
+            db.add_all([participant, activity])
+            db.flush()
+            response = ActivityResponse(organisation_id=administrator.organisation_id, study_id=study.id, activity_id=activity.id, participant_id=participant.id, value_json='{"text":"A bounded participant account"}', status="submitted")
+            db.add(response)
+            db.flush()
+            suggestion = ResearchAnalysisSuggestion(
+                organisation_id=administrator.organisation_id,
+                study_id=study.id,
+                source_response_id=response.id,
+                source_snapshot="A bounded source snapshot",
+                suggested_codes_json='["access"]',
+                provisional_insight="<script>alert(1)</script> Candidate access pattern",
+                model_provider="approved-provider-record",
+                model_deployment="model-v1",
+                human_review_required=True,
+            )
+            db.add(suggestion)
+            db.commit()
+            administrator_id = administrator.id
+            suggestion_id = suggestion.id
+            response_id = response.id
+            project_id = study.project_id
+
+        analysis = client.get(f"/projects/{project_id}/workspace/analysis")
+        assert analysis.status_code == 200
+        assert "Suggestion creation is unavailable" in analysis.text
+        assert "No approved provider-backed AI job is configured" in analysis.text
+        assert "approved-provider-record" in analysis.text and "model-v1" in analysis.text
+        assert "&lt;script&gt;alert(1)&lt;/script&gt; Candidate access pattern" in analysis.text
+        assert "<script>alert(1)</script>" not in analysis.text
+
+        accepted = post_with_csrf(
+            f"/studies/{study.id}/research-analysis/{suggestion_id}/review",
+            data={"decision": "accepted", "note": "Researcher will rewrite and verify"},
+            follow_redirects=False,
+        )
+        assert accepted.status_code == 303
+        converted = post_with_csrf(
+            f"/studies/{study.id}/research-analysis/{suggestion_id}/convert-finding",
+            data={"title": "Researcher verified access finding", "body": "Researcher-written interpretation after reviewing the source."},
+            follow_redirects=False,
+        )
+        assert converted.status_code == 303
+        with SessionLocal() as db:
+            finding = db.scalar(select(ResearchFinding).where(ResearchFinding.originating_suggestion_id == suggestion_id))
+            suggestion = db.get(ResearchAnalysisSuggestion, suggestion_id)
+            assert finding is not None
+            assert finding.created_by_id == administrator_id
+            assert suggestion.status == "converted"
+            assert db.scalar(select(AuditEvent).where(AuditEvent.action == "research_analysis.converted", AuditEvent.entity_id == str(suggestion_id))) is not None
+            assert db.scalar(select(AuditEvent).where(AuditEvent.action == "research_finding.created_from_ai_suggestion", AuditEvent.entity_id == str(finding.id))) is not None
+            finding_id = finding.id
+            organisation_id = finding.organisation_id
+            original_study_id = finding.study_id
+        findings_page = client.get(f"/studies/{study.id}/findings")
+        assert "Converted by a researcher from AI-generated suggestion" in findings_page.text
+        assert "approved-provider-record" in findings_page.text
+        assert post_with_csrf(
+            f"/studies/{study.id}/research-analysis/{suggestion_id}/convert-finding",
+            data={"title": "Duplicate conversion", "body": "This must not create a second finding."},
+            follow_redirects=False,
+        ).status_code == 409
+
+        from app.privacy_lifecycle import _delete_research_derivatives
+        with SessionLocal() as db:
+            _delete_research_derivatives(
+                db,
+                organisation_id=organisation_id,
+                study_id=original_study_id,
+                response_ids={response_id},
+            )
+            db.commit()
+            assert db.get(ResearchFinding, finding_id) is None
+            assert db.get(ResearchAnalysisSuggestion, suggestion_id) is None
+        assert finding_id
 
 def test_readiness_checks_database():
     import app.main as main_module
@@ -4747,7 +4839,7 @@ def test_restricted_researcher_cannot_access_unassigned_study_or_participant_rec
 
 
 def test_researcher_with_view_access_can_read_study_participant_but_not_edit_study():
-    from app.models import User, StudyAccess
+    from app.models import Activity, ActivityResponse, ResearchAnalysisSuggestion, StudyAccess, User
     from app.security import hash_password
     with client:
         client.cookies.clear()
@@ -4796,6 +4888,13 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
             researcher = User(organisation_id=owner.organisation_id, name='View Researcher', email=researcher_email, password_hash=hash_password(researcher_password), role='researcher')
             db.add(researcher); db.flush()
             db.add(StudyAccess(organisation_id=owner.organisation_id, study_id=study_id, user_id=researcher.id, permission='view', created_by_id=owner.id))
+            activity = Activity(organisation_id=owner.organisation_id, study_id=study_id, title='Read-only AI source')
+            db.add(activity); db.flush()
+            source_response = ActivityResponse(organisation_id=owner.organisation_id, study_id=study_id, activity_id=activity.id, participant_id=participant_id, value_json='{"text":"Read-only source"}', status='submitted')
+            db.add(source_response); db.flush()
+            read_only_suggestion = ResearchAnalysisSuggestion(organisation_id=owner.organisation_id, study_id=study_id, source_response_id=source_response.id, source_snapshot='Read-only source', provisional_insight='Read-only visible AI suggestion')
+            db.add(read_only_suggestion); db.flush()
+            suggestion_id = read_only_suggestion.id
             from app.models import ResearchCode
             code_row = db.scalar(select(ResearchCode).where(ResearchCode.study_id == study_id, ResearchCode.name == 'Read-only visible code'))
             code_id = code_row.id
@@ -4824,6 +4923,16 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
         assert 'Create a researcher finding' not in findings.text
         assert 'Link analytical material' not in findings.text
         assert 'Finding actions' not in findings.text
+        analysis = client.get(f'/projects/{project_id}/workspace/analysis')
+        assert analysis.status_code == 200
+        assert 'Read-only visible AI suggestion' in analysis.text
+        assert 'Accept for researcher consideration' not in analysis.text
+        assert 'Convert to a new researcher-authored finding' not in analysis.text
+        assert post_with_csrf(
+            f'/studies/{study_id}/research-analysis/{suggestion_id}/review',
+            data={'decision': 'accepted', 'note': ''},
+            follow_redirects=False,
+        ).status_code == 403
         assert post_with_csrf(
             f'/studies/{study_id}/findings',
             data={'title': 'Blocked finding', 'body': 'Must not be created.'},

@@ -69,6 +69,16 @@ def test_participant_or_cross_scope_actor_rejected():
         review_suggestion(user, row, "accepted")
 
 
+def test_researcher_can_dismiss_but_must_record_a_reason():
+    db, user, study, response = fixtures()
+    row = create_suggestion(db, user, study, response, valid_output(), methodology_configuration())
+    with pytest.raises(ValueError, match="Invalid review decision"):
+        review_suggestion(user, row, "dismissed")
+    review_suggestion(user, row, "dismissed", "Not analytically useful")
+    assert row.status == "dismissed"
+    assert row.reviewer_note == "Not analytically useful"
+
+
 def test_ai_suggestion_requires_confirmed_method_and_preserves_method_provenance():
     db, user, study, response = fixtures()
     with pytest.raises(UnsafeAIResponse, match="confirm"):

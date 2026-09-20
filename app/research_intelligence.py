@@ -57,7 +57,7 @@ def review_suggestion(user,row,decision,note=''):
     if user.role not in {'owner','admin','researcher'}: raise PermissionError('Only researchers can review analysis')
     if row.organisation_id!=user.organisation_id: raise PermissionError('Organisation scope mismatch')
     if row.status!='awaiting_researcher_review': raise ValueError('Suggestion already reviewed')
-    if decision not in {'accepted','rejected'} or (decision=='rejected' and not note.strip()): raise ValueError('Invalid review decision')
+    if decision not in {'accepted','rejected','dismissed'} or (decision in {'rejected','dismissed'} and not note.strip()): raise ValueError('Invalid review decision')
     row.status=decision; row.reviewer_user_id=user.id; row.reviewer_note=note.strip(); row.reviewed_at=datetime.now(timezone.utc); return row
 
 

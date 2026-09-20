@@ -64,7 +64,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0033" in revision.stdout
+    assert "0034" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -111,7 +111,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0033" in result.stdout
+            assert "0034" in result.stdout
 
     active = subprocess.run(
         [
@@ -497,7 +497,11 @@ def test_research_findings_migration_extends_relationship_and_canvas_scope(tmp_p
       INSERT INTO studies (id,organisation_id,project_id,title,code,description,methodology,status,demographics_schema_json,created_by_id,created_at,updated_at) VALUES (1,1,1,'One','FS1','','diary','draft','[]',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,2,'Two','FS2','','diary','draft','[]',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
       INSERT INTO research_codes (id,organisation_id,study_id,name,definition,created_by_id,created_at,updated_at) VALUES (1,1,1,'Local','',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,2,'Foreign','',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
       INSERT INTO analysis_canvases (id,organisation_id,study_id,owner_id,view_metadata_json,created_at,updated_at) VALUES (1,1,1,1,'{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      PRAGMA foreign_keys=OFF;
+      INSERT INTO research_analysis_suggestions (id,organisation_id,study_id,source_response_id,source_snapshot,suggested_codes_json,provisional_insight,confidence,status,reviewer_note,methodology_id,methodology_variant,methodology_library_version,methodology_rule_references_json,protocol_version,evidence_item_ids_json,model_provider,model_deployment,prompt_template_version,human_review_required,created_at) VALUES (1,1,1,999,'Bounded source','[]','Candidate finding',0.5,'accepted','','M01','','1.0.0','[]','','[]','approved','model-v1','research-analysis-v1',1,CURRENT_TIMESTAMP);
+      PRAGMA foreign_keys=ON;
       INSERT INTO research_findings (id,organisation_id,study_id,title,body,created_by_id,created_at,updated_at) VALUES (1,1,1,'Access finding','Substantive researcher conclusion',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO research_findings (id,organisation_id,study_id,title,body,created_by_id,originating_suggestion_id,created_at,updated_at) VALUES (2,1,1,'Converted finding','Researcher-authored conversion',1,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
       INSERT INTO analytical_relationships (organisation_id,study_id,source_type,source_id,relationship_type,target_type,target_id,rationale,created_by_id,created_at) VALUES (1,1,'finding',1,'qualifies','code',1,'Qualified interpretation',1,CURRENT_TIMESTAMP);
       INSERT INTO analysis_canvas_nodes (organisation_id,study_id,canvas_id,object_type,object_id,x,y,added_by_id,created_at,updated_at) VALUES (1,1,1,'finding',1,20,30,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
     """
@@ -516,6 +520,14 @@ def test_research_findings_migration_extends_relationship_and_canvas_scope(tmp_p
     )
     assert foreign_creator.returncode != 0
     assert "research finding creator scope" in foreign_creator.stderr
+    foreign_suggestion = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO research_findings (organisation_id,study_id,title,body,created_by_id,originating_suggestion_id,created_at,updated_at) VALUES (2,2,'Forged origin','Cross-study suggestion',2,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert foreign_suggestion.returncode != 0
+    assert "research finding suggestion scope" in foreign_suggestion.stderr
     forged_relationship = subprocess.run(
         ["sqlite3", str(database_path), "UPDATE analytical_relationships SET source_id=999 WHERE source_type='finding';"],
         capture_output=True,
