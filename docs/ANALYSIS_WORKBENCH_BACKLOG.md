@@ -363,3 +363,34 @@ analytical object is gone. Existing records are resolved through their current
 canonical objects where possible. SQLite and PostgreSQL INSERT/UPDATE guards
 reject forged cross-organisation or inconsistent project/study context, and the
 fresh-schema plus downgrade/re-upgrade paths are rehearsed.
+
+## AW-17 — Analysis export / reporting — complete
+
+The project workspace now produces a bounded structured ZIP export containing
+fixed-name JSON components for the codebook, coded passages, annotations,
+memos, themes and their code links, canonical relationships, findings, AI
+suggestions and the analytical audit trail. A versioned manifest records the
+project, accessible studies, creator, generation time, component counts, the
+5,000-record per-component bound and any component that reached that bound.
+
+The format explicitly labels participant/source excerpts, researcher-created
+analysis, untrusted AI suggestions and system audit metadata. Exact textual
+passages are reconstructed from the authoritative current response using the
+stored Unicode code-point anchor and are exported only when their fingerprint
+verifies; a bounded verification status replaces an unverified passage. Image
+regions remain normalised source references and evidence binaries are not
+duplicated. Historic archived codes and analysis remain traceable, while AI
+records retain provider/model, prompt, methodology and human-review
+provenance. Accepted findings continue to point to their originating
+suggestion.
+
+Exports use JSON rather than spreadsheet cells, so formula-like participant or
+researcher content is inert and CSV formula injection is avoided. Archive
+entry names and the HTTP filename are server-controlled, downloads are marked
+`no-store` and `nosniff`, and export creation is written to the canonical
+analysis audit trail without participant text. The export route derives its
+study list from the existing project/study permission scope, supports an
+optional accessible-study restriction, and rejects forged tenant/study IDs.
+Participant deletion and anonymisation are respected because the export reads
+only the current canonical records and creates no persistent export copy. This
+stage adds no database migration.

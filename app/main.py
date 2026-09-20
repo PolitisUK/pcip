@@ -104,6 +104,7 @@ from .analysis_objects import analytical_study_permission
 from .analysis_projections import coded_passage_projections
 from .analysis_router import include_analysis_router
 from .analysis_audit import ACTION_FAMILIES, ENTITY_MODELS, analysis_audit_page
+from .analysis_export import build_analysis_export
 from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
@@ -3915,6 +3916,67 @@ def project_workspace_audit(
         previous_page_url=page_url(request, page - 1) if page > 1 else "",
         next_page_url=page_url(request, page + 1) if page < pages else "",
     )
+
+
+def project_workspace_export(
+    project_id: int,
+    request: Request,
+    u=Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    return render(
+        request,
+        "research_export.html",
+        user=u,
+        **_workspace_context(project_row, studies),
+    )
+
+
+@app.post("/projects/{project_id}/workspace/export")
+def download_project_workspace_export(
+    project_id: int,
+    study_id: str = Form("", max_length=20),
+    u=Depends(current_user),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    selected_study_id = optional_positive_query_id(study_id, "Study")
+    if selected_study_id is not None:
+        studies = [row for row in studies if row.id == selected_study_id]
+        if not studies:
+            raise HTTPException(404, "Study is unavailable in this workspace")
+    archive, manifest = build_analysis_export(
+        db, user=u, project=project_row, studies=studies
+    )
+    detail = json.dumps({
+        "study_ids": [row.id for row in studies],
+        "component_counts": manifest["component_counts"],
+        "truncated_components": manifest["truncated_components"],
+    }, separators=(",", ":"))
+    for study_row in studies:
+        audit(
+            db,
+            u.organisation_id,
+            u.id,
+            "analysis_export.created",
+            "project",
+            project_row.id,
+            detail,
+            project_id=project_row.id,
+            study_id=study_row.id,
+        )
+    db.commit()
+    return Response(
+        content=archive,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="analysis-workbench-project-{project_row.id}.zip"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 @app.post("/projects/{project_id}/edit")
 def edit_project(project_id:int,title:str=Form(...),description:str=Form(""),status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); require_project_permission(db,u,p,edit=True); enum_value(status_value,ProjectStatus,"project status"); p.title=title.strip(); p.description=description.strip(); p.status=status_value; audit(db,u.organisation_id,u.id,"project.updated","project",p.id,p.title); db.commit(); return RedirectResponse(f"/projects/{p.id}",303)
@@ -4613,6 +4675,7 @@ include_analysis_router(app, {
     "codebook": study_codebook,
     "analysis": project_workspace_analysis,
     "audit": project_workspace_audit,
+    "export": project_workspace_export,
     "theme_explorer": study_theme_explorer,
 })
 

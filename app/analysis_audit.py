@@ -31,6 +31,7 @@ ACTION_FAMILIES = {
     "research_finding": "Finding development",
     "research_analysis": "AI suggestion review",
     "evidence_region": "Image-region analysis",
+    "analysis_export": "Analysis exports",
 }
 
 ENTITY_MODELS = {
