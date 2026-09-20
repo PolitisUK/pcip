@@ -70,6 +70,15 @@ filters. AW-11.5 introduces no migration or speculative materialized view.
 Future indexes require a concrete query shape or measurement and should be
 delivered through the normal SQLite/PostgreSQL migration rehearsal.
 
+Final PostgreSQL QA confirmed that shared object pickers must bulk-load the
+authoritative sources behind analysis targets and annotations. Per-object
+lookups are prohibited here because canvas and finding pickers list several
+object types at once. `list_analytical_objects` and `resolve_analytical_objects`
+therefore prefetch those sources with scoped `IN` queries before building
+labels/navigation. The query-count regression protects that contract. Measured
+query shapes did not justify a new index or materialized view; see
+`ANALYSIS_WORKBENCH_FINAL_QA.md` for the synthetic dataset and results.
+
 ## Advanced-query contract
 
 `advanced_query` composes the bounded coded-passage projection; it does not

@@ -419,3 +419,27 @@ relationships and audit history. The integration reuses the existing
 permission, resolver, audit and lifecycle contracts and introduces no new
 database model or migration. Remaining visual and performance assurance is
 tracked by the final QA stages rather than hidden in this feature checkpoint.
+
+## Final cross-cutting QA — complete
+
+QA-01 reviewed the completed workbench against reflexive thematic analysis,
+codebook thematic analysis, framework analysis, qualitative content analysis,
+longitudinal qualitative work, case comparison and negative-case practice.
+Misleading “emergence” language in the public worked example was replaced with
+explicit researcher development and provisional interpretation. The product
+continues to state that counts are not importance/prevalence, chronology is not
+causality, relationships are researcher assertions and AI suggestions are not
+researcher findings.
+
+QA-02 reviewed tenant/study/project scope, typed-reference IDOR, anchors,
+relationships, CSRF, XSS, export safety, deletion/anonymisation/withdrawal and
+AI provenance. Existing database, service and HTTP regression coverage exercises
+those boundaries; no new unresolved security or privacy defect was found.
+
+QA-03 used a disposable PostgreSQL database with 250 synthetic cases, 1,000
+responses and 2,000 applications. It found and removed per-object source queries
+from shared analytical-object picker assembly, reducing measured canvas SQL
+statements from 145 to 28 and findings from 141 to 24. Other representative
+workflows remained bounded and no speculative index or materialized view was
+justified. Full method, security and performance evidence is recorded in
+`ANALYSIS_WORKBENCH_FINAL_QA.md`.

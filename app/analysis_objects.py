@@ -32,6 +32,8 @@ from .models import (
 from .passage_coding import verified_passage
 from .research_workspace import response_body
 
+_UNSET = object()
+
 ANALYTICAL_OBJECT_TYPES = frozenset(
     {
         "analysis_target",
@@ -201,6 +203,16 @@ def list_analytical_objects(
             if object_type == "code_application"
             else {}
         )
+        target_details = (
+            _analysis_target_details(db, rows)
+            if object_type == "analysis_target"
+            else {}
+        )
+        annotation_details = (
+            _annotation_target_details(db, rows)
+            if object_type == "annotation"
+            else {}
+        )
         for row in rows:
             label, summary, url = _describe(
                 db,
@@ -208,6 +220,8 @@ def list_analytical_objects(
                 row,
                 study,
                 coded_detail=coded_details.get(row.id),
+                target_detail=target_details.get(row.id, _UNSET),
+                annotation_detail=annotation_details.get(row.id),
             )
             output.append(
                 AnalyticalObjectSummary(
@@ -280,6 +294,16 @@ def resolve_analytical_objects(
             if object_type == "code_application"
             else {}
         )
+        target_details = (
+            _analysis_target_details(db, rows)
+            if object_type == "analysis_target"
+            else {}
+        )
+        annotation_details = (
+            _annotation_target_details(db, rows)
+            if object_type == "annotation"
+            else {}
+        )
         for row in rows:
             label, summary, url = _describe(
                 db,
@@ -287,6 +311,8 @@ def resolve_analytical_objects(
                 row,
                 study,
                 coded_detail=coded_details.get(row.id),
+                target_detail=target_details.get(row.id, _UNSET),
+                annotation_detail=annotation_details.get(row.id),
             )
             output[(object_type, row.id)] = AnalyticalObjectSummary(
                 object_type=object_type,
@@ -298,6 +324,112 @@ def resolve_analytical_objects(
                 navigation_url=url,
                 editable=permission in {"edit", "manage"},
             )
+    return output
+
+
+def _analysis_target_details(
+    db: Session, rows: list[AnalysisTarget]
+) -> dict[int, Participant | EvidenceFile | ActivityResponse]:
+    """Bulk-load authoritative target sources to avoid per-object lookups."""
+    participant_ids = {
+        row.participant_id
+        for row in rows
+        if row.target_type == "participant_case" and row.participant_id
+    }
+    evidence_ids = {
+        row.evidence_file_id
+        for row in rows
+        if row.target_type == "evidence_file" and row.evidence_file_id
+    }
+    response_ids = {
+        row.activity_response_id
+        for row in rows
+        if row.target_type == "activity_response" and row.activity_response_id
+    }
+    organisation_ids = {row.organisation_id for row in rows}
+    study_ids = {row.study_id for row in rows}
+    participants = (
+        {
+            row.id: row
+            for row in db.scalars(
+                select(Participant).where(
+                    Participant.id.in_(participant_ids),
+                    Participant.organisation_id.in_(organisation_ids),
+                )
+            ).all()
+        }
+        if participant_ids
+        else {}
+    )
+    evidence = (
+        {
+            row.id: row
+            for row in db.scalars(
+                select(EvidenceFile).where(
+                    EvidenceFile.id.in_(evidence_ids),
+                    EvidenceFile.organisation_id.in_(organisation_ids),
+                    EvidenceFile.study_id.in_(study_ids),
+                )
+            ).all()
+        }
+        if evidence_ids
+        else {}
+    )
+    responses = (
+        {
+            row.id: row
+            for row in db.scalars(
+                select(ActivityResponse).where(
+                    ActivityResponse.id.in_(response_ids),
+                    ActivityResponse.organisation_id.in_(organisation_ids),
+                    ActivityResponse.study_id.in_(study_ids),
+                )
+            ).all()
+        }
+        if response_ids
+        else {}
+    )
+    details = {}
+    for row in rows:
+        source = {
+            "participant_case": participants.get(row.participant_id),
+            "evidence_file": evidence.get(row.evidence_file_id),
+            "activity_response": responses.get(row.activity_response_id),
+        }.get(row.target_type)
+        if source is not None and source.organisation_id == row.organisation_id:
+            if not hasattr(source, "study_id") or source.study_id == row.study_id:
+                details[row.id] = source
+    return details
+
+
+def _annotation_target_details(
+    db: Session, rows: list[ResearchAnnotation]
+) -> dict[int, tuple[AnalysisTarget, Participant | EvidenceFile | ActivityResponse | None]]:
+    target_ids = {row.analysis_target_id for row in rows}
+    organisation_ids = {row.organisation_id for row in rows}
+    study_ids = {row.study_id for row in rows}
+    targets = (
+        db.scalars(
+            select(AnalysisTarget).where(
+                AnalysisTarget.id.in_(target_ids),
+                AnalysisTarget.organisation_id.in_(organisation_ids),
+                AnalysisTarget.study_id.in_(study_ids),
+            )
+        ).all()
+        if target_ids
+        else []
+    )
+    targets_by_id = {row.id: row for row in targets}
+    sources = _analysis_target_details(db, targets)
+    output = {}
+    for annotation in rows:
+        target = targets_by_id.get(annotation.analysis_target_id)
+        if (
+            target is not None
+            and target.organisation_id == annotation.organisation_id
+            and target.study_id == annotation.study_id
+        ):
+            output[annotation.id] = (target, sources.get(target.id))
     return output
 
 
@@ -337,6 +469,10 @@ def _describe(
     study: Study,
     *,
     coded_detail: tuple[ResearchCode, ActivityResponse] | None = None,
+    target_detail=_UNSET,
+    annotation_detail: tuple[
+        AnalysisTarget, Participant | EvidenceFile | ActivityResponse | None
+    ] | None = None,
 ) -> tuple[str, str, str | None]:
     def response_url(response: ActivityResponse) -> str:
         return (
@@ -347,7 +483,7 @@ def _describe(
 
     if object_type == "analysis_target":
         if row.target_type == "participant_case":
-            participant = db.scalar(
+            participant = target_detail if target_detail is not _UNSET else db.scalar(
                 select(Participant).where(
                     Participant.id == row.participant_id,
                     Participant.organisation_id == row.organisation_id,
@@ -360,7 +496,7 @@ def _describe(
                     f"/participants/{participant.id}",
                 )
         if row.target_type == "evidence_file":
-            evidence = db.scalar(
+            evidence = target_detail if target_detail is not _UNSET else db.scalar(
                 select(EvidenceFile).where(
                     EvidenceFile.id == row.evidence_file_id,
                     EvidenceFile.organisation_id == row.organisation_id,
@@ -374,7 +510,7 @@ def _describe(
                     f"/evidence/{evidence.id}/analysis",
                 )
         if row.target_type == "activity_response":
-            response = db.scalar(
+            response = target_detail if target_detail is not _UNSET else db.scalar(
                 select(ActivityResponse).where(
                     ActivityResponse.id == row.activity_response_id,
                     ActivityResponse.organisation_id == row.organisation_id,
@@ -429,13 +565,19 @@ def _describe(
             f"/projects/{study.project_id}/workspace/coding?study_id={study.id}",
         )
     if object_type == "annotation":
-        target = db.scalar(select(AnalysisTarget).where(
-            AnalysisTarget.id == row.analysis_target_id,
-            AnalysisTarget.organisation_id == row.organisation_id,
-            AnalysisTarget.study_id == row.study_id,
-        ))
+        if annotation_detail is not None:
+            target, source = annotation_detail
+        else:
+            target = db.scalar(select(AnalysisTarget).where(
+                AnalysisTarget.id == row.analysis_target_id,
+                AnalysisTarget.organisation_id == row.organisation_id,
+                AnalysisTarget.study_id == row.study_id,
+            ))
+            source = _UNSET
         if target is not None:
-            _, _, url = _describe(db, "analysis_target", target, study)
+            _, _, url = _describe(
+                db, "analysis_target", target, study, target_detail=source
+            )
         else:
             url = f"/projects/{study.project_id}/workspace/entries"
         return "Annotation", row.body, url

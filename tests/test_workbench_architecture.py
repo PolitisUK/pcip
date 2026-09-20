@@ -5,7 +5,7 @@ from zipfile import ZipFile
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 from app.analysis_canvas import (
@@ -15,7 +15,7 @@ from app.analysis_canvas import (
 )
 from app.advanced_queries import AdvancedQueryFilters, advanced_query
 from app.analysis_lifecycle import remove_analytical_references
-from app.analysis_objects import resolve_analytical_object
+from app.analysis_objects import list_analytical_objects, resolve_analytical_object
 from app.analysis_projections import coded_passage_projections
 from app.analysis_router import ANALYSIS_GET_ROUTES, include_analysis_router
 from app.analysis_export import build_analysis_export
@@ -253,6 +253,41 @@ def test_typed_object_resolver_enforces_tenant_study_and_bounds(analysis_session
     assert coded.navigation_url == (
         "/projects/1/workspace/entries?participant_id=1&prompt_id=1#response-1"
     )
+
+
+def test_analytical_object_picker_bulk_loads_source_details(analysis_session):
+    for identifier in range(1, 21):
+        analysis_session.add(ResearchAnnotation(
+            organisation_id=1,
+            study_id=1,
+            analysis_target_id=1,
+            author_id=1,
+            anchor_json=text_anchor("Before 😀 after", 0, 6),
+            body=f"Reflexive note {identifier}",
+        ))
+    analysis_session.commit()
+    query_count = 0
+
+    def count_query(*_args):
+        nonlocal query_count
+        query_count += 1
+
+    bind = analysis_session.get_bind()
+    event.listen(bind, "before_cursor_execute", count_query)
+    try:
+        candidates = list_analytical_objects(
+            analysis_session,
+            analysis_session.get(User, 1),
+            study_id=1,
+            object_types={"analysis_target", "code_application", "annotation"},
+            limit_per_type=40,
+        )
+    finally:
+        event.remove(bind, "before_cursor_execute", count_query)
+
+    assert len([item for item in candidates if item.object_type == "annotation"]) == 20
+    assert all(item.navigation_url.endswith("#response-1") for item in candidates)
+    assert query_count <= 10
 
 
 def test_shared_projection_is_scoped_traceable_and_unicode_safe(analysis_session):
