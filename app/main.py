@@ -100,7 +100,7 @@ from .analysis_canvas_router import analysis_canvas_router
 from .advanced_query_router import advanced_query_router
 from .findings_router import findings_router
 from .findings import finding_text
-from .analysis_objects import analytical_study_permission
+from .analysis_objects import analytical_study_permission, resolve_analytical_objects
 from .analysis_projections import coded_passage_projections
 from .analysis_router import include_analysis_router
 from .analysis_audit import ACTION_FAMILIES, ENTITY_MODELS, analysis_audit_page
@@ -925,6 +925,7 @@ def render(request, name, user=None, **ctx):
             "flash_notice": flash_notice,
             "flash_error": flash_error,
             "response_body": response_body,
+            "research_intelligence_enabled": settings.research_intelligence_enabled,
             **ctx,
         },
     )
@@ -3630,7 +3631,21 @@ def research_memos_page(study_id:int,request:Request,include_archived:bool=False
     def label_for(row):
         pointer={"participant":row.participant_id,"response":row.activity_response_id,"analysis_target":row.analysis_target_id,"code":row.research_code_id,"theme":row.research_theme_id}.get(row.scope_type)
         return scope_labels.get(row.scope_type if row.scope_type=="study" else f"{row.scope_type}:{pointer}",row.scope_type.replace("_"," ").title())
-    return render(request,"research_memos.html",user=u,study=s,project=db.get(Project,s.project_id),memos=memos,scope_labels=scope_labels,memo_scope_labels={row.id:label_for(row) for row in memos},users=users,can_edit=permission in {"edit","manage"},can_change={row.id:permission=="manage" or row.author_id==u.id for row in memos},include_archived=include_archived)
+    response_map={row.id:row for row in responses}
+    target_summaries=resolve_analytical_objects(db,u,study_id=s.id,references={("analysis_target",row.analysis_target_id) for row in memos if row.analysis_target_id})
+    def scope_url(row):
+        if row.scope_type=="study": return f"/studies/{s.id}"
+        if row.scope_type=="participant": return f"/participants/{row.participant_id}"
+        if row.scope_type=="response" and row.activity_response_id in response_map:
+            response=response_map[row.activity_response_id]
+            return f"/projects/{s.project_id}/workspace/entries?participant_id={response.participant_id}&prompt_id={response.activity_id}#response-{response.id}"
+        if row.scope_type=="analysis_target":
+            summary=target_summaries.get(("analysis_target",row.analysis_target_id)); return summary.navigation_url if summary else ""
+        if row.scope_type=="code": return f"/studies/{s.id}/codebook"
+        if row.scope_type=="theme" and settings.research_intelligence_enabled: return f"/studies/{s.id}/theme-explorer"
+        if row.scope_type=="theme": return f"/projects/{s.project_id}/workspace/themes"
+        return ""
+    return render(request,"research_memos.html",user=u,study=s,project=db.get(Project,s.project_id),memos=memos,scope_labels=scope_labels,memo_scope_labels={row.id:label_for(row) for row in memos},memo_scope_urls={row.id:scope_url(row) for row in memos},users=users,can_edit=permission in {"edit","manage"},can_change={row.id:permission=="manage" or row.author_id==u.id for row in memos},include_archived=include_archived)
 
 
 @app.post("/studies/{study_id}/memos")
@@ -3686,8 +3701,12 @@ def analytical_relationships_page(study_id:int,request:Request,u=Depends(current
     object_labels.update({f"theme:{row.id}":f"Theme · {row.name}" for row in themes})
     object_labels.update({f"finding:{row.id}":f"Finding · {row.title}" for row in findings})
     rows=db.scalars(select(AnalyticalRelationship).where(AnalyticalRelationship.organisation_id==u.organisation_id,AnalyticalRelationship.study_id==s.id).order_by(AnalyticalRelationship.created_at.desc()).limit(250)).all()
+    references={(row.source_type,row.source_id) for row in rows}|{(row.target_type,row.target_id) for row in rows}
+    object_summaries={}
+    reference_list=list(references)
+    for offset in range(0,len(reference_list),100): object_summaries.update(resolve_analytical_objects(db,u,study_id=s.id,references=set(reference_list[offset:offset+100])))
     users={row.id:row for row in db.scalars(select(User).where(User.organisation_id==u.organisation_id)).all()}
-    return render(request,"research_relationships.html",user=u,study=s,project=db.get(Project,s.project_id),relationships=rows,relationship_types=RELATIONSHIP_TYPES,object_labels=object_labels,users=users,can_edit=permission in {"edit","manage"},can_remove={row.id:permission=="manage" or row.created_by_id==u.id for row in rows})
+    return render(request,"research_relationships.html",user=u,study=s,project=db.get(Project,s.project_id),relationships=rows,relationship_types=RELATIONSHIP_TYPES,object_labels=object_labels,object_summaries=object_summaries,users=users,can_edit=permission in {"edit","manage"},can_remove={row.id:permission=="manage" or row.created_by_id==u.id for row in rows})
 
 
 @app.post("/studies/{study_id}/relationships")
@@ -3818,7 +3837,7 @@ def study_codebook(study_id: int, request: Request, include_archived: bool = Que
     s = study(db, study_id, u.organisation_id); permission = require_study_permission(db, u, s)
     all_codes, code_rows = _study_codebook_rows(db, u, s, include_archived)
     creators = {row.id: row for row in db.scalars(select(User).where(User.organisation_id == u.organisation_id, User.id.in_({code.created_by_id for code in all_codes}))).all()} if all_codes else {}
-    return render(request, "research_codebook.html", user=u, study=s, codes=all_codes, code_rows=code_rows, creators=creators, can_edit=permission in {"edit", "manage"}, include_archived=include_archived)
+    return render(request, "research_codebook.html", user=u, project=db.get(Project,s.project_id), study=s, codes=all_codes, code_rows=code_rows, creators=creators, can_edit=permission in {"edit", "manage"}, include_archived=include_archived)
 
 
 @app.post("/studies/{study_id}/codebook")
@@ -3864,10 +3883,13 @@ def project_workspace_analysis(project_id: int, request: Request, u=Depends(curr
     study_ids = [row.id for row in studies]
     themes = db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id == u.organisation_id, ResearchTheme.study_id.in_(study_ids)).order_by(ResearchTheme.updated_at.desc())).all() if study_ids else []
     suggestions = db.scalars(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.organisation_id == u.organisation_id, ResearchAnalysisSuggestion.study_id.in_(study_ids)).order_by(ResearchAnalysisSuggestion.created_at.desc()).limit(30)).all() if study_ids else []
+    suggestion_response_ids={row.source_response_id for row in suggestions}
+    suggestion_responses={row.id:row for row in db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(study_ids),ActivityResponse.id.in_(suggestion_response_ids))).all()} if suggestion_response_ids else {}
+    suggestion_source_urls={row.id:f"/projects/{project_row.id}/workspace/entries?participant_id={suggestion_responses[row.source_response_id].participant_id}&prompt_id={suggestion_responses[row.source_response_id].activity_id}#response-{row.source_response_id}" for row in suggestions if row.source_response_id in suggestion_responses}
     permissions = {row.id: study_permission(db, u, row) for row in studies}
     configurations = db.scalars(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.organisation_id == u.organisation_id, StudyMethodologyConfiguration.study_id.in_(study_ids))).all() if study_ids else []
     ai_governance = {row.study_id: row.ai_enabled for row in configurations}
-    return render(request, "research_analysis.html", user=u, **_workspace_context(project_row, studies), themes=themes, suggestions=suggestions, permissions=permissions, ai_governance=ai_governance, ai_available=False, ai_unavailable_reason="No approved provider-backed AI job is configured. Participant material will not be sent to an external provider.")
+    return render(request, "research_analysis.html", user=u, **_workspace_context(project_row, studies), themes=themes, suggestions=suggestions, study_map={row.id:row for row in studies}, suggestion_source_urls=suggestion_source_urls, permissions=permissions, ai_governance=ai_governance, ai_available=False, ai_unavailable_reason="No approved provider-backed AI job is configured. Participant material will not be sent to an external provider.")
 
 
 def project_workspace_audit(
@@ -3904,13 +3926,35 @@ def project_workspace_audit(
         )
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+    audit_object_types={
+        "analysis_target":"analysis_target",
+        "code_application":"code_application",
+        "research_annotation":"annotation",
+        "research_memo":"memo",
+        "analytical_relationship":"relationship",
+        "research_code":"code",
+        "research_theme":"theme",
+        "research_finding":"finding",
+    }
+    audit_object_summaries={}
+    references_by_study={}
+    for item in rows:
+        object_type=audit_object_types.get(item["event"].entity_type)
+        try: object_id=int(item["event"].entity_id)
+        except (TypeError,ValueError): continue
+        if object_type: references_by_study.setdefault(item["study"].id,set()).add((object_type,object_id))
+    for row_study_id,references in references_by_study.items():
+        for offset in range(0,len(references),100):
+            chunk=set(list(references)[offset:offset+100])
+            for key,summary in resolve_analytical_objects(db,u,study_id=row_study_id,references=chunk).items(): audit_object_summaries[(row_study_id,*key)]=summary
     actor_options = sorted(actors.values(), key=lambda actor: actor.name.lower())
     return render(
         request, "research_audit.html", user=u,
         **_workspace_context(project_row, studies), rows=rows, total=total,
         page=min(max(1, page), pages), pages=pages, truncated=truncated,
         actor_options=actor_options, action_families=ACTION_FAMILIES,
-        entity_types=ENTITY_MODELS, selected_study_id=selected_study_id,
+        entity_types=ENTITY_MODELS, audit_object_types=audit_object_types,
+        audit_object_summaries=audit_object_summaries, selected_study_id=selected_study_id,
         selected_actor_id=selected_actor_id, selected_action_family=action_family,
         selected_entity_type=entity_type, date_from=date_from, date_to=date_to,
         previous_page_url=page_url(request, page - 1) if page > 1 else "",
@@ -4647,6 +4691,7 @@ def study_theme_explorer(study_id: int, request: Request, u=Depends(current_user
         request,
         "theme_explorer.html",
         user=u,
+        project=db.get(Project,s.project_id),
         study=s,
         themes=[_theme_response(item, suggestions_by_id) for item in themes],
         theme_cards=_theme_development_cards(db, u, s, themes),

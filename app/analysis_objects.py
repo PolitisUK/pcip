@@ -338,6 +338,13 @@ def _describe(
     *,
     coded_detail: tuple[ResearchCode, ActivityResponse] | None = None,
 ) -> tuple[str, str, str | None]:
+    def response_url(response: ActivityResponse) -> str:
+        return (
+            f"/projects/{study.project_id}/workspace/entries"
+            f"?participant_id={response.participant_id}"
+            f"&prompt_id={response.activity_id}#response-{response.id}"
+        )
+
     if object_type == "analysis_target":
         if row.target_type == "participant_case":
             participant = db.scalar(
@@ -378,7 +385,7 @@ def _describe(
                 return (
                     f"Source entry #{response.id}",
                     response_body(response.value_json),
-                    f"/projects/{study.project_id}/workspace/entries",
+                    response_url(response),
                 )
         source = row.activity_response_id or row.evidence_file_id or row.participant_id
         return (
@@ -401,15 +408,37 @@ def _describe(
             return (
                 f"Coded passage · {code.name}",
                 summary,
-                f"/projects/{study.project_id}/workspace/coding?study_id={study.id}",
+                response_url(response),
             )
+        target = db.scalar(select(AnalysisTarget).where(
+            AnalysisTarget.id == row.analysis_target_id,
+            AnalysisTarget.organisation_id == row.organisation_id,
+            AnalysisTarget.study_id == row.study_id,
+        ))
+        code = db.scalar(select(ResearchCode).where(
+            ResearchCode.id == row.research_code_id,
+            ResearchCode.organisation_id == row.organisation_id,
+            ResearchCode.study_id == row.study_id,
+        ))
+        if target is not None and target.target_type == "evidence_file":
+            _, summary, url = _describe(db, "analysis_target", target, study)
+            return f"Coded image region · {code.name if code else 'Unavailable code'}", summary, url
         return (
             "Coded passage",
             f"Code application #{row.id}",
             f"/projects/{study.project_id}/workspace/coding?study_id={study.id}",
         )
     if object_type == "annotation":
-        return "Annotation", row.body, f"/projects/{study.project_id}/workspace/entries"
+        target = db.scalar(select(AnalysisTarget).where(
+            AnalysisTarget.id == row.analysis_target_id,
+            AnalysisTarget.organisation_id == row.organisation_id,
+            AnalysisTarget.study_id == row.study_id,
+        ))
+        if target is not None:
+            _, _, url = _describe(db, "analysis_target", target, study)
+        else:
+            url = f"/projects/{study.project_id}/workspace/entries"
+        return "Annotation", row.body, url
     if object_type == "memo":
         return row.title, row.body, f"/studies/{row.study_id}/memos"
     if object_type == "code":

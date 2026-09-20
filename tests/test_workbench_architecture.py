@@ -242,6 +242,17 @@ def test_typed_object_resolver_enforces_tenant_study_and_bounds(analysis_session
         )
         is None
     )
+    coded = resolve_analytical_object(
+        analysis_session,
+        user,
+        study_id=1,
+        object_type="code_application",
+        object_id=1,
+    )
+    assert coded is not None
+    assert coded.navigation_url == (
+        "/projects/1/workspace/entries?participant_id=1&prompt_id=1#response-1"
+    )
 
 
 def test_shared_projection_is_scoped_traceable_and_unicode_safe(analysis_session):

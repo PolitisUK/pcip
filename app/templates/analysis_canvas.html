@@ -4,6 +4,7 @@
 {% block contextual_help %}<p>The canvas stores only your layout. Moving or removing a card here does not change the underlying analysis. Connecting cards creates a canonical analytical relationship.</p>{% endblock %}
 {% block content %}
 <p class="breadcrumbs"><a href="/studies/{{ study.id }}">{{ study.title }}</a> <span aria-hidden="true">/</span> Analysis canvas</p>
+{% set study_analysis_section = 'canvas' %}{% include "_study_analysis_nav.html" %}
 <section class="card card--hero section"><div class="section-head"><div><h1>Visual analysis canvas</h1><p>Use this personal study layout to compare analytical objects. Position is visual organisation, not evidence or analytical meaning.</p></div><a class="btn secondary" href="/studies/{{ study.id }}/relationships">Open relationship record</a></div></section>
 
 <section class="canvas-tools card card--action section" aria-labelledby="canvas-tools-title">

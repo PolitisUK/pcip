@@ -1,0 +1,10 @@
+<nav class="study-analysis-nav" aria-label="{{ study.title }} analysis tools">
+  <a href="/projects/{{ project.id }}/workspace">Project workspace</a>
+  <a href="/projects/{{ project.id }}/workspace/entries">Entries</a>
+  <a href="/studies/{{ study.id }}/codebook" {% if study_analysis_section == 'codebook' %}aria-current="page"{% endif %}>Codebook</a>
+  {% if research_intelligence_enabled %}<a href="/studies/{{ study.id }}/theme-explorer" {% if study_analysis_section == 'themes' %}aria-current="page"{% endif %}>Themes</a>{% endif %}
+  <a href="/studies/{{ study.id }}/memos" {% if study_analysis_section == 'memos' %}aria-current="page"{% endif %}>Memos</a>
+  <a href="/studies/{{ study.id }}/relationships" {% if study_analysis_section == 'relationships' %}aria-current="page"{% endif %}>Relationships</a>
+  <a href="/studies/{{ study.id }}/canvas" {% if study_analysis_section == 'canvas' %}aria-current="page"{% endif %}>Canvas</a>
+  <a href="/studies/{{ study.id }}/findings" {% if study_analysis_section == 'findings' %}aria-current="page"{% endif %}>Findings</a>
+</nav>
