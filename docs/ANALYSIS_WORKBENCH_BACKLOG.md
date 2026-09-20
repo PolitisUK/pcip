@@ -187,3 +187,19 @@ columns, and create no persistent matrix or participant-text copy. Archived
 codes/themes remain available for historical analysis. This stage adds no
 database migration because it composes the existing tenant-guarded analytical
 records.
+
+## AW-11 — Longitudinal analysis — complete
+
+The project research workspace now provides a chronological qualitative view
+of submitted participant/case material and its researcher passage coding.
+Researchers can filter by accessible study, participant/case, ResearchCode,
+researcher-developed theme, and response context key/value, then compare
+descriptive monthly entry and coding counts. Each event keeps the source
+submission timestamp distinct from the later coding timestamp, reconstructs
+verified coded passages, and links back to the original entry and context.
+
+The UI explicitly states that temporal order and proximity do not establish
+causation. It is a bounded, paginated read-only view derived from existing
+responses and analytical records; it stores no timeline or participant-text
+copy and introduces no migration. AW-12 is intentionally not started pending
+the planned checkpoint review.
