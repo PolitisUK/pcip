@@ -155,3 +155,20 @@ and permitted removal. Alembic revision `0030` validates both polymorphic ends,
 the author, organisation and study on INSERT and UPDATE in SQLite and
 PostgreSQL. The model is the canonical relationship system intended for later
 canvas use rather than a UI-specific graph store.
+
+## AW-09 — Theme development — complete
+
+The existing researcher-created `ResearchTheme` capability now supports an
+iterative thematic-analysis workflow: researchers can create and define themes,
+refine their definitions, connect active `ResearchCode` records, inspect the
+verified coded extracts supporting those codes, and archive or restore themes.
+Creator, code-link author, and timestamps remain visible; archived themes and
+codes remain readable as historical analytical provenance.
+
+Alembic revision `0031` adds the scoped `ResearchThemeCode` join and theme
+archive provenance. SQLite and PostgreSQL guards enforce organisation, study,
+theme, code, creator, linker and archiver integrity on INSERT and UPDATE. No
+participant text is copied into theme records or joins: excerpts are rebuilt
+from authoritative responses and fingerprint-checked code anchors. Reviewed AI
+analysis may be referenced as optional provenance, but is never promoted into a
+theme without an explicit researcher creation action.

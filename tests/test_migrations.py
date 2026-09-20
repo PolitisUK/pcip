@@ -64,7 +64,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0030" in revision.stdout
+    assert "0031" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -111,7 +111,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0030" in result.stdout
+            assert "0031" in result.stdout
 
     active = subprocess.run(
         [
@@ -310,3 +310,20 @@ def test_analysis_targets_migration_enforces_concrete_sources_and_tenant_scope(t
     )
     assert foreign_relationship_author.returncode != 0
     assert "analytical relationship author scope" in foreign_relationship_author.stderr
+    valid_theme_link = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO research_themes (id, organisation_id, study_id, name, description, source_suggestion_ids_json, status, created_by_id, created_at, updated_at) VALUES (1, 1, 1, 'Access', 'Researcher definition', '[]', 'researcher_draft', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP); INSERT INTO research_theme_codes (id, organisation_id, study_id, research_theme_id, research_code_id, linked_by_id, created_at) VALUES (1, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP);"],
+        capture_output=True, text=True, check=False,
+    )
+    assert valid_theme_link.returncode == 0, valid_theme_link.stderr
+    forged_theme_code = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE research_theme_codes SET research_code_id=999 WHERE id=1;"],
+        capture_output=True, text=True, check=False,
+    )
+    assert forged_theme_code.returncode != 0
+    assert "theme code code scope" in forged_theme_code.stderr
+    foreign_theme_linker = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE research_theme_codes SET linked_by_id=2 WHERE id=1;"],
+        capture_output=True, text=True, check=False,
+    )
+    assert foreign_theme_linker.returncode != 0
+    assert "theme code researcher scope" in foreign_theme_linker.stderr

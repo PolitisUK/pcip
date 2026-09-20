@@ -4042,6 +4042,39 @@ def test_csp_nonce_is_present_on_public_and_authenticated_pages():
         assert 'nonce="' in private_page.text
 
 
+def test_researcher_theme_development_links_codes_and_reconstructs_supporting_extracts(monkeypatch):
+    from app.models import ActivityResponse, AnalysisTarget, CodeApplication, ResearchCode, ResearchTheme
+    from app.passage_coding import text_anchor
+
+    monkeypatch.setattr(settings, 'research_intelligence_enabled', True)
+    with client:
+        client.cookies.clear(); auth()
+        study_id = int(client.get('/studies').text.split('/studies/')[1].split('"')[0])
+        code_name = unique_value('Theme support code')
+        theme_name = unique_value('Community access theme')
+        assert post_with_csrf(f'/studies/{study_id}/codebook', data={'name': code_name, 'definition': 'Supporting material', 'parent_code_id': ''}, follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/themes', data={'name': theme_name, 'description': 'Initial researcher definition', 'source_suggestion_ids': ''}, follow_redirects=False).status_code == 303
+        with SessionLocal() as db:
+            code = db.scalar(select(ResearchCode).where(ResearchCode.study_id == study_id, ResearchCode.name == code_name))
+            theme = db.scalar(select(ResearchTheme).where(ResearchTheme.study_id == study_id, ResearchTheme.name == theme_name))
+            response = db.scalar(select(ActivityResponse).where(ActivityResponse.study_id == study_id).order_by(ActivityResponse.id))
+            owner = db.scalar(select(User).where(User.organisation_id == theme.organisation_id).order_by(User.id))
+            response.value_json = json.dumps({'text': '<Shared 😀 place> makes access easier.'})
+            target = AnalysisTarget(organisation_id=theme.organisation_id, study_id=study_id, target_type='activity_response', activity_response_id=response.id, anchor_json='{}', authorship='researcher', created_by_id=owner.id)
+            db.add(target); db.flush()
+            db.add(CodeApplication(organisation_id=theme.organisation_id, study_id=study_id, analysis_target_id=target.id, research_code_id=code.id, applied_by_id=owner.id, anchor_json=text_anchor('<Shared 😀 place> makes access easier.', 0, 16)))
+            db.commit(); code_id, theme_id = code.id, theme.id
+        assert post_with_csrf(f'/studies/{study_id}/themes/{theme_id}/codes', data={'research_code_id': str(code_id)}, follow_redirects=False).status_code == 303
+        page = client.get(f'/studies/{study_id}/theme-explorer')
+        assert theme_name in page.text and code_name in page.text
+        assert '&lt;Shared 😀 place&gt;' in page.text and '<Shared 😀 place>' not in page.text
+        assert 'Supporting coded extracts' in page.text and 'created by' in page.text
+        assert post_with_csrf(f'/studies/{study_id}/themes/{theme_id}/edit', data={'name': theme_name, 'description': 'Refined researcher definition'}, follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/themes/{theme_id}/archive', follow_redirects=False).status_code == 303
+        assert 'Archived' in client.get(f'/studies/{study_id}/theme-explorer').text
+        assert post_with_csrf(f'/studies/{study_id}/themes/{theme_id}/restore', follow_redirects=False).status_code == 303
+
+
 def test_templates_do_not_use_inline_scripts_or_inline_event_handlers():
     for file_path in glob('app/templates/**/*.html', recursive=True):
         html = Path(file_path).read_text(encoding='utf-8')
