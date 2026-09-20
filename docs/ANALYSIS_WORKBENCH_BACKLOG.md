@@ -172,3 +172,18 @@ participant text is copied into theme records or joins: excerpts are rebuilt
 from authoritative responses and fingerprint-checked code anchors. Reviewed AI
 analysis may be referenced as optional provenance, but is never promoted into a
 theme without an explicit researcher creation action.
+
+## AW-10 — Case / framework matrices — complete
+
+The project research workspace now derives participant/case × `ResearchCode`
+or researcher-developed `ResearchTheme` matrices from scoped
+`CodeApplication` and `ResearchThemeCode` records. Researchers can filter by
+accessible study, switch analytical dimension, and focus a single code or
+theme. Each populated cell exposes verified coded excerpts with links back to
+the authoritative source entry; empty cells remain explicit for comparison.
+
+Matrices are read-only query views, bounded to 5,000 applications and 50
+columns, and create no persistent matrix or participant-text copy. Archived
+codes/themes remain available for historical analysis. This stage adds no
+database migration because it composes the existing tenant-guarded analytical
+records.
