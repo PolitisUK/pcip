@@ -64,7 +64,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0032" in revision.stdout
+    assert "0033" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -111,7 +111,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0032" in result.stdout
+            assert "0033" in result.stdout
 
     active = subprocess.run(
         [
@@ -424,6 +424,117 @@ def test_analysis_canvas_migration_enforces_canvas_and_object_scope(tmp_path):
         [sys.executable, "-m", "alembic", "downgrade", "0031"],
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         [sys.executable, "-m", "alembic", "check"],
+    ):
+        rehearsed = subprocess.run(
+            command,
+            cwd=REPOSITORY_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert rehearsed.returncode == 0, rehearsed.stderr
+
+
+def test_research_findings_migration_extends_relationship_and_canvas_scope(tmp_path):
+    database_path = tmp_path / "research-findings.db"
+    environment = os.environ.copy()
+    environment["DATABASE_URL"] = f"sqlite:///{database_path}"
+    baseline = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "0032"],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert baseline.returncode == 0, baseline.stderr
+    legacy_schema = """
+      PRAGMA foreign_keys=OFF;
+      DROP TABLE analytical_relationships;
+      DROP TABLE analysis_canvas_nodes;
+      DROP TABLE research_findings;
+      CREATE TABLE analytical_relationships (
+        id INTEGER PRIMARY KEY, organisation_id INTEGER NOT NULL REFERENCES organisations(id), study_id INTEGER NOT NULL REFERENCES studies(id),
+        source_type VARCHAR(40) NOT NULL, source_id INTEGER NOT NULL, relationship_type VARCHAR(30) NOT NULL,
+        target_type VARCHAR(40) NOT NULL, target_id INTEGER NOT NULL, rationale TEXT NOT NULL DEFAULT '', created_by_id INTEGER NOT NULL REFERENCES users(id), created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT ck_analytical_relationship_type CHECK (relationship_type IN ('supports','contradicts','explains','relates_to','precedes','follows','refines')),
+        CONSTRAINT ck_analytical_relationship_source_type CHECK (source_type IN ('analysis_target','code_application','annotation','memo','code','theme')),
+        CONSTRAINT ck_analytical_relationship_target_type CHECK (target_type IN ('analysis_target','code_application','annotation','memo','code','theme')),
+        CONSTRAINT ck_analytical_relationship_not_self CHECK (source_type <> target_type OR source_id <> target_id),
+        CONSTRAINT uq_analytical_relationship_assertion UNIQUE (organisation_id,study_id,source_type,source_id,relationship_type,target_type,target_id)
+      );
+      CREATE TABLE analysis_canvas_nodes (
+        id INTEGER PRIMARY KEY, organisation_id INTEGER NOT NULL REFERENCES organisations(id), study_id INTEGER NOT NULL REFERENCES studies(id), canvas_id INTEGER NOT NULL REFERENCES analysis_canvases(id) ON DELETE CASCADE,
+        object_type VARCHAR(40) NOT NULL, object_id INTEGER NOT NULL, x FLOAT NOT NULL, y FLOAT NOT NULL, added_by_id INTEGER NOT NULL REFERENCES users(id), created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT ck_analysis_canvas_node_type CHECK (object_type IN ('analysis_target','code_application','annotation','memo','code','theme')),
+        CONSTRAINT ck_analysis_canvas_node_coordinates CHECK (x >= 0 AND x <= 4000 AND y >= 0 AND y <= 4000),
+        CONSTRAINT uq_analysis_canvas_node_object UNIQUE (canvas_id,object_type,object_id)
+      );
+      PRAGMA foreign_keys=ON;
+    """
+    legacy = subprocess.run(
+        ["sqlite3", str(database_path), legacy_schema],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert legacy.returncode == 0, legacy.stderr
+    upgraded = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert upgraded.returncode == 0, upgraded.stderr
+    valid = """
+      PRAGMA foreign_keys=ON;
+      INSERT INTO organisations (id,name,slug,created_at) VALUES (1,'One','finding-one',CURRENT_TIMESTAMP),(2,'Two','finding-two',CURRENT_TIMESTAMP);
+      INSERT INTO users (id,organisation_id,name,email,session_version,failed_login_count,role,is_platform_admin,is_active,created_at) VALUES (1,1,'One','finding-one@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP),(2,2,'Two','finding-two@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP);
+      INSERT INTO projects (id,organisation_id,title,code,description,status,created_by_id,created_at,updated_at) VALUES (1,1,'One','FP1','','draft',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,'Two','FP2','','draft',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO studies (id,organisation_id,project_id,title,code,description,methodology,status,demographics_schema_json,created_by_id,created_at,updated_at) VALUES (1,1,1,'One','FS1','','diary','draft','[]',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,2,'Two','FS2','','diary','draft','[]',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO research_codes (id,organisation_id,study_id,name,definition,created_by_id,created_at,updated_at) VALUES (1,1,1,'Local','',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,2,'Foreign','',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO analysis_canvases (id,organisation_id,study_id,owner_id,view_metadata_json,created_at,updated_at) VALUES (1,1,1,1,'{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO research_findings (id,organisation_id,study_id,title,body,created_by_id,created_at,updated_at) VALUES (1,1,1,'Access finding','Substantive researcher conclusion',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO analytical_relationships (organisation_id,study_id,source_type,source_id,relationship_type,target_type,target_id,rationale,created_by_id,created_at) VALUES (1,1,'finding',1,'qualifies','code',1,'Qualified interpretation',1,CURRENT_TIMESTAMP);
+      INSERT INTO analysis_canvas_nodes (organisation_id,study_id,canvas_id,object_type,object_id,x,y,added_by_id,created_at,updated_at) VALUES (1,1,1,'finding',1,20,30,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+    """
+    inserted = subprocess.run(
+        ["sqlite3", str(database_path), valid],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert inserted.returncode == 0, inserted.stderr
+    foreign_creator = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO research_findings (organisation_id,study_id,title,body,created_by_id,created_at,updated_at) VALUES (1,1,'Forged','Foreign creator',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert foreign_creator.returncode != 0
+    assert "research finding creator scope" in foreign_creator.stderr
+    forged_relationship = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE analytical_relationships SET source_id=999 WHERE source_type='finding';"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert forged_relationship.returncode != 0
+    assert "analytical relationship source scope" in forged_relationship.stderr
+    forged_canvas = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE analysis_canvas_nodes SET object_id=999 WHERE object_type='finding';"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert forged_canvas.returncode != 0
+    assert "analysis canvas finding scope" in forged_canvas.stderr
+    for command in (
+        [sys.executable, "-m", "alembic", "downgrade", "0032"],
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
     ):
         rehearsed = subprocess.run(
             command,

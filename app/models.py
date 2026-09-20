@@ -734,6 +734,36 @@ class ResearchThemeCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ResearchFinding(Base):
+    """A researcher-authored analytical conclusion, distinct from a theme or memo."""
+
+    __tablename__ = "research_findings"
+    __table_args__ = (
+        CheckConstraint("title <> ''", name="ck_research_finding_title_nonblank"),
+        CheckConstraint("body <> ''", name="ck_research_finding_body_nonblank"),
+        CheckConstraint(
+            "(archived_at IS NULL) = (archived_by_id IS NULL)",
+            name="ck_research_finding_archive_pair",
+        ),
+        Index(
+            "ix_research_findings_scope",
+            "organisation_id",
+            "study_id",
+            "archived_at",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text)
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    archived_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class AnalysisTarget(Base):
     """A durable, scoped pointer to original research material.
 
@@ -879,7 +909,7 @@ class AnalysisCanvasNode(Base):
     __tablename__ = "analysis_canvas_nodes"
     __table_args__ = (
         CheckConstraint(
-            "object_type IN ('analysis_target','code_application','annotation','memo','code','theme')",
+            "object_type IN ('analysis_target','code_application','annotation','memo','code','theme','finding')",
             name="ck_analysis_canvas_node_type",
         ),
         CheckConstraint(
@@ -911,9 +941,9 @@ class AnalyticalRelationship(Base):
     """A directional researcher assertion between two analytical objects."""
     __tablename__ = "analytical_relationships"
     __table_args__ = (
-        CheckConstraint("relationship_type IN ('supports','contradicts','explains','relates_to','precedes','follows','refines')", name="ck_analytical_relationship_type"),
-        CheckConstraint("source_type IN ('analysis_target','code_application','annotation','memo','code','theme')", name="ck_analytical_relationship_source_type"),
-        CheckConstraint("target_type IN ('analysis_target','code_application','annotation','memo','code','theme')", name="ck_analytical_relationship_target_type"),
+        CheckConstraint("relationship_type IN ('supports','contradicts','qualifies','illustrates','derived_from','informed_by','explains','relates_to','precedes','follows','refines')", name="ck_analytical_relationship_type"),
+        CheckConstraint("source_type IN ('analysis_target','code_application','annotation','memo','code','theme','finding')", name="ck_analytical_relationship_source_type"),
+        CheckConstraint("target_type IN ('analysis_target','code_application','annotation','memo','code','theme','finding')", name="ck_analytical_relationship_target_type"),
         CheckConstraint("source_type <> target_type OR source_id <> target_id", name="ck_analytical_relationship_not_self"),
         UniqueConstraint("organisation_id", "study_id", "source_type", "source_id", "relationship_type", "target_type", "target_id", name="uq_analytical_relationship_assertion"),
         Index("ix_analytical_relationships_source", "organisation_id", "study_id", "source_type", "source_id"),

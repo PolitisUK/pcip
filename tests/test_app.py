@@ -4783,6 +4783,11 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
             data={'name': 'Read-only visible code', 'definition': 'Existing analysis', 'parent_code_id': ''},
             follow_redirects=False,
         ).status_code == 303
+        assert post_with_csrf(
+            f'/studies/{study_id}/findings',
+            data={'title': 'Read-only visible finding', 'body': 'A researcher-authored conclusion.'},
+            follow_redirects=False,
+        ).status_code == 303
 
         researcher_email = f"{unique_value('viewer')}@example.org"
         researcher_password = 'SecurePass123!'
@@ -4813,6 +4818,17 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
 
         assert client.get(f'/studies/{study_id}').status_code == 200
         assert client.get(f'/participants/{participant_id}').status_code == 200
+        findings = client.get(f'/studies/{study_id}/findings')
+        assert findings.status_code == 200
+        assert 'Read-only visible finding' in findings.text
+        assert 'Create a researcher finding' not in findings.text
+        assert 'Link analytical material' not in findings.text
+        assert 'Finding actions' not in findings.text
+        assert post_with_csrf(
+            f'/studies/{study_id}/findings',
+            data={'title': 'Blocked finding', 'body': 'Must not be created.'},
+            follow_redirects=False,
+        ).status_code == 403
 
         denied_edit = post_with_csrf(
             f'/studies/{study_id}/activities',
@@ -10871,7 +10887,7 @@ def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_on
 
 
 def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_only_minimised_lifecycle_evidence():
-    from app.models import AnalysisCanvas, AnalysisCanvasNode, AnalysisTarget, ActivityResponse, EvidenceFile, OutboxEmail, Participant, ParticipantAppAccessCode, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment, User
+    from app.models import AnalysisCanvas, AnalysisCanvasNode, AnalysisTarget, AnalyticalRelationship, ActivityResponse, EvidenceFile, OutboxEmail, Participant, ParticipantAppAccessCode, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, ResearchFinding, StudyEnrolment, User
     from app.security import token_hash
 
     context = _prepare_participant_api_activity_response_context('api-privacy-deletion')
@@ -10896,6 +10912,9 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
             AnalysisTarget(organisation_id=context['organisation_id'], study_id=context['study_id'], target_type='participant_case', participant_id=context['participant_id'], created_by_id=author.id),
         ])
         db.flush()
+        finding = ResearchFinding(organisation_id=context['organisation_id'], study_id=context['study_id'], title='Reusable study finding', body='A study-level researcher interpretation.', created_by_id=author.id)
+        db.add(finding); db.flush()
+        db.add(AnalyticalRelationship(organisation_id=context['organisation_id'], study_id=context['study_id'], source_type='finding', source_id=finding.id, relationship_type='supports', target_type='analysis_target', target_id=response_target.id, rationale='Participant-derived source link', created_by_id=author.id))
         canvas = AnalysisCanvas(organisation_id=context['organisation_id'], study_id=context['study_id'], owner_id=author.id)
         db.add(canvas); db.flush()
         db.add(AnalysisCanvasNode(organisation_id=context['organisation_id'], study_id=context['study_id'], canvas_id=canvas.id, object_type='analysis_target', object_id=response_target.id, x=20, y=30, added_by_id=author.id))
@@ -10903,7 +10922,7 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         # Legacy rows have no verified participant link and must not be deleted
         # by recipient matching, even where their content might be sensitive.
         db.add(OutboxEmail(organisation_id=context['organisation_id'], recipient='legacy@example.org', subject='Legacy', body='unlinked legacy email'))
-        db.commit()
+        db.commit(); finding_id = finding.id
 
     with client:
         response = client.post(
@@ -10938,12 +10957,15 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         assert duplicate.status_code == 401
 
     with SessionLocal() as db:
+        from app.models import AnalyticalRelationship, ResearchFinding
         assert db.get(Participant, context['participant_id']) is None
         assert db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id == context['participant_id'])) is None
         assert db.scalar(select(EvidenceFile).where(EvidenceFile.participant_id == context['participant_id'])) is None
         assert db.scalar(select(AnalysisTarget).where(AnalysisTarget.organisation_id == context['organisation_id'], AnalysisTarget.study_id == context['study_id'])) is None
         assert db.scalar(select(AnalysisCanvasNode).where(AnalysisCanvasNode.organisation_id == context['organisation_id'], AnalysisCanvasNode.study_id == context['study_id'])) is None
         assert db.scalar(select(AnalysisCanvas).where(AnalysisCanvas.organisation_id == context['organisation_id'], AnalysisCanvas.study_id == context['study_id'])) is not None
+        assert db.get(ResearchFinding, finding_id) is not None
+        assert db.scalar(select(AnalyticalRelationship).where(AnalyticalRelationship.source_type == 'finding', AnalyticalRelationship.source_id == finding_id)) is None
         assert db.scalar(select(ParticipantMessage).where(ParticipantMessage.participant_id == context['participant_id'])) is None
         assert db.scalar(select(StudyEnrolment).where(StudyEnrolment.participant_id == context['participant_id'])) is None
         assert db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == context['participant_id'])) is None
@@ -11472,6 +11494,36 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert 'frequency nor co-occurrence proves importance' in advanced_query.text
         assert f'#response-{response_id}' in advanced_query.text
         assert client.get(f'/projects/{project_id}/workspace/queries?include_code_id={foreign_code_id}').status_code == 404
+        created_finding = post_with_csrf(
+            f'/studies/{study_id}/findings',
+            data={
+                'title': 'Access remains uneven',
+                'body': '<script>alert(1)</script> Researcher conclusion requiring mixed evidence.',
+            },
+            follow_redirects=False,
+        )
+        assert created_finding.status_code == 303
+        with SessionLocal() as db:
+            from app.models import AuditEvent, ResearchFinding
+            finding = db.scalar(select(ResearchFinding).where(ResearchFinding.study_id == study_id, ResearchFinding.title == 'Access remains uneven'))
+            assert finding is not None
+            finding_id = finding.id
+            assert db.scalar(select(AuditEvent).where(AuditEvent.action == 'research_finding.created', AuditEvent.entity_id == str(finding_id))) is not None
+        findings_page = client.get(f'/studies/{study_id}/findings')
+        assert findings_page.status_code == 200
+        assert 'Access remains uneven' in findings_page.text
+        assert '&lt;script&gt;alert(1)&lt;/script&gt; Researcher conclusion requiring mixed evidence.' in findings_page.text
+        assert '<script>alert(1)</script>' not in findings_page.text
+        assert post_with_csrf(
+            f'/studies/{study_id}/findings/{finding_id}/edit',
+            data={'title': 'Access remains uneven', 'body': 'Refined researcher conclusion requiring mixed evidence.'},
+            follow_redirects=False,
+        ).status_code == 303
+        assert post_with_csrf(
+            f'/studies/{study_id}/findings/{finding_id}/relationships',
+            data={'relationship_type': 'supports', 'target_ref': f'code:{foreign_code_id}', 'rationale': 'Forged cross-tenant link'},
+            follow_redirects=False,
+        ).status_code == 400
         image_analysis = client.get(f'/evidence/{image_evidence_id}/analysis')
         assert image_analysis.status_code == 200 and 'Image-region analysis' in image_analysis.text
         invalid_region = post_with_csrf(f'/evidence/{image_evidence_id}/analysis/regions', data={'x':'0.9','y':'0.1','width':'0.2','height':'0.2','code_ids':str(research_code_id),'annotation_body':''}, follow_redirects=False)
@@ -11554,6 +11606,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert relationships_page.status_code == 200
         assert f'value="memo:{memo_id}"' in relationships_page.text
         assert f'value="code:{research_code_id}"' in relationships_page.text
+        assert f'value="finding:{finding_id}"' in relationships_page.text
         self_relationship = post_with_csrf(f'/studies/{study_id}/relationships', data={'source_ref':f'code:{research_code_id}','relationship_type':'supports','target_ref':f'code:{research_code_id}','rationale':''}, follow_redirects=False)
         assert self_relationship.status_code == 400
         created_relationship = post_with_csrf(f'/studies/{study_id}/relationships', data={'source_ref':f'memo:{memo_id}','relationship_type':'supports','target_ref':f'code:{research_code_id}','rationale':'<script>alert(1)</script> Interpretive support'}, follow_redirects=False)
@@ -11575,6 +11628,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':f'memo:{memo_id}'}, follow_redirects=False).status_code == 303
         assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':f'code:{research_code_id}'}, follow_redirects=False).status_code == 303
         assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':f'code_application:{application_id}'}, follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':f'finding:{finding_id}'}, follow_redirects=False).status_code == 303
         assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':'code:999999'}, follow_redirects=False).status_code == 404
         assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':f'code:{foreign_code_id}'}, follow_redirects=False).status_code == 404
         forged_canvas_relationship = post_with_csrf(
@@ -11605,6 +11659,31 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
             assert (moved.x, moved.y) == (320.0, 410.0)
             assert db.get(ResearchMemo, memo_id) is not None
         assert post_with_csrf(f'/studies/{study_id}/canvas/relationships/{relationship_id}/delete', follow_redirects=False).status_code == 303
+        finding_link = post_with_csrf(
+            f'/studies/{study_id}/findings/{finding_id}/relationships',
+            data={
+                'relationship_type': 'contradicts',
+                'target_ref': f'code_application:{application_id}',
+                'rationale': '<script>alert(1)</script> Negative case retained',
+            },
+            follow_redirects=False,
+        )
+        assert finding_link.status_code == 303
+        with SessionLocal() as db:
+            from app.models import AnalyticalRelationship, AuditEvent
+            finding_relationship = db.scalar(select(AnalyticalRelationship).where(AnalyticalRelationship.target_type == 'finding', AnalyticalRelationship.target_id == finding_id, AnalyticalRelationship.relationship_type == 'contradicts'))
+            assert finding_relationship is not None
+            finding_relationship_id = finding_relationship.id
+            assert db.scalar(select(AuditEvent).where(AuditEvent.action == 'analytical_relationship.created', AuditEvent.entity_id == str(finding_relationship_id))) is not None
+        rendered_findings = client.get(f'/studies/{study_id}/findings')
+        assert 'Contradicts' in rendered_findings.text
+        assert 'Coded passage · Passage trust' in rendered_findings.text and 'complete' in rendered_findings.text
+        assert '&lt;script&gt;alert(1)&lt;/script&gt; Negative case retained' in rendered_findings.text
+        assert '<script>alert(1)</script>' not in rendered_findings.text
+        assert post_with_csrf(
+            f'/studies/{study_id}/findings/{finding_id}/relationships/{finding_relationship_id}/delete',
+            follow_redirects=False,
+        ).status_code == 303
         canvas_created_relationship = post_with_csrf(
             f'/studies/{study_id}/canvas/relationships',
             data={
@@ -11625,6 +11704,10 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert 'Canvas-created rationale' in client.get(f'/studies/{study_id}/canvas').text
         assert post_with_csrf(f'/studies/{study_id}/canvas/relationships/{canvas_relationship_id}/delete', follow_redirects=False).status_code == 303
         assert post_with_csrf(f'/studies/{study_id}/canvas/nodes/{memo_node_id}/delete', follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/findings/{finding_id}/lifecycle/archive', follow_redirects=False).status_code == 303
+        archived_findings = client.get(f'/studies/{study_id}/findings?include_archived=true')
+        assert 'Access remains uneven' in archived_findings.text and 'Archived' in archived_findings.text
+        assert post_with_csrf(f'/studies/{study_id}/findings/{finding_id}/lifecycle/restore', follow_redirects=False).status_code == 303
         with SessionLocal() as db:
             from app.models import AnalysisCanvasNode, AnalyticalRelationship, ResearchMemo
             assert db.get(AnalysisCanvasNode, memo_node_id) is None

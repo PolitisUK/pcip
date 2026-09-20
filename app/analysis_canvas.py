@@ -35,6 +35,7 @@ CANVAS_OBJECT_TYPES = {
     "memo",
     "code",
     "theme",
+    "finding",
 }
 MAX_CANVAS_NODES = 100
 MAX_CANVAS_RELATIONSHIPS = 500

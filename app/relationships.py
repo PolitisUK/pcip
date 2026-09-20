@@ -9,7 +9,19 @@ from .analysis_objects import (
 from .models import AnalyticalRelationship, Study, User
 
 
-RELATIONSHIP_TYPES = ("supports", "contradicts", "explains", "relates_to", "precedes", "follows", "refines")
+RELATIONSHIP_TYPES = (
+    "supports",
+    "contradicts",
+    "qualifies",
+    "illustrates",
+    "derived_from",
+    "informed_by",
+    "explains",
+    "relates_to",
+    "precedes",
+    "follows",
+    "refines",
+)
 RELATIONSHIP_OBJECT_TYPES = ANALYTICAL_OBJECT_TYPES - {"participant_case", "relationship"}
 
 
