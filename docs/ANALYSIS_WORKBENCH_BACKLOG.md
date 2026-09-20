@@ -394,3 +394,28 @@ optional accessible-study restriction, and rejects forged tenant/study IDs.
 Participant deletion and anonymisation are respected because the export reads
 only the current canonical records and creates no persistent export copy. This
 stage adds no database migration.
+
+## AW-18 — Integrated workbench experience — complete
+
+The project research workspace now presents the workbench as one source-first
+journey: review entries and evidence; develop study-scoped codes, annotations,
+image regions, memos, relationships, themes, canvases and findings; compare
+cases and time; then review AI suggestions, history and export. The sequence is
+guidance rather than an automated method, and it preserves the distinction
+between legacy response labels, researcher passage codes, themes, findings and
+untrusted AI suggestions.
+
+A shared project navigation groups source review, analytical development, and
+review/share tools. A complementary study navigation connects the codebook,
+memos, relationships, canvas, findings, theme explorer and image analysis
+without weakening their study boundary. Empty states point to a meaningful
+next action, navigation remains horizontally usable on narrow screens, and
+current-page state is exposed to assistive technology.
+
+Source and provenance links now resolve to the narrowest useful view: exact
+response fragments for passage applications and AI suggestions, evidence image
+analysis for image applications, and typed analytical objects for memos,
+relationships and audit history. The integration reuses the existing
+permission, resolver, audit and lifecycle contracts and introduces no new
+database model or migration. Remaining visual and performance assurance is
+tracked by the final QA stages rather than hidden in this feature checkpoint.

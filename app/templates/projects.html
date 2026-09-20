@@ -31,7 +31,7 @@
 		<thead><tr><th>Project</th><th>Studies</th><th>Status</th><th>Updated</th><th>Research</th></tr></thead>
 		<tbody>
 			{% for p in projects %}
-			<tr><td><a href="/projects/{{ p.id }}"><strong>{{ p.title }}</strong></a><br><span class="muted">{{ p.code }}</span></td><td>{{ counts.get(p.id,0) }}</td><td><span class="badge {{ p.status }}">{{ p.status|title }}</span></td><td>{{ p.updated_at.strftime('%d %b %Y') }}</td><td><a href="/projects/{{ p.id }}/workspace/analysis">Analysis</a></td></tr>
+			<tr><td><a href="/projects/{{ p.id }}"><strong>{{ p.title }}</strong></a><br><span class="muted">{{ p.code }}</span></td><td>{{ counts.get(p.id,0) }}</td><td><span class="badge {{ p.status }}">{{ p.status|title }}</span></td><td>{{ p.updated_at.strftime('%d %b %Y') }}</td><td><a href="/projects/{{ p.id }}/workspace">Research workspace</a></td></tr>
 			{% else %}
 			<tr><td colspan="5"><div class="empty">No projects have been created.<div class="empty-actions"><a class="btn secondary" href="/onboarding/first-project">Start with wizard</a></div></div></td></tr>
 			{% endfor %}

@@ -117,3 +117,38 @@ relationship permission and audit services used by the relationship record.
 Removing a node changes only layout. Deleting an underlying analytical object
 removes its placement through `remove_analytical_references` before the object
 is deleted.
+
+## Export contract
+
+The project export is a bounded, versioned ZIP of fixed-name JSON components,
+not another persistent analytical store. Its manifest records accessible
+studies, counts, bounds and truncation. Every component is assembled from the
+same current scoped records used by the workbench, so privacy deletion and
+anonymisation are reflected without maintaining a stale participant-text copy.
+
+Participant excerpts are explicitly typed and coded passages are reconstructed
+only after their Unicode code-point anchor and fingerprint verify. Researcher
+analysis, AI suggestions and audit metadata remain separately labelled. File
+names are server controlled, JSON keeps spreadsheet formula-like content inert,
+and responses use download hardening headers. Export access and optional study
+selection use the existing project/study permission boundary.
+
+## Navigation and provenance contract
+
+The integrated workbench has two complementary navigation scopes. Project
+navigation covers sources, cross-study retrieval/comparison, AI review, history
+and export. Study navigation covers the codebook and researcher-authored
+analysis whose database scope is one study. Adding a link must not imply that a
+study object is project-global or that a guided stage is an enforced analytical
+sequence.
+
+Navigation to evidence should be as exact as the canonical pointer allows.
+Textual applications and response-backed suggestions link to the participant
+response fragment with its participant and activity filters; image applications
+link to the evidence analysis view; researcher objects resolve through the
+allow-listed analytical object contract. A missing, deleted or inaccessible
+object receives a bounded fallback description rather than a guessed link.
+
+User-facing language must continue to distinguish legacy response-level labels,
+researcher passage codes, researcher themes/findings, and AI-generated
+suggestions. Shared navigation does not merge their authorship or semantics.

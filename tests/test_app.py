@@ -4897,6 +4897,7 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
             read_only_suggestion = ResearchAnalysisSuggestion(organisation_id=owner.organisation_id, study_id=study_id, source_response_id=source_response.id, source_snapshot='Read-only source', provisional_insight='Read-only visible AI suggestion')
             db.add(read_only_suggestion); db.flush()
             suggestion_id = read_only_suggestion.id
+            source_response_id = source_response.id
             from app.models import ResearchCode
             code_row = db.scalar(select(ResearchCode).where(ResearchCode.study_id == study_id, ResearchCode.name == 'Read-only visible code'))
             code_id = code_row.id
@@ -4928,6 +4929,9 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
         analysis = client.get(f'/projects/{project_id}/workspace/analysis')
         assert analysis.status_code == 200
         assert 'Read-only visible AI suggestion' in analysis.text
+        assert f'/workspace/entries?participant_id={participant_id}&amp;prompt_id=' in analysis.text
+        assert f'#response-{source_response_id}' in analysis.text
+        assert 'Open authoritative source entry' in analysis.text
         assert 'Accept for researcher consideration' not in analysis.text
         assert 'Convert to a new researcher-authored finding' not in analysis.text
         history = client.get(f'/projects/{project_id}/workspace/audit')
@@ -11609,10 +11613,26 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         dossier = client.get(f"/participants/{participant_id}")
         assert overview.status_code == 200
         assert "Research workspace" in overview.text
-        assert f'href="/projects/{project_id}/workspace/analysis">Analysis</a>' in projects.text
+        assert "Analysis journey" in overview.text
+        assert all(label in overview.text for label in (
+            "Review sources", "Develop analysis", "Compare and test",
+            "Conclude and account", "Study analysis tools",
+        ))
+        for path, label in (
+            (f"/studies/{study_id}/codebook", "Codebook"),
+            (f"/studies/{study_id}/memos", "Memos"),
+            (f"/studies/{study_id}/relationships", "Relationships"),
+            (f"/studies/{study_id}/canvas", "Canvas"),
+            (f"/studies/{study_id}/findings", "Findings"),
+        ):
+            assert f'href="{path}">{label}</a>' in overview.text
+        assert f'href="/projects/{project_id}/workspace">Research workspace</a>' in projects.text
         assert analysis.status_code == 200
         assert "Analysis" in analysis.text
         assert unfiltered_entries.status_code == 200
+        assert "Review sources" in unfiltered_entries.text
+        assert "Coded passages" in unfiltered_entries.text
+        assert "Review &amp; share" in unfiltered_entries.text
         assert blank_participant_entries.status_code == 200
         assert blank_prompt_entries.status_code == 200
         assert combined_blank_entries.status_code == 200
@@ -11626,11 +11646,24 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert "02 Jan 2026, 03:04" in entries.text
         assert "Place:" in entries.text and "Town centre" in entries.text
         assert "The complete longitudinal account is visible in the workspace." in entries.text
+        assert "Legacy response label" in entries.text
+        assert "Legacy response labels" in entries.text
         assert "Access &gt; delay" in entries.text
         assert 'workspace/entries?code=Access%20%3E%20delay' in entries.text
         assert "Attached evidence" in entries.text and "entry-notes.pdf" in entries.text
         assert "Researcher passage coding" in entries.text
         assert "Passage trust" in entries.text and "complete" in entries.text
+        themes_overview = client.get(f'/projects/{project_id}/workspace/themes')
+        assert themes_overview.status_code == 200
+        assert 'Three distinct analytical records' in themes_overview.text
+        assert 'Passage-level coding is not yet supported' not in themes_overview.text
+        assert f'href="/studies/{study_id}/codebook">Open codebook</a>' in themes_overview.text
+        codebook_page = client.get(f'/studies/{study_id}/codebook')
+        assert codebook_page.status_code == 200
+        assert 'aria-label="Longitudinal diary analysis tools"' in codebook_page.text
+        assert 'aria-current="page">Codebook</a>' in codebook_page.text
+        assert 'Codes are not yet applied to text' not in codebook_page.text
+        assert f'/workspace/coding?study_id={study_id}&amp;code_id={research_code_id}' in codebook_page.text
         retrieval = client.get(f'/projects/{project_id}/workspace/coding')
         assert retrieval.status_code == 200
         assert 'These are AW researcher CodeApplications' in retrieval.text
@@ -11749,6 +11782,8 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
             assert db.scalar(select(AuditEvent).where(AuditEvent.action == 'research_memo.created', AuditEvent.entity_id == str(memo_id))) is not None
         rendered_memos = client.get(f'/studies/{study_id}/memos')
         assert 'Developing interpretation' in rendered_memos.text
+        assert f'/workspace/entries?participant_id={participant_id}&amp;prompt_id={activity_id}#response-{response_id}' in rendered_memos.text
+        assert 'aria-current="page">Memos</a>' in rendered_memos.text
         assert '&lt;script&gt;alert(1)&lt;/script&gt; Reflexive analytical memo' in rendered_memos.text
         assert '<script>alert(1)</script>' not in rendered_memos.text
         assert post_with_csrf(f'/studies/{study_id}/memos/{memo_id}/edit', data={'title': 'Refined interpretation', 'body': 'Updated memo'}, follow_redirects=False).status_code == 303
@@ -11774,6 +11809,9 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
             assert db.scalar(select(AuditEvent).where(AuditEvent.action == 'analytical_relationship.created', AuditEvent.entity_id == str(relationship_id))) is not None
         rendered_relationships = client.get(f'/studies/{study_id}/relationships')
         assert 'Supports' in rendered_relationships.text
+        assert f'href="/studies/{study_id}/memos">Refined interpretation</a>' in rendered_relationships.text
+        assert f'href="/studies/{study_id}/codebook">Passage trust</a>' in rendered_relationships.text
+        assert 'aria-current="page">Relationships</a>' in rendered_relationships.text
         assert '&lt;script&gt;alert(1)&lt;/script&gt; Interpretive support' in rendered_relationships.text
         assert '<script>alert(1)</script>' not in rendered_relationships.text
         canvas = client.get(f'/studies/{study_id}/canvas')
@@ -11880,6 +11918,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert history.status_code == 200
         assert 'Analysis history' in history.text
         assert 'Research Finding · Created' in history.text
+        assert f'href="/studies/{study_id}/findings#finding-{finding_id}">Access remains uneven</a>' in history.text
         assert 'Analytical Relationship · Removed' in history.text
         assert administrator_name in history.text
         assert 'The complete longitudinal account is visible in the workspace.' not in history.text
