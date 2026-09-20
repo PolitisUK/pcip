@@ -112,3 +112,17 @@ pointer and researcher at database level on SQLite and PostgreSQL. Audit events
 record actions without memo or participant text. Participant deletion removes
 case-, response-, and participant-derived target memos while retaining reusable
 study/code/theme memos.
+
+## AW-06 — Coding retrieval — complete
+
+The project workspace now includes a paginated researcher passage-coding
+retrieval view. It filters accessible material by study, `ResearchCode`,
+participant/case, applying researcher, application date and authoritative entry
+text. Results reconstruct and fingerprint-check each coded excerpt, show useful
+counts, retain archived codes for historical retrieval, and drill directly back
+to the original filtered Entry and its context.
+
+The view is read-only for all authorised study readers, remains explicitly
+distinct from legacy response-level code chips, uses bounded result and filter
+loads, and derives passages from current source material rather than persisting
+another participant-text copy.

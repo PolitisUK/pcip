@@ -11225,7 +11225,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         )
         db.add(other_project)
         db.commit()
-        project_id, participant_id, activity_id, study_id, response_id, target_id, research_code_id, other_project_id = project.id, participant.id, activity.id, study.id, response.id, target.id, research_code.id, other_project.id
+        project_id, participant_id, activity_id, study_id, response_id, target_id, research_code_id, administrator_id, other_project_id = project.id, participant.id, activity.id, study.id, response.id, target.id, research_code.id, administrator.id, other_project.id
 
     with client:
         auth()
@@ -11263,6 +11263,14 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert "Attached evidence" in entries.text and "entry-notes.pdf" in entries.text
         assert "Researcher passage coding" in entries.text
         assert "Passage trust" in entries.text and "complete" in entries.text
+        retrieval = client.get(f'/projects/{project_id}/workspace/coding')
+        assert retrieval.status_code == 200
+        assert 'These are AW researcher CodeApplications' in retrieval.text
+        assert 'Passage trust' in retrieval.text and 'complete' in retrieval.text
+        assert f'/participants/{participant_id}' in retrieval.text
+        assert f'#response-{response_id}' in retrieval.text
+        filtered_retrieval = client.get(f'/projects/{project_id}/workspace/coding?study_id={study_id}&code_id={research_code_id}&participant_id={participant_id}&researcher_id={administrator_id}&q=complete')
+        assert filtered_retrieval.status_code == 200 and 'complete' in filtered_retrieval.text
         created_annotation = post_with_csrf(
             f'/studies/{study_id}/responses/{response_id}/annotations',
             data={'start': '4', 'end': '12', 'body': '<script>alert(1)</script> interpretive note'},
@@ -11323,6 +11331,14 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         archived_memos = client.get(f'/studies/{study_id}/memos?include_archived=true')
         assert 'Refined interpretation' in archived_memos.text and '(archived)' in archived_memos.text
         assert post_with_csrf(f'/studies/{study_id}/memos/{memo_id}/restore', follow_redirects=False).status_code == 303
+        with SessionLocal() as db:
+            from app.models import ResearchCode
+            archived_code = db.get(ResearchCode, research_code_id)
+            archived_code.archived_at = now()
+            archived_code.archived_by_id = administrator_id
+            db.commit()
+        archived_retrieval = client.get(f'/projects/{project_id}/workspace/coding?code_id={research_code_id}')
+        assert 'Passage trust (archived)' in archived_retrieval.text and 'complete' in archived_retrieval.text
         assert dossier.status_code == 200
         assert "Longitudinal research timeline" in dossier.text
         assert client.get(f"/projects/{other_project_id}/workspace").status_code == 404
