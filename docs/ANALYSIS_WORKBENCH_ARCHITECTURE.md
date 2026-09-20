@@ -69,3 +69,18 @@ theme-code and relationship scope/source indexes match current joins and
 filters. AW-11.5 introduces no migration or speculative materialized view.
 Future indexes require a concrete query shape or measurement and should be
 delivered through the normal SQLite/PostgreSQL migration rehearsal.
+
+## Visual canvas contract
+
+`AnalysisCanvas` and `AnalysisCanvasNode` persist only a researcher's visual
+study layout. A node contains a typed pointer plus x/y coordinates; labels,
+summaries and participant-derived excerpts are always resolved from the shared
+analytical object service. The database validates the canvas owner, study and
+every allow-listed object pointer on both insert and update.
+
+The canvas is deliberately not a graph model. Visible edges are bounded queries
+over `AnalyticalRelationship`, and creating or removing an edge calls the same
+relationship permission and audit services used by the relationship record.
+Removing a node changes only layout. Deleting an underlying analytical object
+removes its placement through `remove_analytical_references` before the object
+is deleted.

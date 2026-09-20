@@ -851,6 +851,62 @@ class ResearchMemo(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class AnalysisCanvas(Base):
+    """One researcher's visual layout for a study; it contains no evidence text."""
+
+    __tablename__ = "analysis_canvases"
+    __table_args__ = (
+        UniqueConstraint(
+            "organisation_id",
+            "study_id",
+            "owner_id",
+            name="uq_analysis_canvas_owner_study",
+        ),
+        Index("ix_analysis_canvases_scope", "organisation_id", "study_id", "owner_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    view_metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AnalysisCanvasNode(Base):
+    """A visual placement pointing at, never copying, an analytical object."""
+
+    __tablename__ = "analysis_canvas_nodes"
+    __table_args__ = (
+        CheckConstraint(
+            "object_type IN ('analysis_target','code_application','annotation','memo','code','theme')",
+            name="ck_analysis_canvas_node_type",
+        ),
+        CheckConstraint(
+            "x >= 0 AND x <= 4000 AND y >= 0 AND y <= 4000",
+            name="ck_analysis_canvas_node_coordinates",
+        ),
+        UniqueConstraint(
+            "canvas_id",
+            "object_type",
+            "object_id",
+            name="uq_analysis_canvas_node_object",
+        ),
+        Index("ix_analysis_canvas_nodes_scope", "organisation_id", "study_id", "canvas_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    canvas_id: Mapped[int] = mapped_column(ForeignKey("analysis_canvases.id", ondelete="CASCADE"), index=True)
+    object_type: Mapped[str] = mapped_column(String(40))
+    object_id: Mapped[int] = mapped_column(Integer)
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    added_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class AnalyticalRelationship(Base):
     """A directional researcher assertion between two analytical objects."""
     __tablename__ = "analytical_relationships"

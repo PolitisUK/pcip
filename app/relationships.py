@@ -1,8 +1,12 @@
-from sqlalchemy import and_, delete, or_
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
-from .analysis_objects import ANALYTICAL_OBJECT_TYPES, resolve_analytical_object
-from .models import AnalyticalRelationship, User
+from .analysis_objects import (
+    ANALYTICAL_OBJECT_TYPES,
+    analytical_study_permission,
+    resolve_analytical_object,
+)
+from .models import AnalyticalRelationship, Study, User
 
 
 RELATIONSHIP_TYPES = ("supports", "contradicts", "explains", "relates_to", "precedes", "follows", "refines")
@@ -42,3 +46,29 @@ def create_relationship(db: Session, user: User, *, study_id: int, source_ref: s
 def remove_object_relationships(db: Session, object_type: str, object_ids: set[int]) -> None:
     if object_type not in RELATIONSHIP_OBJECT_TYPES or not object_ids: return
     db.execute(delete(AnalyticalRelationship).where(or_(and_(AnalyticalRelationship.source_type==object_type,AnalyticalRelationship.source_id.in_(object_ids)),and_(AnalyticalRelationship.target_type==object_type,AnalyticalRelationship.target_id.in_(object_ids)))))
+
+
+def changeable_relationship(
+    db: Session, user: User, *, study_id: int, relationship_id: int
+) -> AnalyticalRelationship:
+    study = db.scalar(
+        select(Study).where(
+            Study.id == study_id,
+            Study.organisation_id == user.organisation_id,
+        )
+    )
+    permission = analytical_study_permission(db, user, study) if study else None
+    if permission not in {"edit", "manage"}:
+        raise PermissionError("Relationship is unavailable")
+    row = db.scalar(
+        select(AnalyticalRelationship).where(
+            AnalyticalRelationship.id == relationship_id,
+            AnalyticalRelationship.organisation_id == user.organisation_id,
+            AnalyticalRelationship.study_id == study_id,
+        )
+    )
+    if row is None:
+        raise ValueError("Relationship is unavailable")
+    if row.created_by_id != user.id and permission != "manage":
+        raise PermissionError("You cannot remove this relationship")
+    return row

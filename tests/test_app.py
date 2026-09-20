@@ -4620,7 +4620,6 @@ def test_organisation_isolation_across_project_study_and_participant_endpoints()
         assert participant.status_code == 303
         participant_id = int(participant.headers['location'].split('/')[-1])
         post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
-
         second_email = f"{unique_value('owner2')}@example.org"
         second_password = 'SecurePass123!'
         with SessionLocal() as db:
@@ -4779,6 +4778,11 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
         )
         participant_id = int(participant.headers['location'].split('/')[-1])
         post_with_csrf(f'/studies/{study_id}/enrol', data={'participant_id': participant_id}, follow_redirects=False)
+        assert post_with_csrf(
+            f'/studies/{study_id}/codebook',
+            data={'name': 'Read-only visible code', 'definition': 'Existing analysis', 'parent_code_id': ''},
+            follow_redirects=False,
+        ).status_code == 303
 
         researcher_email = f"{unique_value('viewer')}@example.org"
         researcher_password = 'SecurePass123!'
@@ -4787,6 +4791,9 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
             researcher = User(organisation_id=owner.organisation_id, name='View Researcher', email=researcher_email, password_hash=hash_password(researcher_password), role='researcher')
             db.add(researcher); db.flush()
             db.add(StudyAccess(organisation_id=owner.organisation_id, study_id=study_id, user_id=researcher.id, permission='view', created_by_id=owner.id))
+            from app.models import ResearchCode
+            code_row = db.scalar(select(ResearchCode).where(ResearchCode.study_id == study_id, ResearchCode.name == 'Read-only visible code'))
+            code_id = code_row.id
             db.commit()
 
         client.cookies.clear()
@@ -4821,6 +4828,26 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
             follow_redirects=False,
         )
         assert denied_edit.status_code == 403
+        canvas = client.get(f'/studies/{study_id}/canvas')
+        assert canvas.status_code == 200
+        assert 'Read-only visible code' in canvas.text
+        assert 'Connect objects' not in canvas.text
+        assert post_with_csrf(
+            f'/studies/{study_id}/canvas/nodes',
+            data={'object_ref': f'code:{code_id}'},
+            follow_redirects=False,
+        ).status_code == 303
+        forged_relationship = post_with_csrf(
+            f'/studies/{study_id}/canvas/relationships',
+            data={
+                'source_ref': f'code:{code_id}',
+                'relationship_type': 'supports',
+                'target_ref': f'code:{code_id}',
+                'rationale': 'Not permitted',
+            },
+            follow_redirects=False,
+        )
+        assert forged_relationship.status_code == 403
 
 
 def test_researcher_message_requires_participant_enrolment_in_study():
@@ -10844,7 +10871,7 @@ def test_participant_api_privacy_withdrawal_request_withdraws_requested_study_on
 
 
 def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_only_minimised_lifecycle_evidence():
-    from app.models import AnalysisTarget, ActivityResponse, EvidenceFile, OutboxEmail, Participant, ParticipantAppAccessCode, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment, User
+    from app.models import AnalysisCanvas, AnalysisCanvasNode, AnalysisTarget, ActivityResponse, EvidenceFile, OutboxEmail, Participant, ParticipantAppAccessCode, ParticipantInvitation, ParticipantMessage, ParticipantPrivacyRequest, PublicAuthSession, StudyEnrolment, User
     from app.security import token_hash
 
     context = _prepare_participant_api_activity_response_context('api-privacy-deletion')
@@ -10862,11 +10889,16 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         db.flush()
         author = db.scalar(select(User).where(User.organisation_id == context['organisation_id']).order_by(User.id))
         assert author is not None
+        response_target = AnalysisTarget(organisation_id=context['organisation_id'], study_id=context['study_id'], target_type='activity_response', activity_response_id=response_row.id, anchor_json='{"start": 0, "end": 9}', created_by_id=author.id)
         db.add_all([
-            AnalysisTarget(organisation_id=context['organisation_id'], study_id=context['study_id'], target_type='activity_response', activity_response_id=response_row.id, anchor_json='{"start": 0, "end": 9}', created_by_id=author.id),
+            response_target,
             AnalysisTarget(organisation_id=context['organisation_id'], study_id=context['study_id'], target_type='evidence_file', evidence_file_id=evidence_row.id, anchor_json='{"region": "future"}', created_by_id=author.id),
             AnalysisTarget(organisation_id=context['organisation_id'], study_id=context['study_id'], target_type='participant_case', participant_id=context['participant_id'], created_by_id=author.id),
         ])
+        db.flush()
+        canvas = AnalysisCanvas(organisation_id=context['organisation_id'], study_id=context['study_id'], owner_id=author.id)
+        db.add(canvas); db.flush()
+        db.add(AnalysisCanvasNode(organisation_id=context['organisation_id'], study_id=context['study_id'], canvas_id=canvas.id, object_type='analysis_target', object_id=response_target.id, x=20, y=30, added_by_id=author.id))
         db.add(ParticipantAppAccessCode(organisation_id=context['organisation_id'], participant_invitation_id=context['invitation_id'], code_hash=token_hash('account-deletion-code'), expires_at=now() + timedelta(minutes=30)))
         # Legacy rows have no verified participant link and must not be deleted
         # by recipient matching, even where their content might be sensitive.
@@ -10910,6 +10942,8 @@ def test_participant_api_privacy_deletion_removes_active_study_data_and_keeps_on
         assert db.scalar(select(ActivityResponse).where(ActivityResponse.participant_id == context['participant_id'])) is None
         assert db.scalar(select(EvidenceFile).where(EvidenceFile.participant_id == context['participant_id'])) is None
         assert db.scalar(select(AnalysisTarget).where(AnalysisTarget.organisation_id == context['organisation_id'], AnalysisTarget.study_id == context['study_id'])) is None
+        assert db.scalar(select(AnalysisCanvasNode).where(AnalysisCanvasNode.organisation_id == context['organisation_id'], AnalysisCanvasNode.study_id == context['study_id'])) is None
+        assert db.scalar(select(AnalysisCanvas).where(AnalysisCanvas.organisation_id == context['organisation_id'], AnalysisCanvas.study_id == context['study_id'])) is not None
         assert db.scalar(select(ParticipantMessage).where(ParticipantMessage.participant_id == context['participant_id'])) is None
         assert db.scalar(select(StudyEnrolment).where(StudyEnrolment.participant_id == context['participant_id'])) is None
         assert db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.participant_id == context['participant_id'])) is None
@@ -11335,26 +11369,54 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         )
         db.add_all([target, research_code, evidence, image_evidence])
         db.flush()
-        db.add(CodeApplication(
+        application = CodeApplication(
             organisation_id=administrator.organisation_id,
             study_id=study.id,
             analysis_target_id=target.id,
             research_code_id=research_code.id,
             applied_by_id=administrator.id,
             anchor_json=text_anchor("The complete longitudinal account is visible in the workspace.", 4, 12),
-        ))
+        )
+        db.add(application)
+        db.flush()
         other_org = Organisation(name=f"Other {suffix}", slug=f"other-{suffix}".lower())
         db.add(other_org)
+        db.flush()
+        foreign_user = User(
+            organisation_id=other_org.id,
+            name="Foreign canvas user",
+            email=f"{suffix.lower()}-foreign@example.test",
+            role="researcher",
+        )
+        db.add(foreign_user)
         db.flush()
         other_project = Project(
             organisation_id=other_org.id,
             title="Unauthorised workspace",
             code=f"OTHER-{suffix}".upper(),
-            created_by_id=administrator.id,
+            created_by_id=foreign_user.id,
         )
         db.add(other_project)
+        db.flush()
+        foreign_study = Study(
+            organisation_id=other_org.id,
+            project_id=other_project.id,
+            title="Foreign study",
+            code=f"FS-{suffix}".upper(),
+            created_by_id=foreign_user.id,
+        )
+        db.add(foreign_study)
+        db.flush()
+        foreign_code = ResearchCode(
+            organisation_id=other_org.id,
+            study_id=foreign_study.id,
+            name="Foreign code",
+            created_by_id=foreign_user.id,
+        )
+        db.add(foreign_code)
+        db.flush()
         db.commit()
-        project_id, participant_id, activity_id, study_id, response_id, target_id, research_code_id, image_evidence_id, administrator_id, other_project_id = project.id, participant.id, activity.id, study.id, response.id, target.id, research_code.id, image_evidence.id, administrator.id, other_project.id
+        project_id, participant_id, activity_id, study_id, response_id, target_id, research_code_id, application_id, image_evidence_id, administrator_id, other_project_id, foreign_code_id = project.id, participant.id, activity.id, study.id, response.id, target.id, research_code.id, application.id, image_evidence.id, administrator.id, other_project.id, foreign_code.id
 
     with client:
         auth()
@@ -11496,7 +11558,68 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert 'Supports' in rendered_relationships.text
         assert '&lt;script&gt;alert(1)&lt;/script&gt; Interpretive support' in rendered_relationships.text
         assert '<script>alert(1)</script>' not in rendered_relationships.text
-        assert post_with_csrf(f'/studies/{study_id}/relationships/{relationship_id}/delete', follow_redirects=False).status_code == 303
+        canvas = client.get(f'/studies/{study_id}/canvas')
+        assert canvas.status_code == 200
+        assert 'Visual analysis canvas' in canvas.text
+        assert 'Coded passage · Passage trust · complete' in canvas.text
+        assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':f'memo:{memo_id}'}, follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':f'code:{research_code_id}'}, follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':f'code_application:{application_id}'}, follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':'code:999999'}, follow_redirects=False).status_code == 404
+        assert post_with_csrf(f'/studies/{study_id}/canvas/nodes', data={'object_ref':f'code:{foreign_code_id}'}, follow_redirects=False).status_code == 404
+        forged_canvas_relationship = post_with_csrf(
+            f'/studies/{study_id}/canvas/relationships',
+            data={
+                'source_ref': f'code:{research_code_id}',
+                'relationship_type': 'supports',
+                'target_ref': f'code:{foreign_code_id}',
+                'rationale': 'Cross-tenant attempt',
+            },
+            follow_redirects=False,
+        )
+        assert forged_canvas_relationship.status_code == 400
+        rendered_canvas = client.get(f'/studies/{study_id}/canvas')
+        assert 'Refined interpretation' in rendered_canvas.text
+        assert 'Coded passage · Passage trust' in rendered_canvas.text and 'complete' in rendered_canvas.text
+        assert '&lt;script&gt;alert(1)&lt;/script&gt; Interpretive support' in rendered_canvas.text
+        assert '<script>alert(1)</script>' not in rendered_canvas.text
+        with SessionLocal() as db:
+            from app.models import AnalysisCanvasNode
+            memo_node = db.scalar(select(AnalysisCanvasNode).where(AnalysisCanvasNode.object_type == 'memo', AnalysisCanvasNode.object_id == memo_id))
+            assert memo_node is not None
+            memo_node_id = memo_node.id
+        assert post_with_csrf(f'/studies/{study_id}/canvas/nodes/{memo_node_id}/move', data={'x':'320','y':'410'}, follow_redirects=False).status_code == 303
+        with SessionLocal() as db:
+            from app.models import AnalysisCanvasNode, ResearchMemo
+            moved = db.get(AnalysisCanvasNode, memo_node_id)
+            assert (moved.x, moved.y) == (320.0, 410.0)
+            assert db.get(ResearchMemo, memo_id) is not None
+        assert post_with_csrf(f'/studies/{study_id}/canvas/relationships/{relationship_id}/delete', follow_redirects=False).status_code == 303
+        canvas_created_relationship = post_with_csrf(
+            f'/studies/{study_id}/canvas/relationships',
+            data={
+                'source_ref': f'code:{research_code_id}',
+                'relationship_type': 'explains',
+                'target_ref': f'code_application:{application_id}',
+                'rationale': 'Canvas-created rationale',
+            },
+            follow_redirects=False,
+        )
+        assert canvas_created_relationship.status_code == 303
+        with SessionLocal() as db:
+            from app.models import AnalyticalRelationship, AuditEvent
+            canvas_relationship = db.scalar(select(AnalyticalRelationship).where(AnalyticalRelationship.relationship_type == 'explains', AnalyticalRelationship.study_id == study_id))
+            assert canvas_relationship is not None
+            canvas_relationship_id = canvas_relationship.id
+            assert db.scalar(select(AuditEvent).where(AuditEvent.action == 'analytical_relationship.created', AuditEvent.entity_id == str(canvas_relationship_id))) is not None
+        assert 'Canvas-created rationale' in client.get(f'/studies/{study_id}/canvas').text
+        assert post_with_csrf(f'/studies/{study_id}/canvas/relationships/{canvas_relationship_id}/delete', follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/canvas/nodes/{memo_node_id}/delete', follow_redirects=False).status_code == 303
+        with SessionLocal() as db:
+            from app.models import AnalysisCanvasNode, AnalyticalRelationship, ResearchMemo
+            assert db.get(AnalysisCanvasNode, memo_node_id) is None
+            assert db.get(AnalyticalRelationship, relationship_id) is None
+            assert db.get(ResearchMemo, memo_id) is not None
         with SessionLocal() as db:
             from app.models import ResearchCode
             archived_code = db.get(ResearchCode, research_code_id)

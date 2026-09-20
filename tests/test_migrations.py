@@ -64,7 +64,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0031" in revision.stdout
+    assert "0032" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -111,7 +111,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0031" in result.stdout
+            assert "0032" in result.stdout
 
     active = subprocess.run(
         [
@@ -327,3 +327,110 @@ def test_analysis_targets_migration_enforces_concrete_sources_and_tenant_scope(t
     )
     assert foreign_theme_linker.returncode != 0
     assert "theme code researcher scope" in foreign_theme_linker.stderr
+
+
+def test_analysis_canvas_migration_enforces_canvas_and_object_scope(tmp_path):
+    database_path = tmp_path / "analysis-canvas.db"
+    environment = os.environ.copy()
+    environment["DATABASE_URL"] = f"sqlite:///{database_path}"
+    baseline = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "0031"],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert baseline.returncode == 0, baseline.stderr
+    removed = subprocess.run(
+        [
+            "sqlite3",
+            str(database_path),
+            "DROP TABLE analysis_canvas_nodes; DROP TABLE analysis_canvases;",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert removed.returncode == 0, removed.stderr
+    upgraded = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert upgraded.returncode == 0, upgraded.stderr
+    schema = """
+      PRAGMA foreign_keys=ON;
+      INSERT INTO organisations (id,name,slug,created_at) VALUES (1,'One','canvas-one',CURRENT_TIMESTAMP),(2,'Two','canvas-two',CURRENT_TIMESTAMP);
+      INSERT INTO users (id,organisation_id,name,email,session_version,failed_login_count,role,is_platform_admin,is_active,created_at) VALUES (1,1,'One','canvas-one@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP),(2,2,'Two','canvas-two@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP);
+      INSERT INTO projects (id,organisation_id,title,code,description,status,created_by_id,created_at,updated_at) VALUES (1,1,'One','CP1','','draft',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,'Two','CP2','','draft',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO studies (id,organisation_id,project_id,title,code,description,methodology,status,demographics_schema_json,created_by_id,created_at,updated_at) VALUES (1,1,1,'One','CS1','','diary','draft','[]',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,2,'Two','CS2','','diary','draft','[]',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO research_codes (id,organisation_id,study_id,name,definition,created_by_id,created_at,updated_at) VALUES (1,1,1,'Local','',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,2,'Foreign','',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO analysis_canvases (id,organisation_id,study_id,owner_id,view_metadata_json,created_at,updated_at) VALUES (1,1,1,1,'{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO analysis_canvas_nodes (id,organisation_id,study_id,canvas_id,object_type,object_id,x,y,added_by_id,created_at,updated_at) VALUES (1,1,1,1,'code',1,20,30,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+    """
+    inserted = subprocess.run(
+        ["sqlite3", str(database_path), schema],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert inserted.returncode == 0, inserted.stderr
+    foreign_owner = subprocess.run(
+        [
+            "sqlite3",
+            str(database_path),
+            "INSERT INTO analysis_canvases (organisation_id,study_id,owner_id,view_metadata_json,created_at,updated_at) VALUES (1,1,2,'{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert foreign_owner.returncode != 0
+    assert "analysis canvas owner scope" in foreign_owner.stderr
+    foreign_object = subprocess.run(
+        [
+            "sqlite3",
+            str(database_path),
+            "INSERT INTO analysis_canvas_nodes (organisation_id,study_id,canvas_id,object_type,object_id,x,y,added_by_id,created_at,updated_at) VALUES (1,1,1,'code',2,20,30,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert foreign_object.returncode != 0
+    assert "analysis canvas code scope" in foreign_object.stderr
+    forged_update = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE analysis_canvas_nodes SET object_id=2 WHERE id=1;"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert forged_update.returncode != 0
+    assert "analysis canvas code scope" in forged_update.stderr
+    checked = subprocess.run(
+        [sys.executable, "-m", "alembic", "check"],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stderr
+    for command in (
+        [sys.executable, "-m", "alembic", "downgrade", "0031"],
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "check"],
+    ):
+        rehearsed = subprocess.run(
+            command,
+            cwd=REPOSITORY_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert rehearsed.returncode == 0, rehearsed.stderr

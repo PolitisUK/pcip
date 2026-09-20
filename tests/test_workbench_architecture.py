@@ -5,6 +5,11 @@ from fastapi import FastAPI
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.analysis_canvas import (
+    add_canvas_node,
+    canvas_candidates,
+    move_canvas_node,
+)
 from app.analysis_lifecycle import remove_analytical_references
 from app.analysis_objects import resolve_analytical_object
 from app.analysis_projections import coded_passage_projections
@@ -13,6 +18,7 @@ from app.db import Base
 from app.models import (
     Activity,
     ActivityResponse,
+    AnalysisCanvasNode,
     AnalysisTarget,
     CodeApplication,
     Organisation,
@@ -286,11 +292,56 @@ def test_lifecycle_hook_removes_all_requested_relationship_references(monkeypatc
             (db, object_type, identifiers)
         ),
     )
-    marker = object()
+    class Marker:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, statement):
+            self.statements.append(statement)
+
+    marker = Marker()
     remove_analytical_references(
         marker, {"code": {3}, "memo": set(), "annotation": {7, 8}}
     )
     assert calls == [(marker, "code", {3}), (marker, "annotation", {7, 8})]
+    assert len(marker.statements) == 2
+
+
+def test_canvas_layout_uses_scoped_objects_and_keeps_source_authoritative(
+    analysis_session,
+):
+    user = analysis_session.get(User, 1)
+    candidates = canvas_candidates(analysis_session, user, 1)
+    coded = next(item for item in candidates if item.object_type == "code_application")
+    assert coded.label == "Coded passage · Access"
+    assert coded.summary == "😀"
+
+    node = add_canvas_node(
+        analysis_session, user, study_id=1, object_ref="code_application:1"
+    )
+    analysis_session.flush()
+    assert (node.organisation_id, node.study_id, node.object_type, node.object_id) == (
+        1,
+        1,
+        "code_application",
+        1,
+    )
+    assert not hasattr(node, "participant_text")
+    moved = move_canvas_node(
+        analysis_session,
+        user,
+        study_id=1,
+        node_id=node.id,
+        x=5000,
+        y=-20,
+    )
+    assert (moved.x, moved.y) == (4000.0, 0.0)
+    with pytest.raises(PermissionError, match="unavailable"):
+        add_canvas_node(analysis_session, user, study_id=1, object_ref="code:2")
+
+    remove_analytical_references(analysis_session, {"code_application": {1}})
+    analysis_session.flush()
+    assert analysis_session.get(AnalysisCanvasNode, node.id) is None
 
 
 def test_analysis_router_owns_each_registered_get_route_once():

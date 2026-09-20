@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Analysis canvas · {{ study.title }}{% endblock %}
+{% block page_description %}<p class="page-description">Arrange existing analytical objects and work with explicit, researcher-authored relationships.</p>{% endblock %}
+{% block contextual_help %}<p>The canvas stores only your layout. Moving or removing a card here does not change the underlying analysis. Connecting cards creates a canonical analytical relationship.</p>{% endblock %}
+{% block content %}
+<p class="breadcrumbs"><a href="/studies/{{ study.id }}">{{ study.title }}</a> <span aria-hidden="true">/</span> Analysis canvas</p>
+<section class="card card--hero section"><div class="section-head"><div><h1>Visual analysis canvas</h1><p>Use this personal study layout to compare analytical objects. Position is visual organisation, not evidence or analytical meaning.</p></div><a class="btn secondary" href="/studies/{{ study.id }}/relationships">Open relationship record</a></div></section>
+
+<section class="canvas-tools card card--action section" aria-labelledby="canvas-tools-title">
+  <h2 id="canvas-tools-title">Canvas tools</h2>
+  <div class="canvas-tools__grid">
+    <form method="post" action="/studies/{{ study.id }}/canvas/nodes" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label for="canvas-object">Add analytical object</label><select id="canvas-object" name="object_ref" required><option value="">Choose an object</option>{% for item in candidates %}<option value="{{ item.object_type }}:{{ item.object_id }}">{{ item.object_type|replace('_',' ')|title }} · {{ item.label }} · {{ item.summary }}</option>{% endfor %}</select></div>
+      <button type="submit" {% if not candidates %}disabled{% endif %}>Add to canvas</button>
+      {% if not candidates %}<p class="muted">All available objects are already placed, or this study has no analytical objects yet.</p>{% endif %}
+    </form>
+    {% if can_edit_relationships and nodes|length > 1 %}
+    <form method="post" action="/studies/{{ study.id }}/canvas/relationships" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label for="canvas-source">From</label><select id="canvas-source" name="source_ref" required>{% for item in nodes %}<option value="{{ item.object.object_type }}:{{ item.object.object_id }}">{{ item.object.label }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="canvas-relationship-type">Relationship</label><select id="canvas-relationship-type" name="relationship_type" required>{% for value in relationship_types %}<option value="{{ value }}">{{ value|replace('_',' ')|title }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="canvas-target">To</label><select id="canvas-target" name="target_ref" required>{% for item in nodes %}<option value="{{ item.object.object_type }}:{{ item.object.object_id }}">{{ item.object.label }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="canvas-rationale">Researcher rationale (optional)</label><textarea id="canvas-rationale" name="rationale" maxlength="2000"></textarea></div>
+      <button type="submit">Connect objects</button>
+    </form>
+    {% elif not can_edit_relationships %}<p class="notice neutral">You can inspect and arrange your canvas. Study edit or manage permission is required to create or remove analytical relationships.</p>{% endif %}
+  </div>
+</section>
+
+<section class="card card--data section" aria-labelledby="canvas-heading">
+  <div class="section-head"><div><h2 id="canvas-heading">Canvas</h2><p class="muted">Drag a card by its move handle, use its keyboard position controls, or pan the scrollable surface.</p></div><div class="canvas-zoom" aria-label="Canvas zoom controls"><button type="button" class="secondary" data-canvas-zoom-out aria-label="Zoom out">−</button><output data-canvas-zoom>100%</output><button type="button" class="secondary" data-canvas-zoom-in aria-label="Zoom in">+</button></div></div>
+  <div class="analysis-canvas__viewport" data-canvas-viewport tabindex="0" aria-label="Scrollable analysis canvas">
+    <div class="analysis-canvas__surface" data-canvas-surface>
+      <svg class="analysis-canvas__edges" data-canvas-edges aria-hidden="true">{% for relationship in relationships %}<line data-source-ref="{{ relationship.source_type }}:{{ relationship.source_id }}" data-target-ref="{{ relationship.target_type }}:{{ relationship.target_id }}"></line>{% endfor %}</svg>
+      {% for item in nodes %}
+      <article class="analysis-canvas__node" data-canvas-node data-node-ref="{{ item.object.object_type }}:{{ item.object.object_id }}" data-x="{{ item.placement.x }}" data-y="{{ item.placement.y }}">
+        <button type="button" class="analysis-canvas__move" data-canvas-drag aria-label="Move {{ item.object.label }}">Move</button>
+        <p class="eyebrow">{{ item.object.object_type|replace('_',' ') }}</p>
+        <h3>{{ item.object.label }}</h3>
+        <p>{{ item.object.summary }}</p>
+        {% if item.object.navigation_url %}<p><a href="{{ item.object.navigation_url }}">Open underlying object</a></p>{% endif %}
+        <details><summary>Position and canvas actions</summary>
+          <form method="post" action="/studies/{{ study.id }}/canvas/nodes/{{ item.placement.id }}/move" data-canvas-position-form class="canvas-position-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label>X position<input type="number" name="x" min="0" max="4000" step="10" value="{{ item.placement.x }}"></label>
+            <label>Y position<input type="number" name="y" min="0" max="4000" step="10" value="{{ item.placement.y }}"></label>
+            <button type="submit" class="secondary">Save position</button>
+          </form>
+          <form method="post" action="/studies/{{ study.id }}/canvas/nodes/{{ item.placement.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary">Remove from canvas</button></form>
+        </details>
+      </article>
+      {% else %}<div class="analysis-canvas__empty"><h3>Your canvas is empty</h3><p>Add an analytical object above. The source object remains authoritative and unchanged.</p></div>{% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="card card--data section" aria-labelledby="canvas-relationships-heading">
+  <h2 id="canvas-relationships-heading">Relationships on this canvas</h2>
+  {% if relationships_truncated %}<p class="notice warning">Only the first 500 relationships are shown. Remove canvas objects to narrow this view.</p>{% endif %}
+  {% for relationship in relationships %}
+  {% set source_ref=relationship.source_type ~ ':' ~ relationship.source_id %}{% set target_ref=relationship.target_type ~ ':' ~ relationship.target_id %}
+  <article class="source-summary"><p><strong>{{ node_labels.get(source_ref, source_ref) }}</strong> <span class="badge">{{ relationship.relationship_type|replace('_',' ') }}</span> <strong>{{ node_labels.get(target_ref, target_ref) }}</strong></p>{% if relationship.rationale %}<p>{{ relationship.rationale }}</p>{% endif %}<p class="muted">Asserted by {{ researchers.get(relationship.created_by_id).name if researchers.get(relationship.created_by_id) else 'Unknown researcher' }} · {{ relationship.created_at.strftime('%d %b %Y, %H:%M') }}</p>{% if can_remove_relationship.get(relationship.id) %}<form method="post" action="/studies/{{ study.id }}/canvas/relationships/{{ relationship.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary">Remove relationship</button></form>{% endif %}</article>
+  {% else %}<p class="empty">No canonical relationships connect the objects currently on this canvas.</p>{% endfor %}
+</section>
+{% endblock %}
+{% block page_scripts %}<script nonce="{{ csp_nonce }}" src="/static/analysis_canvas.js?v={{ version }}" defer></script>{% endblock %}
