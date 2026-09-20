@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -10,6 +11,7 @@ from app.analysis_canvas import (
     canvas_candidates,
     move_canvas_node,
 )
+from app.advanced_queries import AdvancedQueryFilters, advanced_query
 from app.analysis_lifecycle import remove_analytical_references
 from app.analysis_objects import resolve_analytical_object
 from app.analysis_projections import coded_passage_projections
@@ -20,11 +22,14 @@ from app.models import (
     ActivityResponse,
     AnalysisCanvasNode,
     AnalysisTarget,
+    AnalyticalRelationship,
     CodeApplication,
     Organisation,
     Participant,
     Project,
     ResearchCode,
+    ResearchTheme,
+    ResearchThemeCode,
     Study,
     StudyEnrolment,
     User,
@@ -247,6 +252,121 @@ def test_shared_projection_is_scoped_traceable_and_unicode_safe(analysis_session
     assert coded_passage_projections(
         analysis_session, organisation_id=1, study_ids=[1], code_ids=set()
     ) == ([], False)
+
+
+def test_advanced_query_boolean_theme_relationship_and_cooccurrence(analysis_session):
+    user = analysis_session.get(User, 1)
+    second_code = ResearchCode(
+        id=3,
+        organisation_id=1,
+        study_id=1,
+        name="Trust",
+        definition="Institutional trust",
+        created_by_id=1,
+    )
+    theme = ResearchTheme(
+        id=1,
+        organisation_id=1,
+        study_id=1,
+        name="Service relationship",
+        description="Researcher interpretation",
+        source_suggestion_ids_json="[]",
+        status="researcher_draft",
+        created_by_id=1,
+    )
+    analysis_session.add_all([second_code, theme])
+    analysis_session.flush()
+    second_application = CodeApplication(
+        id=3,
+        organisation_id=1,
+        study_id=1,
+        analysis_target_id=1,
+        research_code_id=second_code.id,
+        applied_by_id=1,
+        anchor_json=text_anchor("Before 😀 after", 0, 6),
+    )
+    analysis_session.add_all(
+        [
+            second_application,
+            ResearchThemeCode(
+                organisation_id=1,
+                study_id=1,
+                research_theme_id=theme.id,
+                research_code_id=second_code.id,
+                linked_by_id=1,
+            ),
+            AnalyticalRelationship(
+                organisation_id=1,
+                study_id=1,
+                source_type="code",
+                source_id=second_code.id,
+                relationship_type="contradicts",
+                target_type="code_application",
+                target_id=1,
+                rationale="Negative case comparison",
+                created_by_id=1,
+            ),
+        ]
+    )
+    analysis_session.commit()
+
+    combined = advanced_query(
+        analysis_session,
+        user,
+        AdvancedQueryFilters(
+            study_ids=(1,), include_code_ids=frozenset({1, 3}), operator="and"
+        ),
+    )
+    assert combined.total_applications == 2
+    assert (combined.participant_cases, combined.source_entries) == (1, 1)
+    pair = combined.co_occurrences[0]
+    assert (
+        pair.left_code_id,
+        pair.right_code_id,
+        pair.source_entries,
+        pair.participant_cases,
+    ) == (1, 3, 1, 1)
+    assert {item.passage for item in combined.results} == {"😀", "Before"}
+
+    excluded = advanced_query(
+        analysis_session,
+        user,
+        AdvancedQueryFilters(
+            study_ids=(1,),
+            include_code_ids=frozenset({1}),
+            exclude_code_ids=frozenset({3}),
+        ),
+    )
+    assert excluded.total_applications == 0
+    themed = advanced_query(
+        analysis_session,
+        user,
+        AdvancedQueryFilters(study_ids=(1,), theme_id=theme.id),
+    )
+    assert [item.code.id for item in themed.results] == [3]
+    any_code = advanced_query(
+        analysis_session,
+        user,
+        AdvancedQueryFilters(
+            study_ids=(1,), include_code_ids=frozenset({1, 999}), operator="or"
+        ),
+    )
+    assert [item.code.id for item in any_code.results] == [1]
+    future = datetime.now(timezone.utc) + timedelta(days=1)
+    assert advanced_query(
+        analysis_session,
+        user,
+        AdvancedQueryFilters(study_ids=(1,), date_from=future),
+    ).total_applications == 0
+    contradictory = advanced_query(
+        analysis_session,
+        user,
+        AdvancedQueryFilters(study_ids=(1,), relationship_type="contradicts"),
+    )
+    assert {item.application.id for item in contradictory.results} == {1, 3}
+    assert advanced_query(
+        analysis_session, user, AdvancedQueryFilters(study_ids=(2,))
+    ).total_applications == 0
 
 
 def test_relationship_service_uses_scoped_object_resolution(analysis_session):
