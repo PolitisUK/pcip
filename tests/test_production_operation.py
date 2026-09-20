@@ -35,7 +35,7 @@ def worker_identity_filters(workflow: str) -> list[str]:
 
 def operation_result_filter(workflow: str) -> str:
     """Extract the jq filter that accepts one approved worker result."""
-    marker = 'result=$(jq -c --arg correlation "$CORRELATION_ID" --arg operation "$OPERATION" --arg user_id "$OPERATION_USER_ID" \'\n'
+    marker = 'result=$(jq -c --arg correlation "$CORRELATION_ID" --arg operation "$OPERATION" --arg user_id "$OPERATION_USER_ID" --arg enabled "$OPERATION_ENABLED" \'\n'
     _, found, remainder = workflow.partition(marker)
     assert found, "approved operation result filter is missing"
     result_filter, found, _ = remainder.partition('\n            \' <<<"$logs"')
@@ -95,6 +95,9 @@ def approved_worker_job(identity: str = OBSERVED_WORKER_IDENTITY) -> dict:
                             {"name": "DATABASE_URL", "secretRef": "database-url"},
                             {"name": "AZURE_CLIENT_ID", "value": WORKER_CLIENT_ID},
                             {"name": "PCIP_OPERATIONS_WORKER_PROVENANCE", "value": WORKER_PROVENANCE},
+                            {"name": "AZURE_SUBSCRIPTION_ID", "value": "11111111-1111-1111-1111-111111111111"},
+                            {"name": "AZURE_RESOURCE_GROUP", "value": "rg-pcip-prod"},
+                            {"name": "PCIP_PRODUCTION_APP", "value": "citizencentric-pcip-prod"},
                         ],
                         "resources": {"cpu": 0.25, "memory": "0.5Gi"},
                     }
@@ -122,6 +125,15 @@ def worker_filter_accepts(jq_filter: str, job: dict) -> bool:
             "--arg",
             "registry",
             "pcipproductionnevsxrlbacr.azurecr.io",
+            "--arg",
+            "subscription",
+            "11111111-1111-1111-1111-111111111111",
+            "--arg",
+            "resource_group",
+            "rg-pcip-prod",
+            "--arg",
+            "app",
+            "citizencentric-pcip-prod",
             jq_filter,
         ],
         input=json.dumps(job),
@@ -223,6 +235,55 @@ def test_worker_calls_only_fixed_alembic_lookup_and_emits_minimal_result(monkeyp
     assert captured == [True]
     assert receiver.completed == [message]
     assert json.loads(capsys.readouterr().out)["result"] == {"alembic_revision": "0023"}
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_worker_calls_only_fixed_research_intelligence_operation(monkeypatch, capsys, enabled):
+    message, request = request_message(
+        operation="set-research-intelligence-enabled",
+        enabled=enabled,
+    )
+    request.pop("email")
+    message.body = [json.dumps(request).encode()]
+    receiver = FakeReceiver([message])
+    captured = []
+
+    def fixed_operation(value):
+        captured.append(value)
+        return SimpleNamespace(
+            approved_result=lambda: {
+                "prior_value": not value,
+                "requested_value": value,
+                "effective_value": value,
+                "readiness_status": "ready",
+                "release_sha": "a" * 40,
+                "image_digest": "sha256:" + "b" * 64,
+                "alembic_revision": "0035",
+            }
+        )
+
+    monkeypatch.setattr(
+        worker.set_research_intelligence_enabled,
+        "execute_set_research_intelligence_enabled",
+        fixed_operation,
+    )
+    assert worker.main(
+        client_factory=lambda _namespace: FakeClient(receiver),
+        environ=production_environment(),
+    ) == 0
+    assert captured == [enabled]
+    assert receiver.completed == [message]
+    result = json.loads(capsys.readouterr().out)["result"]
+    assert result["effective_value"] is enabled
+    assert set(result) == {
+        "prior_value",
+        "requested_value",
+        "effective_value",
+        "readiness_status",
+        "release_sha",
+        "image_digest",
+        "alembic_revision",
+    }
 
 
 def test_worker_calls_only_fixed_failed_account_deletion_lookup_and_emits_minimal_result(monkeypatch, capsys):
@@ -488,6 +549,29 @@ def test_worker_refuses_unapproved_or_malformed_messages_without_echoing_content
     assert request["email"] not in captured.out + captured.err
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"enabled": "true"},
+        {"enabled": 1},
+        {"enabled": None},
+        {"enabled": True, "setting": "RESEARCH_INTELLIGENCE_ENABLED"},
+        {"enabled": True, "value": "true"},
+        {"enabled": True, "resource": "another-app"},
+        {"enabled": True, "command": "az webapp config appsettings set"},
+        {"enabled": True, "environment_variable": "OTHER_SETTING"},
+    ],
+)
+def test_research_intelligence_request_schema_rejects_non_boolean_or_extra_fields(payload):
+    request = {
+        "correlation_id": str(uuid4()),
+        "operation": "set-research-intelligence-enabled",
+        **payload,
+    }
+    with pytest.raises(worker.ProductionOperationError, match="refused"):
+        worker.parse_request(json.dumps(request).encode())
+
+
 def test_worker_suppresses_lookup_error_output_that_could_contain_the_email(monkeypatch, capsys):
     message, request = request_message()
     receiver = FakeReceiver([message])
@@ -535,6 +619,7 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "- set-platform-admin" in workflow
     assert "- get-alembic-revision" in workflow
     assert "- get-latest-failed-account-deletion-status" in workflow
+    assert "- set-research-intelligence-enabled" in workflow
     assert 'case "$OPERATION" in' in workflow
     assert "get-alembic-revision)" in workflow
     assert "get-latest-failed-account-deletion-status)" in workflow
@@ -544,6 +629,10 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/get_latest_failed_account_deletion_status.py"' in workflow
     assert 'FAILED_ACCOUNT_DELETION_STATUS_OPERATION = "get-latest-failed-account-deletion-status"' in workflow
     assert "get_latest_failed_account_deletion_status.execute_get_latest_failed_account_deletion_status" in workflow
+    assert "set-research-intelligence-enabled)" in workflow
+    assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/set_research_intelligence_enabled.py"' in workflow
+    assert 'RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION = "set-research-intelligence-enabled"' in workflow
+    assert "set_research_intelligence_enabled.execute_set_research_intelligence_enabled" in workflow
     assert "set-platform-admin-dry-run)" in workflow
     assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/platform_admin_dry_run.py"' in workflow
     assert 'git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py"' in workflow
@@ -555,6 +644,8 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "The approved worker does not support this operation." in workflow
     assert '--argjson user_id "$OPERATION_USER_ID"' in workflow
     assert "{correlation_id: $correlation_id, operation: $operation, email: $email, user_id: $user_id}" in workflow
+    assert '--argjson enabled "$OPERATION_ENABLED"' in workflow
+    assert "{correlation_id: $correlation_id, operation: $operation, enabled: $enabled}" in workflow
     assert "--dry-run" not in workflow
     assert "dry_run:" not in workflow
     assert "confirm-production-change" not in workflow
@@ -724,7 +815,7 @@ def test_operations_worker_provenance_is_immutable_and_caller_cannot_select_it()
     assert "az containerapp job start" not in workflow
 
 
-def test_operations_workflow_keeps_independent_worker_validation_and_no_write_privilege_expansion():
+def test_operations_workflow_keeps_independent_worker_validation_and_fixed_app_config_scope():
     workflow = Path(".github/workflows/production-operation.yml").read_text()
     bicep = Path("infra/production-operations.bicep").read_text()
 
@@ -739,8 +830,15 @@ def test_operations_workflow_keeps_independent_worker_validation_and_no_write_pr
     assert "--command" not in workflow
     assert "--args" not in workflow
     assert "Contributor" not in bicep
+    assert "Microsoft.Web/sites/*" not in bicep
+    assert "Microsoft.Web/sites/config/write" in bicep
+    assert "Microsoft.Web/sites/config/list/action" in bicep
+    assert "scope: productionApp" in bicep
+    assert "operationsAppSettingsWriter" in bicep
+    assert "operationsAppSettingsRole.id" in bicep
     assert "operationsWorkflowJobReader" in bicep
     assert "operationsWorkflowQueueSender" in bicep
+    assert "az webapp config appsettings" not in workflow
 
 
 def test_operations_preflight_rejects_runtime_or_resource_drift_from_bicep_contract():
@@ -792,6 +890,16 @@ def test_operations_preflight_rejects_runtime_or_resource_drift_from_bicep_contr
             target = target[key]
         target[path[-1]] = replacement
         assert not worker_filter_accepts(worker_filter, job), path
+
+    for name, replacement in (
+        ("AZURE_SUBSCRIPTION_ID", "22222222-2222-2222-2222-222222222222"),
+        ("AZURE_RESOURCE_GROUP", "rg-other"),
+        ("PCIP_PRODUCTION_APP", "another-app"),
+    ):
+        job = approved_worker_job()
+        environment = job["properties"]["template"]["containers"][0]["env"]
+        next(item for item in environment if item["name"] == name)["value"] = replacement
+        assert not worker_filter_accepts(worker_filter, job), name
 
 
 def test_worker_identity_checks_accept_casing_only_differences_and_reject_other_resource_ids():
@@ -910,14 +1018,25 @@ def _parse_approved_operation_logs(
     *,
     operation: str = "lookup-user-identity",
     user_id: str = "",
+    enabled: str = "false",
 ) -> list[dict]:
     workflow = Path(".github/workflows/production-operation.yml").read_text()
     completed = subprocess.run(
         [
-            "jq", "-c",
-            "--arg", "correlation", correlation_id,
-            "--arg", "operation", operation,
-            "--arg", "user_id", user_id,
+            "jq",
+            "-c",
+            "--arg",
+            "correlation",
+            correlation_id,
+            "--arg",
+            "operation",
+            operation,
+            "--arg",
+            "user_id",
+            user_id,
+            "--arg",
+            "enabled",
+            enabled,
             operation_result_filter(workflow),
         ],
         input=json.dumps(logs),
@@ -996,6 +1115,48 @@ def test_operation_result_parser_accepts_only_exact_alembic_revision_schema():
         )
         assert _parse_approved_operation_logs(
             [invalid_line], correlation_id, operation="get-alembic-revision"
+        ) == []
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_operation_result_parser_accepts_only_exact_research_intelligence_schema(enabled):
+    correlation_id = "11111111-1111-4111-8111-111111111111"
+    result = {
+        "prior_value": not enabled,
+        "requested_value": enabled,
+        "effective_value": enabled,
+        "readiness_status": "ready",
+        "release_sha": "a" * 40,
+        "image_digest": "sha256:" + "b" * 64,
+        "alembic_revision": "0035",
+    }
+    line = json.dumps(
+        {"correlation_id": correlation_id, "status": "succeeded", "result": result},
+        sort_keys=True,
+    )
+    operation = "set-research-intelligence-enabled"
+    enabled_text = str(enabled).lower()
+
+    assert _parse_approved_operation_logs(
+        [line], correlation_id, operation=operation, enabled=enabled_text
+    ) == [json.loads(line)]
+
+    for invalid in (
+        {**result, "effective_value": not enabled},
+        {**result, "requested_value": not enabled},
+        {**result, "readiness_status": "starting"},
+        {**result, "release_sha": "not-a-sha"},
+        {**result, "image_digest": "sha256:short"},
+        {**result, "alembic_revision": "head"},
+        {**result, "setting": "RESEARCH_INTELLIGENCE_ENABLED"},
+        {key: value for key, value in result.items() if key != "prior_value"},
+    ):
+        invalid_line = json.dumps(
+            {"correlation_id": correlation_id, "status": "succeeded", "result": invalid},
+            sort_keys=True,
+        )
+        assert _parse_approved_operation_logs(
+            [invalid_line], correlation_id, operation=operation, enabled=enabled_text
         ) == []
 
 
@@ -1130,11 +1291,13 @@ def test_fixed_operation_modules_are_packaged_but_generic_admin_command_remains_
     assert "!scripts/platform_admin_dry_run.py" in dockerignore
     assert "!scripts/platform_admin_enable.py" in dockerignore
     assert "!scripts/production_operation_worker.py" in dockerignore
+    assert "!scripts/set_research_intelligence_enabled.py" in dockerignore
     assert "!scripts/set_platform_admin.py" not in dockerignore
     assert "test -f /app/scripts/platform_admin_dry_run.py" in ci
     assert "test -f /app/scripts/get_alembic_revision.py" in ci
     assert "test -f /app/scripts/get_latest_failed_account_deletion_status.py" in ci
     assert "test -f /app/scripts/platform_admin_enable.py" in ci
+    assert "test -f /app/scripts/set_research_intelligence_enabled.py" in ci
     assert "test ! -e /app/scripts/set_platform_admin.py" in ci
 
 
@@ -1146,7 +1309,7 @@ def test_operations_infrastructure_bootstraps_a_user_assigned_identity_before_th
     assert "name: operationsWorkerIdentityName" in bicep
     assert "resource operationsJob 'Microsoft.App/jobs@2025-01-01'" in bicep
     assert bicep.index("resource operationsWorkerIdentity") < bicep.index("resource operationsJob")
-    assert "dependsOn: [\n    operationsAcrPull\n    operationsDatabaseSecretReader\n    operationsQueueReceiver\n  ]" in bicep
+    assert "dependsOn: [\n    operationsAcrPull\n    operationsAppSettingsWriter\n    operationsDatabaseSecretReader\n    operationsQueueReceiver\n  ]" in bicep
     assert "type: 'UserAssigned'" in bicep
     assert "'${operationsWorkerIdentity.id}': {}" in bicep
     assert bicep.count("identity: operationsWorkerIdentity.id") == 3
@@ -1175,7 +1338,7 @@ def test_operations_infrastructure_is_event_driven_and_least_privilege():
     assert "keyVaultUrl: databaseUrlSecret.properties.secretUriWithVersion" in bicep
     assert "scope: databaseUrlSecret" in bicep
     assert "scope: operationsQueue" in bicep
-    assert bicep.count("principalId: operationsWorkerIdentity.properties.principalId") == 3
+    assert bicep.count("principalId: operationsWorkerIdentity.properties.principalId") == 4
     assert "4633458b-17de-408a-b874-0445c86b69e6" in bicep
     assert "7f951dda-4ed3-4680-a7ca-43fe172d538d" in bicep
     assert "69a216fc-b8fb-44d8-bc22-1f3c2cd27a39" in bicep

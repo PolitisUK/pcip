@@ -27,4 +27,5 @@ scripts/*
 !scripts/platform_admin_dry_run.py
 !scripts/platform_admin_enable.py
 !scripts/production_operation_worker.py
+!scripts/set_research_intelligence_enabled.py
 *.md

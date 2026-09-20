@@ -17,13 +17,15 @@ path is the protected **Run approved PCIP production operation** GitHub Actions
 workflow. It submits a validated request to a dedicated Azure Service Bus queue
 after the `production` environment approval. The event-driven Container Apps
 job has its own managed identity, can read only the existing `database-url` Key
-Vault secret, and runs its separately approved digest-pinned worker image. The workflow must use
+Vault secret and update configuration on the one fixed production App Service,
+and runs its separately approved digest-pinned worker image. The workflow must use
 the dedicated `AZURE_PRODUCTION_OPERATIONS_CLIENT_ID` OIDC identity; it must
 never fall back to the broader release-promotion identity.
 
 The workflow accepts only the enumerated fixed operations
 `lookup-user-identity`, `set-platform-admin-dry-run`, `set-platform-admin`,
-`get-alembic-revision`, and `get-latest-failed-account-deletion-status`. The final platform-administration operation is a
+`get-alembic-revision`, `get-latest-failed-account-deletion-status`, and
+`set-research-intelligence-enabled`. The final platform-administration operation is a
 separate protected write; it is not controlled by a boolean or flag on the dry
 run.
 It does not accept an arbitrary shell command, Python module, CLI flags, or SQL.
@@ -52,6 +54,40 @@ a generic administrative command. Missing, multiple, or malformed revision
 rows and any unavailable production-operations component fail closed. The
 protected workflow validates the exact result schema before displaying this
 non-secret release evidence.
+
+## Fixed Research Intelligence configuration operation
+
+`set-research-intelligence-enabled` is the only App Service configuration
+operation in the protected worker. Its queue request schema is exactly:
+
+```json
+{"correlation_id":"<uuid>","operation":"set-research-intelligence-enabled","enabled":true}
+```
+
+`enabled` must be a JSON boolean. The request cannot contain a setting name,
+arbitrary value, resource identifier, application name, command, environment
+variable, or configuration object. The production subscription, resource
+group, and App Service name are fixed in the independently deployed worker.
+
+The worker reads the complete App Service settings collection, changes only
+`RESEARCH_INTELLIGENCE_ENABLED`, writes the preserved collection back, and
+then proves that every other setting is unchanged. It fails closed unless
+migrations and all production/demo seeding remain disabled, the release SHA
+and immutable image digest remain unchanged, the Alembic revision is unchanged,
+readiness recovers, and the public, privacy, and terms routes are healthy. Its
+result contains only the prior/requested/effective booleans, readiness, release
+SHA, image digest, and Alembic revision; it never emits the settings collection
+or secrets.
+
+The worker identity receives a custom role scoped to the fixed production App
+Service. That role contains only App Service read plus configuration read,
+list, and write actions. The GitHub operations identity remains read-only for
+the App Service and can only enqueue an allowlisted typed request.
+
+Enabling this flag exposes Theme Explorer, the research-theme API, Evidence
+Explorer, quote-finder, and theme-scope navigation. It does not enable
+provider-backed AI generation. AI coding, semantic search, evidence confidence,
+provider configuration, and study-level AI governance remain separate controls.
 
 ## Fixed failed account-deletion status lookup
 
@@ -90,7 +126,8 @@ an event-driven job with no ingress, a dedicated queue with local/SAS
 authentication disabled, and creates a dedicated user-assigned worker identity
 before the job. It grants that identity `AcrPull`, Service Bus
 **Data Receiver only on that queue**, plus **Key Vault Secrets User only at the
-existing `database-url` secret scope**, then attaches the same identity to the
+existing `database-url` secret scope**, and the custom fixed-App-Service
+configuration role described above, then attaches the same identity to the
 job for ACR, Key Vault and the event trigger. This ordering prevents the job's
 first revision from attempting an ACR pull before it has its required identity
 access. The module also creates a dedicated operation-log workspace. The GitHub OIDC principal has Service Bus **Data Sender
