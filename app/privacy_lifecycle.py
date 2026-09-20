@@ -18,6 +18,7 @@ from .models import (
     ActivityResponse,
     AnalysisTarget,
     CodeApplication,
+    ResearchAnnotation,
     AuditEvent,
     EvidenceConfidenceAssessment,
     EvidenceFile,
@@ -111,6 +112,7 @@ def _delete_research_derivatives(
         return
     target_ids = set(db.scalars(select(AnalysisTarget.id).where(AnalysisTarget.organisation_id == organisation_id, AnalysisTarget.activity_response_id.in_(response_ids))))
     if target_ids:
+        db.execute(delete(ResearchAnnotation).where(ResearchAnnotation.analysis_target_id.in_(target_ids)))
         db.execute(delete(CodeApplication).where(CodeApplication.analysis_target_id.in_(target_ids)))
     db.execute(delete(AnalysisTarget).where(
         AnalysisTarget.organisation_id == organisation_id,

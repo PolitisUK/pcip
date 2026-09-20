@@ -79,4 +79,19 @@ server-rendered workflow. AW-03 remains intentionally unimplemented.
 Python offsets and a selected-passage SHA-256 fingerprint. Applications do not
 copy participant text. Exact duplicate applications are prevented; overlap and
 nested passages remain valid. Privacy deletion removes applications before their
-targets/responses but retains the codebook. AW-04 annotations remain deferred.
+targets/responses but retains the codebook.
+
+## AW-04 — Text annotations — complete
+
+`ResearchAnnotation` stores a researcher-authored analytical comment against a
+versioned, fingerprinted exact-passage anchor without copying participant text.
+The Entries workflow reconstructs and verifies the source excerpt, fails closed
+when an anchor cannot be verified, and supports Unicode code-point offsets,
+authorship and timestamps. Study editors can create annotations; authors and
+study managers can edit or remove permitted annotations. Read-only users may
+inspect them without seeing write controls.
+
+Alembic revision `0028` adds SQLite/PostgreSQL guards for organisation, study,
+target and author scope. Significant operations are audited without participant
+text, and privacy deletion removes participant-linked annotations before their
+analysis targets.

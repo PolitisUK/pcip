@@ -118,9 +118,11 @@ document.addEventListener('selectionchange', () => {
   if (!body || !body.contains(range.startContainer) || !body.contains(range.endContainer)) return;
   const before = document.createRange(); before.selectNodeContents(body); before.setEnd(range.startContainer, range.startOffset);
   const start = [...before.toString()].length, end = start + [...range.toString()].length;
-  const form = body.closest('.entry-card')?.querySelector('.coding-form');
-  if (!form || end <= start) return;
-  form.querySelector('.start').value = start; form.querySelector('.end').value = end;
-  form.querySelector('.selection-status').textContent = `Selected passage: “${range.toString()}”`;
-  form.querySelector('button').disabled = false;
+  const forms = body.closest('.entry-card')?.querySelectorAll('.passage-selection-form');
+  if (!forms?.length || end <= start) return;
+  forms.forEach((form) => {
+    form.querySelector('.start').value = start; form.querySelector('.end').value = end;
+    form.querySelector('.selection-status').textContent = `Selected passage: “${range.toString()}”`;
+    form.querySelector('button[type="submit"]').disabled = false;
+  });
 });

@@ -8,6 +8,8 @@
 .entry-card__body { overflow-wrap: anywhere; word-break: break-word; }
 .passage-coding { margin-top: 1rem; border-top: 1px solid var(--border, #ddd); padding-top: 1rem; }
 .coded-passage { margin: .5rem 0; }
+.passage-annotations { margin-top: 1rem; border-top: 1px solid var(--border, #ddd); padding-top: 1rem; }
+.passage-annotation { margin: .75rem 0; }
 </style>
 <p class="breadcrumbs"><a href="/projects/{{ project.id }}/workspace">{{ project.title }} research workspace</a> <span aria-hidden="true">/</span> Entries</p>
 {% set workspace_section = 'entries' %}{% include "_workspace_nav.html" %}
@@ -32,12 +34,34 @@
       </div>
     {% else %}<p>No researcher passage coding recorded.</p>{% endfor %}
     {% if study_editability.get(item.response.study_id) %}
-      <form method="post" action="/studies/{{ item.response.study_id }}/responses/{{ item.response.id }}/code-applications" class="coding-form">
+      <form method="post" action="/studies/{{ item.response.study_id }}/responses/{{ item.response.id }}/code-applications" class="coding-form passage-selection-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="start" class="start"><input type="hidden" name="end" class="end">
         <p class="selection-status" aria-live="polite">Select a passage in the response above to apply a code.</p>
         <fieldset><legend>Active research codes</legend>{% for code in active_codes.get(item.response.study_id, []) %}<label><input type="checkbox" name="code_ids" value="{{ code.id }}"> {{ code.name }}</label>{% else %}<p>No active research codes are available for this study.</p>{% endfor %}</fieldset>
         <button type="submit" disabled>Apply code to selected passage</button>
+      </form>
+    {% endif %}
+  </section>
+  <section class="passage-annotations" aria-labelledby="passage-annotations-{{ item.response.id }}">
+    <h3 id="passage-annotations-{{ item.response.id }}">Researcher annotations</h3>
+    {% for annotation in annotations.get(item.response.id, []) %}
+      <article class="passage-annotation">
+        {% if annotation_passages.get(annotation.id) is not none %}<p><q>{{ annotation_passages.get(annotation.id) }}</q></p>{% else %}<p><em>Source passage could not be verified</em></p>{% endif %}
+        <p>{{ annotation.body }}</p>
+        <p class="muted">{{ users.get(annotation.author_id).name if users.get(annotation.author_id) else 'Unknown researcher' }} · Created {{ annotation.created_at.strftime('%d %b %Y, %H:%M') }}{% if annotation.updated_at != annotation.created_at %} · Updated {{ annotation.updated_at.strftime('%d %b %Y, %H:%M') }}{% endif %}</p>
+        {% if annotation_permissions.get(annotation.id) %}
+          <details><summary>Edit annotation</summary><form method="post" action="/studies/{{ item.response.study_id }}/annotations/{{ annotation.id }}/edit" class="stack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label for="annotation-body-{{ annotation.id }}">Annotation</label><textarea id="annotation-body-{{ annotation.id }}" name="body" maxlength="5000" required>{{ annotation.body }}</textarea><button type="submit">Save annotation</button></form></details>
+          <form method="post" action="/studies/{{ item.response.study_id }}/annotations/{{ annotation.id }}/delete" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="btn secondary">Remove annotation</button></form>
+        {% endif %}
+      </article>
+    {% else %}<p>No researcher annotations recorded.</p>{% endfor %}
+    {% if study_editability.get(item.response.study_id) %}
+      <form method="post" action="/studies/{{ item.response.study_id }}/responses/{{ item.response.id }}/annotations" class="annotation-form passage-selection-form stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="start" class="start"><input type="hidden" name="end" class="end">
+        <p class="selection-status" aria-live="polite">Select a passage in the response above to add an annotation.</p>
+        <label for="new-annotation-{{ item.response.id }}">Analytical annotation</label><textarea id="new-annotation-{{ item.response.id }}" name="body" maxlength="5000" required></textarea>
+        <button type="submit" disabled>Add annotation to selected passage</button>
       </form>
     {% endif %}
   </section>

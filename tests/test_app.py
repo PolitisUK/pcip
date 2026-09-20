@@ -53,6 +53,16 @@ def test_passage_anchor_verification_uses_unicode_code_point_offsets_and_fails_c
     assert verified_passage(response, "not json") is None
 
 
+def test_annotation_body_validation_preserves_content_without_accepting_blank_or_oversize_text():
+    from app.annotations import MAX_ANNOTATION_LENGTH, normalise_annotation_body
+
+    assert normalise_annotation_body("  Interpretive note  ") == "Interpretive note"
+    with pytest.raises(ValueError, match="required"):
+        normalise_annotation_body("   ")
+    with pytest.raises(ValueError, match="characters or fewer"):
+        normalise_annotation_body("x" * (MAX_ANNOTATION_LENGTH + 1))
+
+
 def test_researcher_codebook_create_reparent_archive_and_restore():
     from app.models import ResearchCode
     with client:
@@ -11215,7 +11225,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         )
         db.add(other_project)
         db.commit()
-        project_id, participant_id, activity_id, other_project_id = project.id, participant.id, activity.id, other_project.id
+        project_id, participant_id, activity_id, study_id, response_id, other_project_id = project.id, participant.id, activity.id, study.id, response.id, other_project.id
 
     with client:
         auth()
@@ -11253,6 +11263,38 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert "Attached evidence" in entries.text and "entry-notes.pdf" in entries.text
         assert "Researcher passage coding" in entries.text
         assert "Passage trust" in entries.text and "complete" in entries.text
+        created_annotation = post_with_csrf(
+            f'/studies/{study_id}/responses/{response_id}/annotations',
+            data={'start': '4', 'end': '12', 'body': '<script>alert(1)</script> interpretive note'},
+            follow_redirects=False,
+        )
+        assert created_annotation.status_code == 303
+        with SessionLocal() as db:
+            from app.models import AuditEvent, ResearchAnnotation
+            annotation = db.scalar(select(ResearchAnnotation).where(ResearchAnnotation.study_id == study_id))
+            assert annotation is not None
+            annotation_id = annotation.id
+            assert db.scalar(select(AuditEvent).where(AuditEvent.action == 'research_annotation.created', AuditEvent.entity_id == str(annotation_id))) is not None
+        annotated = client.get(f"/projects/{project_id}/workspace/entries")
+        assert "Researcher annotations" in annotated.text
+        assert "&lt;script&gt;alert(1)&lt;/script&gt; interpretive note" in annotated.text
+        assert "<script>alert(1)</script>" not in annotated.text
+        assert "complete" in annotated.text
+        edited_annotation = post_with_csrf(
+            f'/studies/{study_id}/annotations/{annotation_id}/edit',
+            data={'body': 'Revised analytical interpretation'},
+            follow_redirects=False,
+        )
+        assert edited_annotation.status_code == 303
+        assert "Revised analytical interpretation" in client.get(f"/projects/{project_id}/workspace/entries").text
+        removed_annotation = post_with_csrf(
+            f'/studies/{study_id}/annotations/{annotation_id}/delete',
+            follow_redirects=False,
+        )
+        assert removed_annotation.status_code == 303
+        with SessionLocal() as db:
+            from app.models import ResearchAnnotation
+            assert db.get(ResearchAnnotation, annotation_id) is None
         assert dossier.status_code == 200
         assert "Longitudinal research timeline" in dossier.text
         assert client.get(f"/projects/{other_project_id}/workspace").status_code == 404
