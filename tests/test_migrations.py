@@ -64,7 +64,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0026" in revision.stdout
+    assert "0027" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -111,7 +111,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0026" in result.stdout
+            assert "0027" in result.stdout
 
     active = subprocess.run(
         [

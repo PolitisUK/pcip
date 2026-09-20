@@ -761,6 +761,24 @@ class AnalysisTarget(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class CodeApplication(Base):
+    """One researcher-applied code on a versioned exact-text anchor."""
+    __tablename__ = "code_applications"
+    __table_args__ = (
+        UniqueConstraint("analysis_target_id", "research_code_id", "applied_by_id", "anchor_json", name="uq_code_application_exact"),
+        Index("ix_code_applications_scope", "organisation_id", "study_id", "analysis_target_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    analysis_target_id: Mapped[int] = mapped_column(ForeignKey("analysis_targets.id"), index=True)
+    research_code_id: Mapped[int] = mapped_column(ForeignKey("research_codes.id"), index=True)
+    applied_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    anchor_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(primary_key=True)

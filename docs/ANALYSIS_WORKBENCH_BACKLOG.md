@@ -72,8 +72,11 @@ archive, and restore. Significant operations emit existing audit events.
 Tests cover migration guards, hierarchy operations, archive/restore, and the
 server-rendered workflow. AW-03 remains intentionally unimplemented.
 
-## AW-03 — Passage-level coding
+## AW-03 — Passage-level coding — complete
 
-Add exact text selections and code applications against `AnalysisTarget`.
-Define versioned anchor validation, coding provenance, and participant-deletion
-cleanup for code applications. Do not infer themes or findings automatically.
+`CodeApplication` links a researcher, active `ResearchCode`, and response
+`AnalysisTarget` using a versioned JSON anchor with validated UTF-16-independent
+Python offsets and a selected-passage SHA-256 fingerprint. Applications do not
+copy participant text. Exact duplicate applications are prevented; overlap and
+nested passages remain valid. Privacy deletion removes applications before their
+targets/responses but retains the codebook. AW-04 annotations remain deferred.

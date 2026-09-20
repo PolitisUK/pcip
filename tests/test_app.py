@@ -43,6 +43,16 @@ def test_research_workspace_reads_participant_api_answer_payloads():
     assert response_body('{"answer":"  Full app diary entry  ","choices":[]}') == 'Full app diary entry'
 
 
+def test_passage_anchor_verification_uses_unicode_code_point_offsets_and_fails_closed():
+    from app.passage_coding import text_anchor, verified_passage
+
+    response = "Before 😀after"
+    anchor = text_anchor(response, 7, 8)
+    assert verified_passage(response, anchor) == "😀"
+    assert verified_passage(response, anchor.replace("fingerprint", "wrong_fingerprint")) is None
+    assert verified_passage(response, "not json") is None
+
+
 def test_researcher_codebook_create_reparent_archive_and_restore():
     from app.models import ResearchCode
     with client:
@@ -11094,12 +11104,17 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
     from app.models import (
         Activity,
         ActivityResponse,
+        AnalysisTarget,
+        CodeApplication,
+        EvidenceFile,
         Organisation,
         Participant,
         Project,
+        ResearchCode,
         Study,
         StudyEnrolment,
     )
+    from app.passage_coding import text_anchor
 
     suffix = unique_value("workspace")
     with SessionLocal() as db:
@@ -11146,7 +11161,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
             activity_id=activity.id,
             participant_id=participant.id,
             status="submitted",
-            submitted_at=now(),
+            submitted_at=datetime(2026, 1, 2, 3, 4, tzinfo=timezone.utc),
             value_json=json.dumps({
                 "text": "The complete longitudinal account is visible in the workspace.",
                 "researcher_codes": ["Access > delay"],
@@ -11154,6 +11169,41 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
             }),
         )
         db.add(response)
+        db.flush()
+        target = AnalysisTarget(
+            organisation_id=administrator.organisation_id,
+            study_id=study.id,
+            target_type="activity_response",
+            activity_response_id=response.id,
+            authorship="researcher",
+            created_by_id=administrator.id,
+        )
+        research_code = ResearchCode(
+            organisation_id=administrator.organisation_id,
+            study_id=study.id,
+            name="Passage trust",
+            created_by_id=administrator.id,
+        )
+        evidence = EvidenceFile(
+            organisation_id=administrator.organisation_id,
+            study_id=study.id,
+            activity_id=activity.id,
+            participant_id=participant.id,
+            response_id=response.id,
+            original_name="entry-notes.pdf",
+            stored_name=unique_value("entry-notes"),
+            content_type="application/pdf",
+        )
+        db.add_all([target, research_code, evidence])
+        db.flush()
+        db.add(CodeApplication(
+            organisation_id=administrator.organisation_id,
+            study_id=study.id,
+            analysis_target_id=target.id,
+            research_code_id=research_code.id,
+            applied_by_id=administrator.id,
+            anchor_json=text_anchor("The complete longitudinal account is visible in the workspace.", 4, 12),
+        ))
         other_org = Organisation(name=f"Other {suffix}", slug=f"other-{suffix}".lower())
         db.add(other_org)
         db.flush()
@@ -11192,8 +11242,17 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert re.search(rf'<option value="{participant_id}"\s+selected>', filtered_entries.text)
         assert re.search(rf'<option value="{activity_id}"\s+selected>', filtered_entries.text)
         assert entries.status_code == 200
+        assert f'href="/participants/{participant_id}"' in entries.text
+        assert "Week one" in entries.text
+        assert "What changed this week?" in entries.text
+        assert "02 Jan 2026, 03:04" in entries.text
+        assert "Place:" in entries.text and "Town centre" in entries.text
         assert "The complete longitudinal account is visible in the workspace." in entries.text
         assert "Access &gt; delay" in entries.text
+        assert 'workspace/entries?code=Access%20%3E%20delay' in entries.text
+        assert "Attached evidence" in entries.text and "entry-notes.pdf" in entries.text
+        assert "Researcher passage coding" in entries.text
+        assert "Passage trust" in entries.text and "complete" in entries.text
         assert dossier.status_code == 200
         assert "Longitudinal research timeline" in dossier.text
         assert client.get(f"/projects/{other_project_id}/workspace").status_code == 404
