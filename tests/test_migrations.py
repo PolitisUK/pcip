@@ -7,6 +7,108 @@ import sys
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_analysis_actor_guards_use_active_organisation_memberships(tmp_path):
+    database_path = tmp_path / "analysis-actor-memberships.db"
+    environment = os.environ.copy()
+    environment["DATABASE_URL"] = f"sqlite:///{database_path}"
+    upgraded = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert upgraded.returncode == 0, upgraded.stderr
+
+    valid = """
+      PRAGMA foreign_keys=ON;
+      INSERT INTO organisations (id,name,slug,created_at) VALUES
+        (1,'Primary','actor-primary',CURRENT_TIMESTAMP),
+        (2,'Research','actor-research',CURRENT_TIMESTAMP);
+      INSERT INTO users (id,organisation_id,name,email,session_version,failed_login_count,role,is_platform_admin,is_active,created_at) VALUES
+        (1,1,'Multi-org researcher','multi-org@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP),
+        (2,2,'Research owner','research-owner@example.test',1,0,'owner',0,1,CURRENT_TIMESTAMP);
+      INSERT INTO organisation_memberships (user_id,organisation_id,role,is_active,created_at) VALUES
+        (1,1,'researcher',1,CURRENT_TIMESTAMP),
+        (1,2,'researcher',1,CURRENT_TIMESTAMP),
+        (2,2,'owner',1,CURRENT_TIMESTAMP);
+      INSERT INTO projects (id,organisation_id,title,code,description,status,created_by_id,created_at,updated_at)
+        VALUES (1,2,'Synthetic project','ACTOR-PROJECT','','draft',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO studies (id,organisation_id,project_id,title,code,description,methodology,status,demographics_schema_json,created_by_id,created_at,updated_at)
+        VALUES (1,2,1,'Synthetic study','ACTOR-STUDY','','diary','draft','[]',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO research_codes (id,organisation_id,study_id,name,definition,created_by_id,created_at,updated_at) VALUES
+        (1,2,1,'Source','',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
+        (2,2,1,'Target','',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
+        (3,2,1,'Created through membership','',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO research_memos (id,organisation_id,study_id,scope_type,title,body,author_id,created_at,updated_at)
+        VALUES (1,2,1,'study','Membership memo','Synthetic body',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+      INSERT INTO analytical_relationships (id,organisation_id,study_id,source_type,source_id,relationship_type,target_type,target_id,rationale,created_by_id,created_at)
+        VALUES (1,2,1,'code',1,'supports','code',2,'Synthetic rationale',1,CURRENT_TIMESTAMP);
+      INSERT INTO analysis_canvases (id,organisation_id,study_id,owner_id,view_metadata_json,created_at,updated_at)
+        VALUES (1,2,1,1,'{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+    """
+    inserted = subprocess.run(
+        ["sqlite3", str(database_path), valid],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert inserted.returncode == 0, inserted.stderr
+
+    disabled = subprocess.run(
+        [
+            "sqlite3",
+            str(database_path),
+            "UPDATE organisation_memberships SET is_active=0 WHERE user_id=1 AND organisation_id=2;",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert disabled.returncode == 0, disabled.stderr
+
+    historic_update = subprocess.run(
+        [
+            "sqlite3",
+            str(database_path),
+            "UPDATE research_codes SET definition='Historic record retained' WHERE id=3;",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert historic_update.returncode == 0, historic_update.stderr
+
+    rejected_writes = (
+        (
+            "INSERT INTO research_codes (organisation_id,study_id,name,definition,created_by_id,created_at,updated_at) VALUES (2,1,'Blocked','',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);",
+            "research code creator is outside organisation",
+        ),
+        (
+            "INSERT INTO research_memos (organisation_id,study_id,scope_type,title,body,author_id,created_at,updated_at) VALUES (2,1,'study','Blocked','Synthetic body',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);",
+            "research memo author scope",
+        ),
+        (
+            "INSERT INTO analytical_relationships (organisation_id,study_id,source_type,source_id,relationship_type,target_type,target_id,rationale,created_by_id,created_at) VALUES (2,1,'code',1,'contradicts','code',2,'Blocked',1,CURRENT_TIMESTAMP);",
+            "analytical relationship author scope",
+        ),
+        (
+            "DELETE FROM analysis_canvases WHERE id=1; INSERT INTO analysis_canvases (id,organisation_id,study_id,owner_id,view_metadata_json,created_at,updated_at) VALUES (2,2,1,1,'{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);",
+            "analysis canvas owner scope",
+        ),
+    )
+    for statement, expected_error in rejected_writes:
+        rejected = subprocess.run(
+            ["sqlite3", str(database_path), statement],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert rejected.returncode != 0
+        assert expected_error in rejected.stderr
+
+
 def test_alembic_accepts_percent_encoded_database_url(tmp_path):
     database_path = tmp_path / "pcip%2Fstaging.db"
     environment = os.environ.copy()
@@ -64,7 +166,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0035" in revision.stdout
+    assert "0036" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -111,7 +213,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0035" in result.stdout
+            assert "0036" in result.stdout
 
     active = subprocess.run(
         [
@@ -196,9 +298,10 @@ def test_analysis_targets_migration_enforces_concrete_sources_and_tenant_scope(t
     assert upgraded.returncode == 0, upgraded.stderr
     schema = """
         PRAGMA foreign_keys = ON;
-        INSERT INTO organisations (id, name, slug, created_at) VALUES (1, 'One', 'one', CURRENT_TIMESTAMP), (2, 'Two', 'two', CURRENT_TIMESTAMP);
-        INSERT INTO users (id, organisation_id, name, email, session_version, failed_login_count, role, is_platform_admin, is_active, created_at) VALUES (1, 1, 'Researcher', 'one@example.test', 1, 0, 'researcher', 0, 1, CURRENT_TIMESTAMP), (2, 2, 'Foreign Researcher', 'two@example.test', 1, 0, 'researcher', 0, 1, CURRENT_TIMESTAMP);
-        INSERT INTO projects (id, organisation_id, title, code, description, status, created_by_id, created_at, updated_at) VALUES (1, 1, 'Project', 'P1', '', 'draft', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            INSERT INTO organisations (id, name, slug, created_at) VALUES (1, 'One', 'one', CURRENT_TIMESTAMP), (2, 'Two', 'two', CURRENT_TIMESTAMP);
+            INSERT INTO users (id, organisation_id, name, email, session_version, failed_login_count, role, is_platform_admin, is_active, created_at) VALUES (1, 1, 'Researcher', 'one@example.test', 1, 0, 'researcher', 0, 1, CURRENT_TIMESTAMP), (2, 2, 'Foreign Researcher', 'two@example.test', 1, 0, 'researcher', 0, 1, CURRENT_TIMESTAMP);
+            INSERT INTO organisation_memberships (user_id,organisation_id,role,is_active,created_at) VALUES (1,1,'researcher',1,CURRENT_TIMESTAMP),(2,2,'researcher',1,CURRENT_TIMESTAMP);
+            INSERT INTO projects (id, organisation_id, title, code, description, status, created_by_id, created_at, updated_at) VALUES (1, 1, 'Project', 'P1', '', 'draft', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
         INSERT INTO studies (id, organisation_id, project_id, title, code, description, methodology, status, demographics_schema_json, created_by_id, created_at, updated_at) VALUES (1, 1, 1, 'Study', 'S1', '', 'diary', 'draft', '[]', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
         INSERT INTO participants (id, organisation_id, reference, name, status, consent_status, communication_preference, tags, demographics_json, notes, created_by_id, created_at, updated_at) VALUES (1, 1, 'Case 1', 'Participant', 'active', 'granted', 'email', '', '{}', '', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
         INSERT INTO study_enrolments (organisation_id, study_id, participant_id, status, enrolled_at) VALUES (1, 1, 1, 'enrolled', CURRENT_TIMESTAMP);
@@ -364,9 +467,10 @@ def test_analysis_canvas_migration_enforces_canvas_and_object_scope(tmp_path):
     assert upgraded.returncode == 0, upgraded.stderr
     schema = """
       PRAGMA foreign_keys=ON;
-      INSERT INTO organisations (id,name,slug,created_at) VALUES (1,'One','canvas-one',CURRENT_TIMESTAMP),(2,'Two','canvas-two',CURRENT_TIMESTAMP);
-      INSERT INTO users (id,organisation_id,name,email,session_version,failed_login_count,role,is_platform_admin,is_active,created_at) VALUES (1,1,'One','canvas-one@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP),(2,2,'Two','canvas-two@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP);
-      INSERT INTO projects (id,organisation_id,title,code,description,status,created_by_id,created_at,updated_at) VALUES (1,1,'One','CP1','','draft',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,'Two','CP2','','draft',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+          INSERT INTO organisations (id,name,slug,created_at) VALUES (1,'One','canvas-one',CURRENT_TIMESTAMP),(2,'Two','canvas-two',CURRENT_TIMESTAMP);
+          INSERT INTO users (id,organisation_id,name,email,session_version,failed_login_count,role,is_platform_admin,is_active,created_at) VALUES (1,1,'One','canvas-one@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP),(2,2,'Two','canvas-two@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP);
+          INSERT INTO organisation_memberships (user_id,organisation_id,role,is_active,created_at) VALUES (1,1,'researcher',1,CURRENT_TIMESTAMP),(2,2,'researcher',1,CURRENT_TIMESTAMP);
+          INSERT INTO projects (id,organisation_id,title,code,description,status,created_by_id,created_at,updated_at) VALUES (1,1,'One','CP1','','draft',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,'Two','CP2','','draft',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
       INSERT INTO studies (id,organisation_id,project_id,title,code,description,methodology,status,demographics_schema_json,created_by_id,created_at,updated_at) VALUES (1,1,1,'One','CS1','','diary','draft','[]',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,2,'Two','CS2','','diary','draft','[]',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
       INSERT INTO research_codes (id,organisation_id,study_id,name,definition,created_by_id,created_at,updated_at) VALUES (1,1,1,'Local','',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,2,'Foreign','',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
       INSERT INTO analysis_canvases (id,organisation_id,study_id,owner_id,view_metadata_json,created_at,updated_at) VALUES (1,1,1,1,'{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
@@ -493,6 +597,7 @@ def test_research_findings_migration_extends_relationship_and_canvas_scope(tmp_p
       PRAGMA foreign_keys=ON;
       INSERT INTO organisations (id,name,slug,created_at) VALUES (1,'One','finding-one',CURRENT_TIMESTAMP),(2,'Two','finding-two',CURRENT_TIMESTAMP);
       INSERT INTO users (id,organisation_id,name,email,session_version,failed_login_count,role,is_platform_admin,is_active,created_at) VALUES (1,1,'One','finding-one@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP),(2,2,'Two','finding-two@example.test',1,0,'researcher',0,1,CURRENT_TIMESTAMP);
+      INSERT INTO organisation_memberships (user_id,organisation_id,role,is_active,created_at) VALUES (1,1,'researcher',1,CURRENT_TIMESTAMP),(2,2,'researcher',1,CURRENT_TIMESTAMP);
       INSERT INTO projects (id,organisation_id,title,code,description,status,created_by_id,created_at,updated_at) VALUES (1,1,'One','FP1','','draft',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,'Two','FP2','','draft',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
       INSERT INTO studies (id,organisation_id,project_id,title,code,description,methodology,status,demographics_schema_json,created_by_id,created_at,updated_at) VALUES (1,1,1,'One','FS1','','diary','draft','[]',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,2,'Two','FS2','','diary','draft','[]',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
       INSERT INTO research_codes (id,organisation_id,study_id,name,definition,created_by_id,created_at,updated_at) VALUES (1,1,1,'Local','',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(2,2,2,'Foreign','',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);

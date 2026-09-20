@@ -443,3 +443,22 @@ statements from 145 to 28 and findings from 141 to 24. Other representative
 workflows remained bounded and no speculative index or materialized view was
 justified. Full method, security and performance evidence is recorded in
 `ANALYSIS_WORKBENCH_FINAL_QA.md`.
+
+## Post-release hardening — active organisation actor scope
+
+Alembic revision `0036` aligns every Analysis Workbench researcher/actor
+database guard with the global-identity architecture introduced in revision
+`0006`. A user is now in scope when the user has an active
+`organisation_memberships` row for the analytical record's organisation;
+the legacy primary `users.organisation_id` is no longer mistaken for the
+user's only valid organisation. Study, source, object and cross-tenant guards
+remain unchanged, inactive or absent memberships fail closed, and SQLite and
+PostgreSQL enforce the same rule. PostgreSQL request-level regression coverage
+includes code, memo, relationship and canvas creation through a second active
+membership, matching the production failure boundary.
+
+The shared project navigation now presents its source, analysis and
+review/share group names as semantic group headings above the actual links.
+The small uppercase pseudo-menu labels have been removed. All destinations,
+current-page semantics, horizontal narrow-screen access and keyboard-native
+anchors remain available.
