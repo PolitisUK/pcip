@@ -96,6 +96,7 @@ from .image_regions import create_image_region, parsed_region
 from .relationships import RELATIONSHIP_TYPES, changeable_relationship, create_relationship
 from .analysis_lifecycle import remove_analytical_references
 from .analysis_canvas_router import analysis_canvas_router
+from .advanced_query_router import advanced_query_router
 from .analysis_objects import analytical_study_permission
 from .analysis_projections import coded_passage_projections
 from .analysis_router import include_analysis_router
@@ -1292,6 +1293,15 @@ def project_workspace_scope(db: Session, user: User, project_id: int) -> tuple[P
     project_row = project(db, project_id, user.organisation_id)
     require_project_permission(db, user, project_row)
     return project_row, project_studies_for_user(db, user, project_row)
+
+
+app.include_router(
+    advanced_query_router(
+        current_user_dependency=current_user,
+        render_page=render,
+        workspace_scope=project_workspace_scope,
+    )
+)
 
 
 def protocol_builder_options() -> dict[str, list[dict[str, str]]]:

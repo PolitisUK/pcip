@@ -70,6 +70,22 @@ filters. AW-11.5 introduces no migration or speculative materialized view.
 Future indexes require a concrete query shape or measurement and should be
 delivered through the normal SQLite/PostgreSQL migration rehearsal.
 
+## Advanced-query contract
+
+`advanced_query` composes the bounded coded-passage projection; it does not
+accept SQL fragments or arbitrary field names. Boolean code inclusion and
+exclusion are evaluated at participant/case level, while returned matches stay
+at CodeApplication level for exact-passage traceability. Theme constraints use
+the canonical `ResearchThemeCode` links and relationship constraints use the
+canonical `AnalyticalRelationship` store.
+
+The route resolves every study, code, theme, participant and researcher option
+from the current user's accessible project studies before invoking the query.
+The service caps source material at 5,000 applications, paginates displayed
+matches, and keeps coded-application, source-entry and participant-case counts
+semantically distinct. Co-occurrence is derived per source entry and is never
+described as analytical importance or population prevalence.
+
 ## Visual canvas contract
 
 `AnalysisCanvas` and `AnalysisCanvasNode` persist only a researcher's visual

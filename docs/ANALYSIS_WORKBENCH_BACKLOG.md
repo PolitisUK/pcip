@@ -261,3 +261,26 @@ cross-study forged objects fail closed at the service, route and database
 levels. Participant deletion removes affected placements through the shared
 lifecycle hook while leaving unrelated layout and reusable study analysis
 unchanged.
+
+## AW-13 — Advanced analytical queries — complete
+
+The project workspace now provides a bounded advanced qualitative query view
+over the shared coded-passage projection. Researchers can combine codes using
+case-level AND or OR logic, exclude cases containing selected codes with NOT,
+and narrow results by accessible study, participant/case, applying researcher,
+coding date, researcher-developed theme, or an explicit canonical relationship
+type such as `contradicts`.
+
+Every result remains an individual `CodeApplication` with a fingerprint-checked
+exact passage, participant/case, source entry, response context, researcher and
+coding timestamp plus direct source navigation. Results are paginated and the
+source scan is capped at 5,000 applications. Picker IDs are resolved only from
+the user's accessible organisation/studies, and forged cross-tenant or
+cross-study values fail closed.
+
+The summary deliberately separates coded applications, distinct participant
+cases and distinct source entries. A bounded code co-occurrence table reports
+same-source-entry pairs with both entry and case counts, while the interface
+states that frequency and co-occurrence do not establish importance,
+representativeness, conceptual association or causality. This is a derived
+read-only query layer and adds no migration or participant-text copy.

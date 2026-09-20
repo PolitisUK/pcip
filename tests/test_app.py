@@ -11462,6 +11462,16 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert f'#response-{response_id}' in retrieval.text
         filtered_retrieval = client.get(f'/projects/{project_id}/workspace/coding?study_id={study_id}&code_id={research_code_id}&participant_id={participant_id}&researcher_id={administrator_id}&q=complete')
         assert filtered_retrieval.status_code == 200 and 'complete' in filtered_retrieval.text
+        advanced_query = client.get(f'/projects/{project_id}/workspace/queries?study_id={study_id}&include_code_id={research_code_id}&operator=and&participant_id={participant_id}&researcher_id={administrator_id}&relationship_type=')
+        assert advanced_query.status_code == 200
+        assert 'Advanced qualitative queries' in advanced_query.text
+        assert 'Passage trust' in advanced_query.text and 'complete' in advanced_query.text
+        assert '1</strong><span>coded applications' in advanced_query.text
+        assert '1</strong><span>participant cases' in advanced_query.text
+        assert '1</strong><span>source entries' in advanced_query.text
+        assert 'frequency nor co-occurrence proves importance' in advanced_query.text
+        assert f'#response-{response_id}' in advanced_query.text
+        assert client.get(f'/projects/{project_id}/workspace/queries?include_code_id={foreign_code_id}').status_code == 404
         image_analysis = client.get(f'/evidence/{image_evidence_id}/analysis')
         assert image_analysis.status_code == 200 and 'Image-region analysis' in image_analysis.text
         invalid_region = post_with_csrf(f'/evidence/{image_evidence_id}/analysis/regions', data={'x':'0.9','y':'0.1','width':'0.2','height':'0.2','code_ids':str(research_code_id),'annotation_body':''}, follow_redirects=False)
