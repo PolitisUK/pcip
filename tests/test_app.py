@@ -11204,7 +11204,18 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
             stored_name=unique_value("entry-notes"),
             content_type="application/pdf",
         )
-        db.add_all([target, research_code, evidence])
+        image_evidence = EvidenceFile(
+            organisation_id=administrator.organisation_id,
+            study_id=study.id,
+            activity_id=activity.id,
+            participant_id=participant.id,
+            response_id=response.id,
+            original_name="participant-map.png",
+            stored_name=unique_value("participant-map"),
+            content_type="image/png",
+            scan_status="clean",
+        )
+        db.add_all([target, research_code, evidence, image_evidence])
         db.flush()
         db.add(CodeApplication(
             organisation_id=administrator.organisation_id,
@@ -11225,7 +11236,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         )
         db.add(other_project)
         db.commit()
-        project_id, participant_id, activity_id, study_id, response_id, target_id, research_code_id, administrator_id, other_project_id = project.id, participant.id, activity.id, study.id, response.id, target.id, research_code.id, administrator.id, other_project.id
+        project_id, participant_id, activity_id, study_id, response_id, target_id, research_code_id, image_evidence_id, administrator_id, other_project_id = project.id, participant.id, activity.id, study.id, response.id, target.id, research_code.id, image_evidence.id, administrator.id, other_project.id
 
     with client:
         auth()
@@ -11271,6 +11282,24 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert f'#response-{response_id}' in retrieval.text
         filtered_retrieval = client.get(f'/projects/{project_id}/workspace/coding?study_id={study_id}&code_id={research_code_id}&participant_id={participant_id}&researcher_id={administrator_id}&q=complete')
         assert filtered_retrieval.status_code == 200 and 'complete' in filtered_retrieval.text
+        image_analysis = client.get(f'/evidence/{image_evidence_id}/analysis')
+        assert image_analysis.status_code == 200 and 'Image-region analysis' in image_analysis.text
+        invalid_region = post_with_csrf(f'/evidence/{image_evidence_id}/analysis/regions', data={'x':'0.9','y':'0.1','width':'0.2','height':'0.2','code_ids':str(research_code_id),'annotation_body':''}, follow_redirects=False)
+        assert invalid_region.status_code == 400
+        created_region = post_with_csrf(f'/evidence/{image_evidence_id}/analysis/regions', data={'x':'0.1','y':'0.2','width':'0.3','height':'0.4','code_ids':str(research_code_id),'annotation_body':'Spatial interpretation'}, follow_redirects=False)
+        assert created_region.status_code == 303
+        with SessionLocal() as db:
+            from app.image_regions import parsed_region
+            from app.models import AnalysisTarget, CodeApplication, ResearchAnnotation
+            region_target = db.scalar(select(AnalysisTarget).where(AnalysisTarget.evidence_file_id == image_evidence_id))
+            assert region_target is not None and parsed_region(region_target.anchor_json) == {'version':1,'type':'image_rectangle','unit':'fraction','x':0.1,'y':0.2,'width':0.3,'height':0.4}
+            region_target_id = region_target.id
+            assert db.scalar(select(CodeApplication).where(CodeApplication.analysis_target_id == region_target_id)) is not None
+            assert db.scalar(select(ResearchAnnotation).where(ResearchAnnotation.analysis_target_id == region_target_id)).body == 'Spatial interpretation'
+        rendered_regions = client.get(f'/evidence/{image_evidence_id}/analysis')
+        assert 'Spatial interpretation' in rendered_regions.text and 'Passage trust' in rendered_regions.text
+        assert 'left 10.0%' in rendered_regions.text and 'width 30.0%' in rendered_regions.text
+        assert post_with_csrf(f'/evidence/{image_evidence_id}/analysis/regions/{region_target_id}/delete', follow_redirects=False).status_code == 303
         created_annotation = post_with_csrf(
             f'/studies/{study_id}/responses/{response_id}/annotations',
             data={'start': '4', 'end': '12', 'body': '<script>alert(1)</script> interpretive note'},

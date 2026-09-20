@@ -3056,3 +3056,7 @@ pre {
     animation: none !important;
   }
 }
+.image-region-stage { position: relative; display: inline-block; max-width: 100%; touch-action: none; }
+.image-region-stage img { display: block; max-width: 100%; height: auto; }
+.image-region-box { position: absolute; border: 3px solid #8b2f97; background: rgb(139 47 151 / 18%); pointer-events: none; }
+.image-region-box--draft { border-style: dashed; }

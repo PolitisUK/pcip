@@ -126,3 +126,18 @@ The view is read-only for all authorised study readers, remains explicitly
 distinct from legacy response-level code chips, uses bounded result and filter
 loads, and derives passages from current source material rather than persisting
 another participant-text copy.
+
+## AW-07 — Multimedia / image-region annotation — complete
+
+Clean image evidence now has a progressive-enhancement region-analysis page.
+Researchers can drag a rectangle or enter its accessible fractional coordinates,
+then attach one or more active `ResearchCode` records and/or an analytical
+annotation. Rectangles use a versioned, resolution-independent anchor and the
+original evidence object is never modified.
+
+Each region is a researcher-authored evidence `AnalysisTarget`; existing
+`CodeApplication` and `ResearchAnnotation` provenance and database scope guards
+are reused rather than duplicated. Historic archived codes remain visible,
+study permissions govern creation/removal, IDs are organisation/study/evidence
+scoped, actions are audited without participant content, and privacy deletion
+removes region applications before evidence targets and files.

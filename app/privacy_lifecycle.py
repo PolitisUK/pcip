@@ -236,6 +236,8 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
         )))
         if other_target_ids:
             db.execute(delete(ResearchMemo).where(ResearchMemo.analysis_target_id.in_(other_target_ids)))
+            db.execute(delete(ResearchAnnotation).where(ResearchAnnotation.analysis_target_id.in_(other_target_ids)))
+            db.execute(delete(CodeApplication).where(CodeApplication.analysis_target_id.in_(other_target_ids)))
         db.execute(delete(ResearchMemo).where(ResearchMemo.organisation_id == organisation_id, ResearchMemo.participant_id == participant_id))
         db.execute(
             delete(AnalysisTarget).where(
