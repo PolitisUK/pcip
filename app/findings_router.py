@@ -16,7 +16,7 @@ from .analysis_objects import (
 from .csrf import csrf_protect
 from .db import get_db
 from .findings import changeable_finding, finding_study_access, finding_text
-from .models import AnalyticalRelationship, Project, ResearchFinding, User
+from .models import AnalyticalRelationship, Project, ResearchAnalysisSuggestion, ResearchFinding, User
 from .relationships import (
     RELATIONSHIP_OBJECT_TYPES,
     RELATIONSHIP_TYPES,
@@ -52,6 +52,14 @@ def findings_router(
         findings = db.scalars(
             statement.order_by(ResearchFinding.updated_at.desc()).limit(200)
         ).all()
+        suggestion_ids = {row.originating_suggestion_id for row in findings if row.originating_suggestion_id}
+        originating_suggestions = {
+            row.id: row for row in db.scalars(select(ResearchAnalysisSuggestion).where(
+                ResearchAnalysisSuggestion.organisation_id == user.organisation_id,
+                ResearchAnalysisSuggestion.study_id == study.id,
+                ResearchAnalysisSuggestion.id.in_(suggestion_ids),
+            )).all()
+        } if suggestion_ids else {}
         finding_ids = {row.id for row in findings}
         relationship_rows = db.scalars(
             select(AnalyticalRelationship)
@@ -125,6 +133,7 @@ def findings_router(
             project=db.get(Project, study.project_id),
             study=study,
             findings=findings,
+            originating_suggestions=originating_suggestions,
             relationships_by_finding=relationships_by_finding,
             relationships_truncated=relationships_truncated,
             researchers=researchers,

@@ -99,6 +99,7 @@ from .analysis_lifecycle import remove_analytical_references
 from .analysis_canvas_router import analysis_canvas_router
 from .advanced_query_router import advanced_query_router
 from .findings_router import findings_router
+from .findings import finding_text
 from .analysis_objects import analytical_study_permission
 from .analysis_projections import coded_passage_projections
 from .analysis_router import include_analysis_router
@@ -3860,8 +3861,11 @@ def project_workspace_analysis(project_id: int, request: Request, u=Depends(curr
     project_row, studies = project_workspace_scope(db, u, project_id)
     study_ids = [row.id for row in studies]
     themes = db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id == u.organisation_id, ResearchTheme.study_id.in_(study_ids)).order_by(ResearchTheme.updated_at.desc())).all() if study_ids else []
-    suggestions = db.scalars(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.organisation_id == u.organisation_id, ResearchAnalysisSuggestion.study_id.in_(study_ids)).order_by(ResearchAnalysisSuggestion.created_at.desc()).limit(30)).all() if study_ids and settings.research_intelligence_enabled else []
-    return render(request, "research_analysis.html", user=u, **_workspace_context(project_row, studies), themes=themes, suggestions=suggestions, ai_available=False)
+    suggestions = db.scalars(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.organisation_id == u.organisation_id, ResearchAnalysisSuggestion.study_id.in_(study_ids)).order_by(ResearchAnalysisSuggestion.created_at.desc()).limit(30)).all() if study_ids else []
+    permissions = {row.id: study_permission(db, u, row) for row in studies}
+    configurations = db.scalars(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.organisation_id == u.organisation_id, StudyMethodologyConfiguration.study_id.in_(study_ids))).all() if study_ids else []
+    ai_governance = {row.study_id: row.ai_enabled for row in configurations}
+    return render(request, "research_analysis.html", user=u, **_workspace_context(project_row, studies), themes=themes, suggestions=suggestions, permissions=permissions, ai_governance=ai_governance, ai_available=False, ai_unavailable_reason="No approved provider-backed AI job is configured. Participant material will not be sent to an external provider.")
 @app.post("/projects/{project_id}/edit")
 def edit_project(project_id:int,title:str=Form(...),description:str=Form(""),status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); require_project_permission(db,u,p,edit=True); enum_value(status_value,ProjectStatus,"project status"); p.title=title.strip(); p.description=description.strip(); p.status=status_value; audit(db,u.organisation_id,u.id,"project.updated","project",p.id,p.title); db.commit(); return RedirectResponse(f"/projects/{p.id}",303)
@@ -3909,7 +3913,7 @@ def study_detail(study_id:int,request:Request,u=Depends(current_user),db:Session
     else:
         access_map = {}
         team = []
-    suggestions=db.scalars(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.organisation_id==u.organisation_id,ResearchAnalysisSuggestion.study_id==s.id).order_by(ResearchAnalysisSuggestion.created_at.desc()).limit(20)).all() if settings.research_intelligence_enabled else []
+    suggestions=db.scalars(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.organisation_id==u.organisation_id,ResearchAnalysisSuggestion.study_id==s.id).order_by(ResearchAnalysisSuggestion.created_at.desc()).limit(20)).all()
     confidence_assessments=db.scalars(select(EvidenceConfidenceAssessment).where(EvidenceConfidenceAssessment.organisation_id==u.organisation_id,EvidenceConfidenceAssessment.study_id==s.id).order_by(EvidenceConfidenceAssessment.created_at.desc()).limit(20)).all() if settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled else []
     governance = governance_for_study(db, s)
     methodology_configuration = methodology_configuration_for_study(db, s)
@@ -4169,14 +4173,68 @@ def update_methodology_configuration(
     return RedirectResponse(f"/studies/{s.id}?section=design#design", 303)
 @app.post("/studies/{study_id}/research-analysis/{suggestion_id}/review")
 def review_research_analysis(study_id:int,suggestion_id:int,decision:str=Form(...),note:str=Form(""),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
-    if not settings.research_intelligence_enabled: raise HTTPException(404,"Research Intelligence is disabled")
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    configuration = methodology_configuration_for_study(db, s)
+    if configuration is None or not configuration.ai_enabled: raise HTTPException(403,"AI assistance is not enabled for this study")
     row=db.scalar(select(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.id==suggestion_id,ResearchAnalysisSuggestion.organisation_id==u.organisation_id,ResearchAnalysisSuggestion.study_id==s.id))
     if not row: raise HTTPException(404,"Suggestion not found")
     try: review_suggestion(u,row,decision,note)
     except (PermissionError,ValueError) as exc: raise HTTPException(400,str(exc))
     audit(db,u.organisation_id,u.id,f"research_analysis.{decision}","research_analysis_suggestion",row.id,row.source_response_id.__str__()); db.commit()
     return RedirectResponse(f"/studies/{s.id}",303)
+
+
+@app.post("/studies/{study_id}/research-analysis/{suggestion_id}/convert-finding")
+def convert_research_analysis_to_finding(
+    study_id: int,
+    suggestion_id: int,
+    title: str = Form(..., max_length=200),
+    body: str = Form(..., max_length=30000),
+    u=Depends(current_user),
+    csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    s = study(db, study_id, u.organisation_id)
+    require_study_permission(db, u, s, edit=True)
+    configuration = methodology_configuration_for_study(db, s)
+    if configuration is None or not configuration.ai_enabled:
+        raise HTTPException(403, "AI assistance is not enabled for this study")
+    suggestion = db.scalar(select(ResearchAnalysisSuggestion).where(
+        ResearchAnalysisSuggestion.id == suggestion_id,
+        ResearchAnalysisSuggestion.organisation_id == u.organisation_id,
+        ResearchAnalysisSuggestion.study_id == s.id,
+    ))
+    if suggestion is None:
+        raise HTTPException(404, "Suggestion not found")
+    if suggestion.status != "accepted":
+        raise HTTPException(409, "Only an accepted suggestion can be converted")
+    if db.scalar(select(ResearchFinding.id).where(ResearchFinding.originating_suggestion_id == suggestion.id)):
+        raise HTTPException(409, "This suggestion has already been converted")
+    try:
+        clean_title, clean_body = finding_text(title, body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finding = ResearchFinding(
+        organisation_id=u.organisation_id,
+        study_id=s.id,
+        title=clean_title,
+        body=clean_body,
+        created_by_id=u.id,
+        originating_suggestion_id=suggestion.id,
+    )
+    db.add(finding)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "This suggestion has already been converted") from exc
+    suggestion.status = "converted"
+    suggestion.reviewer_user_id = u.id
+    suggestion.reviewed_at = datetime.now(timezone.utc)
+    audit(db, u.organisation_id, u.id, "research_analysis.converted", "research_analysis_suggestion", suggestion.id, f"research finding {finding.id}")
+    audit(db, u.organisation_id, u.id, "research_finding.created_from_ai_suggestion", "research_finding", finding.id, f"suggestion {suggestion.id}")
+    db.commit()
+    return RedirectResponse(f"/studies/{s.id}/findings#finding-{finding.id}", 303)
 @app.post("/studies/{study_id}/evidence-confidence")
 def create_evidence_confidence(study_id:int,focus:str=Form(...),supporting_response_ids:str=Form(""),contradicting_response_ids:str=Form(""),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     if not (settings.research_intelligence_enabled and settings.research_intelligence_evidence_confidence_enabled): raise HTTPException(404,"Evidence Confidence is disabled")
