@@ -6,8 +6,28 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .models import AuditEvent, OutboxEmail
 
-def audit(db: Session, organisation_id: int, actor_user_id: int | None, action: str, entity_type: str, entity_id: str, detail: str = ""):
-    db.add(AuditEvent(organisation_id=organisation_id, actor_user_id=actor_user_id, action=action, entity_type=entity_type, entity_id=str(entity_id), detail=detail))
+def audit(
+    db: Session,
+    organisation_id: int,
+    actor_user_id: int | None,
+    action: str,
+    entity_type: str,
+    entity_id: str,
+    detail: str = "",
+    *,
+    project_id: int | None = None,
+    study_id: int | None = None,
+):
+    db.add(AuditEvent(
+        organisation_id=organisation_id,
+        project_id=project_id,
+        study_id=study_id,
+        actor_user_id=actor_user_id,
+        action=action,
+        entity_type=entity_type,
+        entity_id=str(entity_id),
+        detail=detail,
+    ))
 
 def purge_expired_outbox(db: Session, *, at: datetime | None = None) -> int:
     """Remove expired operational email without relying on recipient matching."""

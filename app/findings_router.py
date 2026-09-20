@@ -180,7 +180,7 @@ def findings_router(
         )
         db.add(row)
         db.flush()
-        audit(db, user.organisation_id, user.id, "research_finding.created", "research_finding", row.id, "finding created")
+        audit(db, user.organisation_id, user.id, "research_finding.created", "research_finding", row.id, "finding created", project_id=study.project_id, study_id=study.id)
         db.commit()
         return RedirectResponse(f"/studies/{study.id}/findings#finding-{row.id}", 303)
 
@@ -195,7 +195,7 @@ def findings_router(
         db: Session = Depends(get_db),
     ):
         try:
-            _, permission = finding_study_access(db, user, study_id)
+            study, permission = finding_study_access(db, user, study_id)
             if permission not in {"edit", "manage"}:
                 raise PermissionError("You cannot link findings")
             row = db.scalar(
@@ -214,7 +214,7 @@ def findings_router(
             raise HTTPException(403, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(409 if "Restore" in str(exc) else 400, str(exc)) from exc
-        audit(db, user.organisation_id, user.id, "research_finding.updated", "research_finding", row.id, "finding content updated")
+        audit(db, user.organisation_id, user.id, "research_finding.updated", "research_finding", row.id, "finding content updated", project_id=study.project_id, study_id=study.id)
         db.commit()
         return RedirectResponse(f"/studies/{study_id}/findings#finding-{row.id}", 303)
 
@@ -230,6 +230,7 @@ def findings_router(
         if action not in {"archive", "restore"}:
             raise HTTPException(404, "Finding action not found")
         try:
+            study, _ = finding_study_access(db, user, study_id)
             row = changeable_finding(db, user, study_id=study_id, finding_id=finding_id)
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
@@ -237,7 +238,7 @@ def findings_router(
             raise HTTPException(404, str(exc)) from exc
         row.archived_at = datetime.now(timezone.utc) if action == "archive" else None
         row.archived_by_id = user.id if action == "archive" else None
-        audit(db, user.organisation_id, user.id, f"research_finding.{action}d", "research_finding", row.id, f"finding {action}d")
+        audit(db, user.organisation_id, user.id, f"research_finding.{action}d", "research_finding", row.id, f"finding {action}d", project_id=study.project_id, study_id=study.id)
         db.commit()
         return RedirectResponse(f"/studies/{study_id}/findings?include_archived=true#finding-{row.id}", 303)
 
@@ -256,6 +257,7 @@ def findings_router(
         db: Session = Depends(get_db),
     ):
         try:
+            study, _ = finding_study_access(db, user, study_id)
             row = changeable_finding(db, user, study_id=study_id, finding_id=finding_id)
             if row.archived_at is not None:
                 raise ValueError("Restore this finding before linking evidence")
@@ -286,7 +288,7 @@ def findings_router(
         except IntegrityError as exc:
             db.rollback()
             raise HTTPException(409, "That finding link already exists") from exc
-        audit(db, user.organisation_id, user.id, "analytical_relationship.created", "analytical_relationship", relationship.id, relationship.relationship_type)
+        audit(db, user.organisation_id, user.id, "analytical_relationship.created", "analytical_relationship", relationship.id, relationship.relationship_type, project_id=study.project_id, study_id=study.id)
         db.commit()
         return RedirectResponse(f"/studies/{study_id}/findings#finding-{row.id}", 303)
 
@@ -300,7 +302,7 @@ def findings_router(
         db: Session = Depends(get_db),
     ):
         try:
-            _, permission = finding_study_access(db, user, study_id)
+            study, permission = finding_study_access(db, user, study_id)
             if permission not in {"edit", "manage"}:
                 raise PermissionError("You cannot unlink findings")
             finding = db.scalar(
@@ -324,7 +326,7 @@ def findings_router(
             or (relationship.target_type == "finding" and relationship.target_id == finding.id)
         ):
             raise HTTPException(404, "Finding link is unavailable")
-        audit(db, user.organisation_id, user.id, "analytical_relationship.removed", "analytical_relationship", relationship.id, relationship.relationship_type)
+        audit(db, user.organisation_id, user.id, "analytical_relationship.removed", "analytical_relationship", relationship.id, relationship.relationship_type, project_id=study.project_id, study_id=study.id)
         db.delete(relationship)
         db.commit()
         return RedirectResponse(f"/studies/{study_id}/findings#finding-{finding.id}", 303)

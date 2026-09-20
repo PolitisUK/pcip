@@ -4928,6 +4928,9 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
         assert 'Read-only visible AI suggestion' in analysis.text
         assert 'Accept for researcher consideration' not in analysis.text
         assert 'Convert to a new researcher-authored finding' not in analysis.text
+        history = client.get(f'/projects/{project_id}/workspace/audit')
+        assert history.status_code == 200
+        assert 'Research Finding · Created' in history.text
         assert post_with_csrf(
             f'/studies/{study_id}/research-analysis/{suggestion_id}/review',
             data={'decision': 'accepted', 'note': ''},
@@ -11547,7 +11550,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         db.add(foreign_code)
         db.flush()
         db.commit()
-        project_id, participant_id, activity_id, study_id, response_id, target_id, research_code_id, application_id, image_evidence_id, administrator_id, other_project_id, foreign_code_id = project.id, participant.id, activity.id, study.id, response.id, target.id, research_code.id, application.id, image_evidence.id, administrator.id, other_project.id, foreign_code.id
+        project_id, participant_id, activity_id, study_id, response_id, target_id, research_code_id, application_id, image_evidence_id, administrator_id, administrator_name, other_project_id, foreign_code_id = project.id, participant.id, activity.id, study.id, response.id, target.id, research_code.id, application.id, image_evidence.id, administrator.id, administrator.name, other_project.id, foreign_code.id
 
     with client:
         auth()
@@ -11830,10 +11833,25 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
             db.commit()
         archived_retrieval = client.get(f'/projects/{project_id}/workspace/coding?code_id={research_code_id}')
         assert 'Passage trust (archived)' in archived_retrieval.text and 'complete' in archived_retrieval.text
+        history = client.get(f'/projects/{project_id}/workspace/audit')
+        assert history.status_code == 200
+        assert 'Analysis history' in history.text
+        assert 'Research Finding · Created' in history.text
+        assert 'Analytical Relationship · Removed' in history.text
+        assert administrator_name in history.text
+        assert 'The complete longitudinal account is visible in the workspace.' not in history.text
+        filtered_history = client.get(f'/projects/{project_id}/workspace/audit?study_id={study_id}&actor_user_id={administrator_id}&action_family=research_finding&entity_type=research_finding')
+        assert filtered_history.status_code == 200
+        assert 'Research Finding · Created' in filtered_history.text
+        assert 'Analytical Relationship · Removed' not in filtered_history.text
+        assert client.get(f'/projects/{project_id}/workspace/audit?study_id=999999').status_code == 404
+        assert client.get(f'/projects/{project_id}/workspace/audit?actor_user_id=999999').status_code == 404
+        assert client.get(f'/projects/{project_id}/workspace/audit?date_from=not-a-date').status_code == 422
         assert dossier.status_code == 200
         assert "Longitudinal research timeline" in dossier.text
         assert client.get(f"/projects/{other_project_id}/workspace").status_code == 404
         assert client.get(f"/projects/{other_project_id}/workspace/analysis").status_code == 404
+        assert client.get(f"/projects/{other_project_id}/workspace/audit").status_code == 404
         for filter_name, label in (("participant_id", "Participant"), ("prompt_id", "Prompt")):
             for invalid_id in ("invalid", "0", "-1"):
                 invalid = client.get(f"/projects/{project_id}/workspace/entries?{filter_name}={invalid_id}")

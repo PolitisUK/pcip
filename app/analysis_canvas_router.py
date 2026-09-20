@@ -166,7 +166,7 @@ def analysis_canvas_router(
         db: Session = Depends(get_db),
     ):
         try:
-            _, permission = canvas_study_access(db, user, study_id)
+            study, permission = canvas_study_access(db, user, study_id)
             if permission not in {"edit", "manage"}:
                 raise PermissionError("You cannot create analytical relationships")
             row = create_relationship(
@@ -187,6 +187,8 @@ def analysis_canvas_router(
                 "analytical_relationship",
                 row.id,
                 row.relationship_type,
+                project_id=study.project_id,
+                study_id=study.id,
             )
             db.commit()
         except PermissionError as exc:
@@ -209,6 +211,7 @@ def analysis_canvas_router(
         db: Session = Depends(get_db),
     ):
         try:
+            study, _ = canvas_study_access(db, user, study_id)
             row = changeable_relationship(
                 db,
                 user,
@@ -227,6 +230,8 @@ def analysis_canvas_router(
             "analytical_relationship",
             row.id,
             row.relationship_type,
+            project_id=study.project_id,
+            study_id=study.id,
         )
         db.delete(row)
         db.commit()

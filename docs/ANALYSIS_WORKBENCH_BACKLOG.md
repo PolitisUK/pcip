@@ -339,3 +339,27 @@ controls, and scoped lookups reject forged tenant/study identifiers. Participant
 deletion removes participant-derived suggestions and any converted findings
 that depend on them, including canonical relationship/canvas references, while
 unrelated study-level findings remain intact.
+
+## AW-16 — Analysis audit trail — complete
+
+The project research workspace now includes an Analysis history view backed by
+the existing canonical `AuditEvent` store. It does not introduce a competing
+event log. Authorised project researchers and administrators can inspect code,
+passage-coding, annotation, memo, relationship, image-region, theme, finding
+and AI-suggestion-review history with actor, action, analytical object, time and
+study context.
+
+Filters cover accessible study, actor, action family, object type and date
+range, while pagination preserves the active query. The read path is bounded to
+the 5,000 most recent matching organisation events and explicitly reports that
+limit. Project/study permissions are applied before projection, forged study or
+actor filters fail closed, and organisation-wide operational/security events
+are not exposed in the researcher analysis view. Audit details remain short
+operational descriptions rather than copies of participant responses.
+
+Alembic revision `0035` extends the canonical audit record with nullable,
+indexed project/study context so deletion events remain attributable after the
+analytical object is gone. Existing records are resolved through their current
+canonical objects where possible. SQLite and PostgreSQL INSERT/UPDATE guards
+reject forged cross-organisation or inconsistent project/study context, and the
+fresh-schema plus downgrade/re-upgrade paths are rehearsed.

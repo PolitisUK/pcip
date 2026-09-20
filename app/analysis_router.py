@@ -18,6 +18,7 @@ ANALYSIS_GET_ROUTES = (
     ("/projects/{project_id}/workspace/themes", "themes"),
     ("/studies/{study_id}/codebook", "codebook"),
     ("/projects/{project_id}/workspace/analysis", "analysis"),
+    ("/projects/{project_id}/workspace/audit", "audit"),
     ("/studies/{study_id}/theme-explorer", "theme_explorer"),
 )
 
