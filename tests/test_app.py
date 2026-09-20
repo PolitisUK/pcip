@@ -4075,6 +4075,48 @@ def test_researcher_theme_development_links_codes_and_reconstructs_supporting_ex
         assert post_with_csrf(f'/studies/{study_id}/themes/{theme_id}/restore', follow_redirects=False).status_code == 303
 
 
+def test_case_matrix_derives_code_and_theme_cells_with_traceable_escaped_excerpts():
+    from app.models import Activity, ActivityResponse, AnalysisTarget, CodeApplication, Participant, ResearchCode, ResearchTheme, ResearchThemeCode, Study, StudyEnrolment
+    from app.passage_coding import text_anchor
+
+    with client:
+        client.cookies.clear(); auth()
+        with SessionLocal() as db:
+            study = db.scalar(select(Study).order_by(Study.id))
+            owner = db.scalar(select(User).where(User.organisation_id == study.organisation_id).order_by(User.id))
+            response = db.scalar(select(ActivityResponse).where(ActivityResponse.study_id == study.id).order_by(ActivityResponse.id))
+            body = '<Matrix 😀 excerpt> supports comparison.'
+            if response is None:
+                participant = Participant(organisation_id=study.organisation_id, reference=unique_value('matrix-case'), name='Matrix participant', created_by_id=owner.id)
+                activity = Activity(organisation_id=study.organisation_id, study_id=study.id, title='Matrix source')
+                db.add_all([participant, activity]); db.flush()
+                db.add(StudyEnrolment(organisation_id=study.organisation_id, study_id=study.id, participant_id=participant.id, status='enrolled'))
+                response = ActivityResponse(organisation_id=study.organisation_id, study_id=study.id, activity_id=activity.id, participant_id=participant.id, value_json=json.dumps({'text': body}), status='submitted')
+                db.add(response)
+            else:
+                response.value_json = json.dumps({'text': body})
+            db.flush()
+            code = ResearchCode(organisation_id=study.organisation_id, study_id=study.id, name=unique_value('Matrix code'), definition='Matrix dimension', created_by_id=owner.id)
+            theme = ResearchTheme(organisation_id=study.organisation_id, study_id=study.id, name=unique_value('Matrix theme'), description='Researcher theme', source_suggestion_ids_json='[]', status='researcher_draft', created_by_id=owner.id)
+            target = AnalysisTarget(organisation_id=study.organisation_id, study_id=study.id, target_type='activity_response', activity_response_id=response.id, anchor_json='{}', authorship='researcher', created_by_id=owner.id)
+            db.add_all([code, theme, target]); db.flush()
+            db.add_all([
+                CodeApplication(organisation_id=study.organisation_id, study_id=study.id, analysis_target_id=target.id, research_code_id=code.id, applied_by_id=owner.id, anchor_json=text_anchor(body, 0, 18)),
+                ResearchThemeCode(organisation_id=study.organisation_id, study_id=study.id, research_theme_id=theme.id, research_code_id=code.id, linked_by_id=owner.id),
+            ])
+            db.commit(); project_id, study_id, code_id, theme_id, target_id = study.project_id, study.id, code.id, theme.id, target.id
+        code_page = client.get(f'/projects/{project_id}/workspace/matrices?study_id={study_id}&dimension=code&column_id={code_id}')
+        assert code_page.status_code == 200 and 'Participant / case matrix' in code_page.text
+        assert '&lt;Matrix 😀 excerpt&gt;' in code_page.text and '<Matrix 😀 excerpt>' not in code_page.text
+        assert 'Open source entry' in code_page.text and 'not prevalence claims' in code_page.text
+        theme_page = client.get(f'/projects/{project_id}/workspace/matrices?study_id={study_id}&dimension=theme&column_id={theme_id}')
+        assert theme_page.status_code == 200 and 'Matrix theme' in theme_page.text and 'Matrix code' in theme_page.text
+        assert client.get(f'/projects/{project_id}/workspace/matrices?study_id={study_id}&dimension=theme&column_id=999999').status_code == 404
+        with SessionLocal() as db:
+            application = db.scalar(select(CodeApplication).where(CodeApplication.analysis_target_id == target_id))
+            db.delete(application); db.flush(); db.delete(db.get(AnalysisTarget, target_id)); db.commit()
+
+
 def test_templates_do_not_use_inline_scripts_or_inline_event_handlers():
     for file_path in glob('app/templates/**/*.html', recursive=True):
         html = Path(file_path).read_text(encoding='utf-8')

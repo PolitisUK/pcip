@@ -3447,6 +3447,38 @@ def project_coding_retrieval_page(project_id:int,request:Request,study_id:str|No
     count_rows=db.execute(select(ResearchCode.id,ResearchCode.name,ResearchCode.archived_at,func.count(CodeApplication.id)).join(CodeApplication,CodeApplication.research_code_id==ResearchCode.id).where(ResearchCode.organisation_id==u.organisation_id,CodeApplication.study_id.in_(study_ids)).group_by(ResearchCode.id,ResearchCode.name,ResearchCode.archived_at).order_by(func.count(CodeApplication.id).desc(),ResearchCode.name).limit(100)).all() if study_ids else []
     return render(request,"research_coding_retrieval.html",user=u,**_workspace_context(project_row,studies),results=results,total=total,page=page,pages=pages,previous_url=page_url(request,page-1) if page>1 else None,next_url=page_url(request,page+1) if page<pages else None,codes=codes,participants=participants,researchers=researchers,code_counts=count_rows,study_map={row.id:row for row in studies},filters={"study_id":selected_study,"code_id":selected_code,"participant_id":selected_participant,"researcher_id":selected_researcher,"date_from":date_from,"date_to":date_to,"q":q})
 
+
+@app.get("/projects/{project_id}/workspace/matrices", response_class=HTMLResponse)
+def project_case_matrix_page(project_id:int,request:Request,study_id:str|None=Query(None,max_length=20),dimension:str=Query("code",pattern="^(code|theme)$"),column_id:str|None=Query(None,max_length=20),u=Depends(current_user),db:Session=Depends(get_db)):
+    project_row,studies=project_workspace_scope(db,u,project_id); accessible_study_ids=[row.id for row in studies]
+    selected_study=optional_positive_query_id(study_id,"Study"); selected_column=optional_positive_query_id(column_id,"Matrix column")
+    if selected_study is not None and selected_study not in accessible_study_ids: raise HTTPException(404,"Study not found")
+    study_ids=[selected_study] if selected_study else accessible_study_ids
+    codes=db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id.in_(study_ids)).order_by(ResearchCode.name).limit(200)).all() if study_ids else []
+    themes=db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id==u.organisation_id,ResearchTheme.study_id.in_(study_ids)).order_by(ResearchTheme.name).limit(200)).all() if study_ids else []
+    available_columns=codes if dimension=="code" else themes
+    if selected_column is not None and selected_column not in {row.id for row in available_columns}: raise HTTPException(404,"Matrix column not found")
+    columns=[row for row in available_columns if selected_column is None or row.id==selected_column][:50]
+    column_ids={row.id for row in columns}
+    theme_links=db.scalars(select(ResearchThemeCode).where(ResearchThemeCode.organisation_id==u.organisation_id,ResearchThemeCode.study_id.in_(study_ids),ResearchThemeCode.research_theme_id.in_(column_ids))).all() if dimension=="theme" and column_ids else []
+    code_to_columns:dict[int,list[int]]={}
+    if dimension=="code":
+        for row in columns: code_to_columns[row.id]=[row.id]
+    else:
+        for link in theme_links: code_to_columns.setdefault(link.research_code_id,[]).append(link.research_theme_id)
+    relevant_code_ids=set(code_to_columns)
+    stmt=select(CodeApplication,AnalysisTarget,ActivityResponse,Participant,ResearchCode).join(AnalysisTarget,AnalysisTarget.id==CodeApplication.analysis_target_id).join(ActivityResponse,ActivityResponse.id==AnalysisTarget.activity_response_id).join(Participant,Participant.id==ActivityResponse.participant_id).join(ResearchCode,ResearchCode.id==CodeApplication.research_code_id).where(CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id.in_(study_ids),CodeApplication.research_code_id.in_(relevant_code_ids),AnalysisTarget.target_type=="activity_response") if relevant_code_ids else select(CodeApplication,AnalysisTarget,ActivityResponse,Participant,ResearchCode).where(False)
+    raw_rows=db.execute(stmt.order_by(Participant.reference,CodeApplication.created_at).limit(5001)).all(); source_limit_reached=len(raw_rows)>5000; raw_rows=raw_rows[:5000]
+    matrix_rows:dict[int,dict]={}
+    for application,target,response,participant,code_row in raw_rows:
+        matrix_row=matrix_rows.setdefault(participant.id,{"participant":participant,"cells":{}})
+        passage=verified_passage(response_body(response.value_json),application.anchor_json)
+        for matrix_column_id in code_to_columns.get(code_row.id,[]):
+            matrix_row["cells"].setdefault(matrix_column_id,[]).append({"application":application,"response":response,"code":code_row,"passage":passage})
+    participants=db.scalars(select(Participant).join(StudyEnrolment,StudyEnrolment.participant_id==Participant.id).where(Participant.organisation_id==u.organisation_id,StudyEnrolment.organisation_id==u.organisation_id,StudyEnrolment.study_id.in_(study_ids)).distinct().order_by(Participant.reference).limit(500)).all() if study_ids else []
+    for participant in participants: matrix_rows.setdefault(participant.id,{"participant":participant,"cells":{}})
+    return render(request,"research_case_matrix.html",user=u,**_workspace_context(project_row,studies),columns=columns,matrix_rows=sorted(matrix_rows.values(),key=lambda item:item["participant"].reference),filters={"study_id":selected_study,"dimension":dimension,"column_id":selected_column},available_columns=available_columns,source_limit_reached=source_limit_reached)
+
 @app.post("/studies/{study_id}/responses/{response_id}/code-applications")
 def create_code_application(study_id:int,response_id:int,start:int=Form(...),end:int=Form(...),code_ids:list[int]=Form(...),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
