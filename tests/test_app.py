@@ -448,8 +448,8 @@ def test_public_homepage_is_available_without_authentication_and_keeps_workspace
         )
         assert evidence_excerpt in homepage.text
         assert 'Research codes' in homepage.text
-        assert 'Codes support analysis. Findings emerge through comparison, context and interpretation' in homepage.text
-        assert 'Emerging insight' in homepage.text
+        assert 'Codes support analysis. Researchers develop findings through comparison, context and interpretation' in homepage.text
+        assert 'Provisional interpretation' in homepage.text
         assert 'Repeated reporting without visible action appears to reduce confidence in the reporting process' in homepage.text
         assert 'Provisional interpretation. Test against additional participant accounts and other evidence before treating it as a finding.' in homepage.text
         for code in [
