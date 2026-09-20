@@ -4117,6 +4117,49 @@ def test_case_matrix_derives_code_and_theme_cells_with_traceable_escaped_excerpt
             db.delete(application); db.flush(); db.delete(db.get(AnalysisTarget, target_id)); db.commit()
 
 
+def test_longitudinal_analysis_orders_source_time_and_filters_participant_theme_and_context():
+    from app.models import Activity, ActivityResponse, AnalysisTarget, CodeApplication, Participant, ResearchCode, ResearchTheme, ResearchThemeCode, Study, StudyEnrolment
+    from app.passage_coding import text_anchor
+
+    with client:
+        client.cookies.clear(); auth()
+        with SessionLocal() as db:
+            study = db.scalar(select(Study).order_by(Study.id))
+            owner = db.scalar(select(User).where(User.organisation_id == study.organisation_id).order_by(User.id))
+            participant = Participant(organisation_id=study.organisation_id, reference=unique_value('timeline-case'), name='Timeline participant', created_by_id=owner.id)
+            activity = Activity(organisation_id=study.organisation_id, study_id=study.id, title='Repeated diary', allow_multiple_entries=True)
+            code = ResearchCode(organisation_id=study.organisation_id, study_id=study.id, name=unique_value('Change code'), definition='Change over time', created_by_id=owner.id)
+            theme = ResearchTheme(organisation_id=study.organisation_id, study_id=study.id, name=unique_value('Change theme'), description='Researcher interpretation', source_suggestion_ids_json='[]', status='researcher_draft', created_by_id=owner.id)
+            db.add_all([participant, activity, code, theme]); db.flush()
+            db.add_all([
+                StudyEnrolment(organisation_id=study.organisation_id, study_id=study.id, participant_id=participant.id, status='enrolled'),
+                ResearchThemeCode(organisation_id=study.organisation_id, study_id=study.id, research_theme_id=theme.id, research_code_id=code.id, linked_by_id=owner.id),
+            ])
+            bodies = ['<Earlier 😀 account>', '<Later 😀 account>']
+            dates = [datetime(2026, 1, 5, 9, tzinfo=timezone.utc), datetime(2026, 2, 7, 10, tzinfo=timezone.utc)]
+            targets = []
+            for index, body in enumerate(bodies):
+                response = ActivityResponse(organisation_id=study.organisation_id, study_id=study.id, activity_id=activity.id, participant_id=participant.id, value_json=json.dumps({'text': body, 'place': 'Town centre', 'trajectory_stage': 'early' if index == 0 else 'later'}), status='submitted', repeatable=True, submitted_at=dates[index])
+                db.add(response); db.flush()
+                target = AnalysisTarget(organisation_id=study.organisation_id, study_id=study.id, target_type='activity_response', activity_response_id=response.id, anchor_json='{}', authorship='researcher', created_by_id=owner.id)
+                db.add(target); db.flush(); targets.append(target.id)
+                db.add(CodeApplication(organisation_id=study.organisation_id, study_id=study.id, analysis_target_id=target.id, research_code_id=code.id, applied_by_id=owner.id, anchor_json=text_anchor(body, 0, len(body)), created_at=dates[index] + timedelta(days=2)))
+            db.commit(); project_id, study_id, participant_id, code_id, theme_id = study.project_id, study.id, participant.id, code.id, theme.id
+        code_page = client.get(f'/projects/{project_id}/workspace/longitudinal?study_id={study_id}&participant_id={participant_id}&dimension=code&column_id={code_id}&context_key=place&context_value=Town')
+        assert code_page.status_code == 200 and 'Chronology is not causation' in code_page.text
+        assert code_page.text.index('&lt;Earlier 😀 account&gt;') < code_page.text.index('&lt;Later 😀 account&gt;')
+        assert 'Submitted 05 Jan 2026' in code_page.text and 'Coding applied 07 Jan 2026' in code_page.text
+        assert 'Trajectory Stage:' in code_page.text and 'Open original entry and context' in code_page.text
+        theme_page = client.get(f'/projects/{project_id}/workspace/longitudinal?study_id={study_id}&participant_id={participant_id}&dimension=theme&column_id={theme_id}')
+        assert theme_page.status_code == 200 and 'Change theme' in theme_page.text and 'Change code' in theme_page.text
+        assert client.get(f'/projects/{project_id}/workspace/longitudinal?study_id={study_id}&dimension=theme&column_id=999999').status_code == 404
+        with SessionLocal() as db:
+            for target_id in targets:
+                application = db.scalar(select(CodeApplication).where(CodeApplication.analysis_target_id == target_id))
+                db.delete(application); db.flush(); db.delete(db.get(AnalysisTarget, target_id))
+            db.commit()
+
+
 def test_templates_do_not_use_inline_scripts_or_inline_event_handlers():
     for file_path in glob('app/templates/**/*.html', recursive=True):
         html = Path(file_path).read_text(encoding='utf-8')

@@ -3479,6 +3479,50 @@ def project_case_matrix_page(project_id:int,request:Request,study_id:str|None=Qu
     for participant in participants: matrix_rows.setdefault(participant.id,{"participant":participant,"cells":{}})
     return render(request,"research_case_matrix.html",user=u,**_workspace_context(project_row,studies),columns=columns,matrix_rows=sorted(matrix_rows.values(),key=lambda item:item["participant"].reference),filters={"study_id":selected_study,"dimension":dimension,"column_id":selected_column},available_columns=available_columns,source_limit_reached=source_limit_reached)
 
+
+@app.get("/projects/{project_id}/workspace/longitudinal", response_class=HTMLResponse)
+def project_longitudinal_page(project_id:int,request:Request,study_id:str|None=Query(None,max_length=20),participant_id:str|None=Query(None,max_length=20),dimension:str=Query("code",pattern="^(code|theme)$"),column_id:str|None=Query(None,max_length=20),context_key:str=Query("",max_length=80),context_value:str=Query("",max_length=120),page:int=Query(1,ge=1),u=Depends(current_user),db:Session=Depends(get_db)):
+    project_row,studies=project_workspace_scope(db,u,project_id); accessible_study_ids=[row.id for row in studies]
+    selected_study=optional_positive_query_id(study_id,"Study"); selected_participant=optional_positive_query_id(participant_id,"Participant"); selected_column=optional_positive_query_id(column_id,"Longitudinal dimension")
+    if selected_study is not None and selected_study not in accessible_study_ids: raise HTTPException(404,"Study not found")
+    study_ids=[selected_study] if selected_study else accessible_study_ids
+    participants=db.scalars(select(Participant).join(ActivityResponse,ActivityResponse.participant_id==Participant.id).where(Participant.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(study_ids),ActivityResponse.status=="submitted").distinct().order_by(Participant.reference).limit(1000)).all() if study_ids else []
+    if selected_participant is not None and selected_participant not in {row.id for row in participants}: raise HTTPException(404,"Participant not found")
+    codes=db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id.in_(study_ids)).order_by(ResearchCode.name).limit(1000)).all() if study_ids else []
+    themes=db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id==u.organisation_id,ResearchTheme.study_id.in_(study_ids)).order_by(ResearchTheme.name).limit(1000)).all() if study_ids else []
+    available_columns=codes if dimension=="code" else themes
+    if selected_column is not None and selected_column not in {row.id for row in available_columns}: raise HTTPException(404,"Longitudinal dimension not found")
+    theme_ids={row.id for row in themes}; theme_links=db.scalars(select(ResearchThemeCode).where(ResearchThemeCode.organisation_id==u.organisation_id,ResearchThemeCode.study_id.in_(study_ids),ResearchThemeCode.research_theme_id.in_(theme_ids))).all() if theme_ids else []
+    themes_by_id={row.id:row for row in themes}; code_to_themes:dict[int,list[ResearchTheme]]={}
+    for link in theme_links:
+        if link.research_theme_id in themes_by_id: code_to_themes.setdefault(link.research_code_id,[]).append(themes_by_id[link.research_theme_id])
+    response_stmt=select(ActivityResponse,Participant,Activity).join(Participant,Participant.id==ActivityResponse.participant_id).join(Activity,Activity.id==ActivityResponse.activity_id).where(ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(study_ids),ActivityResponse.status=="submitted") if study_ids else select(ActivityResponse,Participant,Activity).where(False)
+    if selected_participant is not None: response_stmt=response_stmt.where(ActivityResponse.participant_id==selected_participant)
+    response_rows=db.execute(response_stmt.order_by(ActivityResponse.submitted_at,ActivityResponse.updated_at,ActivityResponse.id).limit(5001)).all(); source_limit_reached=len(response_rows)>5000; response_rows=response_rows[:5000]
+    response_ids=[row.id for row,_,_ in response_rows]; targets={row.activity_response_id:row for row in db.scalars(select(AnalysisTarget).where(AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.study_id.in_(study_ids),AnalysisTarget.activity_response_id.in_(response_ids),AnalysisTarget.target_type=="activity_response")).all()} if response_ids else {}
+    target_ids=[row.id for row in targets.values()]; applications=db.scalars(select(CodeApplication).where(CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id.in_(study_ids),CodeApplication.analysis_target_id.in_(target_ids)).order_by(CodeApplication.created_at)).all() if target_ids else []
+    code_map={row.id:row for row in codes}; target_to_response={target.id:response_id for response_id,target in targets.items()}; applications_by_response:dict[int,list[CodeApplication]]={}
+    for application in applications: applications_by_response.setdefault(target_to_response.get(application.analysis_target_id),[]).append(application)
+    events=[]; context_keys:set[str]=set(); period_counts:dict[str,dict[str,int]]={}
+    for response,participant,activity in response_rows:
+        context=response_context(response.value_json); context_keys.update(context)
+        if context_key and context_key not in context: continue
+        if context_value.strip() and context_value.strip().lower() not in " ".join(f"{key} {value}" for key,value in context.items()).lower(): continue
+        relevant=[]
+        for application in applications_by_response.get(response.id,[]):
+            code_row=code_map.get(application.research_code_id); linked_themes=code_to_themes.get(application.research_code_id,[])
+            if selected_column is not None:
+                if dimension=="code" and application.research_code_id!=selected_column: continue
+                if dimension=="theme" and selected_column not in {row.id for row in linked_themes}: continue
+            relevant.append({"application":application,"code":code_row,"themes":linked_themes,"passage":verified_passage(response_body(response.value_json),application.anchor_json)})
+        if selected_column is not None and not relevant: continue
+        event_at=response.submitted_at or response.updated_at
+        period=event_at.strftime("%Y-%m")
+        summary=period_counts.setdefault(period,{"entries":0,"applications":0}); summary["entries"]+=1; summary["applications"]+=len(relevant)
+        events.append({"response":response,"participant":participant,"activity":activity,"event_at":event_at,"context":context,"body":response_body(response.value_json),"applications":relevant})
+    per_page=30; total=len(events); pages=max(1,(total+per_page-1)//per_page); shown_events=events[(page-1)*per_page:page*per_page]
+    return render(request,"research_longitudinal.html",user=u,**_workspace_context(project_row,studies),events=shown_events,total=total,page=page,pages=pages,previous_url=page_url(request,page-1) if page>1 else None,next_url=page_url(request,page+1) if page<pages else None,participants=participants,available_columns=available_columns,context_keys=sorted(context_keys),period_counts=sorted(period_counts.items()),filters={"study_id":selected_study,"participant_id":selected_participant,"dimension":dimension,"column_id":selected_column,"context_key":context_key,"context_value":context_value},source_limit_reached=source_limit_reached)
+
 @app.post("/studies/{study_id}/responses/{response_id}/code-applications")
 def create_code_application(study_id:int,response_id:int,start:int=Form(...),end:int=Form(...),code_ids:list[int]=Form(...),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
