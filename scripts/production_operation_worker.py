@@ -25,6 +25,7 @@ from scripts import (
     lookup_user_identity,
     platform_admin_dry_run,
     platform_admin_enable,
+    set_research_intelligence_enabled,
 )
 
 SERVICE_BUS_NAMESPACE_ENV = "PCIP_OPERATIONS_SERVICEBUS_NAMESPACE"
@@ -34,6 +35,7 @@ PLATFORM_ADMIN_DRY_RUN_OPERATION = "set-platform-admin-dry-run"
 PLATFORM_ADMIN_ENABLE_OPERATION = "set-platform-admin"
 ALEMBIC_REVISION_OPERATION = "get-alembic-revision"
 FAILED_ACCOUNT_DELETION_STATUS_OPERATION = "get-latest-failed-account-deletion-status"
+RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION = "set-research-intelligence-enabled"
 
 
 class ProductionOperationError(RuntimeError):
@@ -46,6 +48,7 @@ class OperationRequest:
     operation: str
     email: str | None = None
     user_id: int | None = None
+    enabled: bool | None = None
 
 
 def _validate_runtime(environ: Mapping[str, str] | None = None) -> tuple[str, str]:
@@ -88,6 +91,17 @@ def parse_request(body: bytes) -> OperationRequest:
         if set(payload) != {"correlation_id", "operation"}:
             raise ProductionOperationError("Production operation refused.")
         return OperationRequest(correlation_id=correlation_id, operation=operation)
+    if operation == RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION:
+        if set(payload) != {"correlation_id", "operation", "enabled"}:
+            raise ProductionOperationError("Production operation refused.")
+        enabled = payload.get("enabled")
+        if type(enabled) is not bool:
+            raise ProductionOperationError("Production operation refused.")
+        return OperationRequest(
+            correlation_id=correlation_id,
+            operation=operation,
+            enabled=enabled,
+        )
     email = payload.get("email")
     if (
         not isinstance(email, str)
@@ -208,6 +222,46 @@ def _validated_result(request: OperationRequest) -> dict[str, Any]:
         except get_latest_failed_account_deletion_status.FailedAccountDeletionStatusLookupError as exc:
             raise ProductionOperationError("Production operation refused.") from exc
         if not _valid_failed_account_deletion_status(result):
+            raise ProductionOperationError("Production operation refused.")
+        return result
+    if (
+        request.operation == RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION
+        and request.enabled is not None
+    ):
+        try:
+            result = (
+                set_research_intelligence_enabled.execute_set_research_intelligence_enabled(
+                    request.enabled
+                ).approved_result()
+            )
+        except set_research_intelligence_enabled.ResearchIntelligenceConfigurationError as exc:
+            raise ProductionOperationError("Production operation refused.") from exc
+        if (
+            set(result)
+            != {
+                "prior_value",
+                "requested_value",
+                "effective_value",
+                "readiness_status",
+                "release_sha",
+                "image_digest",
+                "alembic_revision",
+            }
+            or type(result["prior_value"]) is not bool
+            or result["requested_value"] is not request.enabled
+            or result["effective_value"] is not request.enabled
+            or result["readiness_status"] != "ready"
+            or not isinstance(result["release_sha"], str)
+            or len(result["release_sha"]) != 40
+            or any(character not in "0123456789abcdef" for character in result["release_sha"])
+            or not isinstance(result["image_digest"], str)
+            or len(result["image_digest"]) != 71
+            or not result["image_digest"].startswith("sha256:")
+            or any(character not in "0123456789abcdef" for character in result["image_digest"][7:])
+            or not isinstance(result["alembic_revision"], str)
+            or len(result["alembic_revision"]) != 4
+            or not result["alembic_revision"].isdigit()
+        ):
             raise ProductionOperationError("Production operation refused.")
         return result
     if request.operation == LOOKUP_OPERATION:

@@ -127,6 +127,7 @@ resource operationsJob 'Microsoft.App/jobs@2025-01-01' = {
   location: location
   dependsOn: [
     operationsAcrPull
+    operationsAppSettingsWriter
     operationsDatabaseSecretReader
     operationsQueueReceiver
   ]
@@ -222,6 +223,18 @@ resource operationsJob 'Microsoft.App/jobs@2025-01-01' = {
               name: 'PCIP_OPERATIONS_WORKER_PROVENANCE'
               value: workerProvenanceRevision
             }
+            {
+              name: 'AZURE_SUBSCRIPTION_ID'
+              value: subscription().subscriptionId
+            }
+            {
+              name: 'AZURE_RESOURCE_GROUP'
+              value: resourceGroup().name
+            }
+            {
+              name: 'PCIP_PRODUCTION_APP'
+              value: productionApp.name
+            }
           ]
           resources: {
             cpu: json('0.25')
@@ -261,6 +274,45 @@ resource operationsQueueReceiver 'Microsoft.Authorization/roleAssignments@2022-0
     principalId: operationsWorkerIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0')
+  }
+}
+
+// The worker can read and replace App Service configuration only on the one
+// fixed production application.  The immutable worker accepts no setting name,
+// resource ID, application name, or value other than a boolean for the single
+// allowlisted Research Intelligence flag.
+resource operationsAppSettingsRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(resourceGroup().id, 'pcip-production-app-settings-writer')
+  properties: {
+    roleName: 'PCIP production App Settings writer'
+    description: 'Read and replace App Service settings on the fixed PCIP production application.'
+    type: 'CustomRole'
+    permissions: [
+      {
+        actions: [
+          'Microsoft.Web/sites/read'
+          'Microsoft.Web/sites/config/read'
+          'Microsoft.Web/sites/config/list/action'
+          'Microsoft.Web/sites/config/write'
+        ]
+        notActions: []
+        dataActions: []
+        notDataActions: []
+      }
+    ]
+    assignableScopes: [
+      resourceGroup().id
+    ]
+  }
+}
+
+resource operationsAppSettingsWriter 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(productionApp.id, operationsWorkerIdentity.id, 'operations-app-settings-writer')
+  scope: productionApp
+  properties: {
+    principalId: operationsWorkerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: operationsAppSettingsRole.id
   }
 }
 
