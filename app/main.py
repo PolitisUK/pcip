@@ -52,6 +52,7 @@ from .models import (
     ResearchCode,
     AnalysisTarget,
     CodeApplication,
+    ResearchAnnotation,
     ResearchTheme,
     PublicAuthSession,
     PublicTokenExchange,
@@ -86,6 +87,7 @@ from .research_api import (
 from .theme_explorer import create_theme, parse_suggestion_ids
 from .codebook import archive_code, create_code, restore_code, update_code
 from .passage_coding import apply_codes, verified_passage
+from .annotations import create_annotation, normalise_annotation_body
 from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
@@ -3388,21 +3390,29 @@ def project_workspace_entries_page(
     codes = [name for name, _ in code_counts(response_rows).most_common()]
     response_ids=[item["response"].id for item in items]
     targets={x.activity_response_id:x for x in db.scalars(select(AnalysisTarget).where(AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.activity_response_id.in_(response_ids))).all()} if response_ids else {}
-    applications=db.scalars(select(CodeApplication).where(CodeApplication.organisation_id==u.organisation_id,CodeApplication.analysis_target_id.in_([x.id for x in targets.values()]))).all() if targets else []
+    target_ids=[x.id for x in targets.values()]
+    applications=db.scalars(select(CodeApplication).where(CodeApplication.organisation_id==u.organisation_id,CodeApplication.analysis_target_id.in_(target_ids))).all() if targets else []
+    annotation_rows=db.scalars(select(ResearchAnnotation).where(ResearchAnnotation.organisation_id==u.organisation_id,ResearchAnnotation.analysis_target_id.in_(target_ids)).order_by(ResearchAnnotation.created_at)).all() if targets else []
     code_map={x.id:x for x in db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id)).all()}
     users={x.id:x for x in db.scalars(select(User).where(User.organisation_id==u.organisation_id)).all()}
     active_code_rows=db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id.in_(study_ids),ResearchCode.archived_at.is_(None))).all() if study_ids else []
     active_codes={}
     for code_row in active_code_rows:
         active_codes.setdefault(code_row.study_id, []).append(code_row)
-    apps_by_response={}; app_passages={}
+    apps_by_response={}; app_passages={}; annotations_by_response={}; annotation_passages={}
     response_map={item["response"].id:item["body"] for item in items}
     for item in applications:
         response_id=next((r for r,t in targets.items() if t.id==item.analysis_target_id),None)
         apps_by_response.setdefault(response_id,[]).append(item)
         app_passages[item.id]=verified_passage(response_map.get(response_id,""),item.anchor_json)
-    study_editability={row.id: study_permission(db,u,row) in {"edit","manage"} for row in studies}
-    return render(request, "research_entries.html", user=u, **_workspace_context(project_row, studies), items=items, total=total, pages=pages, page=page, previous_url=page_url(request, page - 1) if page > 1 else None, next_url=page_url(request, page + 1) if page < pages else None, participant_rows=participant_rows, prompts=prompts, codes=codes, filters={"participant_id": selected_participant_id, "prompt_id": selected_prompt_id, "code": code, "q": q, "date_from": date_from, "date_to": date_to, "evidence": evidence, "order": order}, targets=targets, applications=apps_by_response, app_passages=app_passages, code_map=code_map, users=users, active_codes=active_codes, study_editability=study_editability)
+    for annotation in annotation_rows:
+        response_id=next((r for r,t in targets.items() if t.id==annotation.analysis_target_id),None)
+        annotations_by_response.setdefault(response_id,[]).append(annotation)
+        annotation_passages[annotation.id]=verified_passage(response_map.get(response_id,""),annotation.anchor_json)
+    study_permissions={row.id: study_permission(db,u,row) for row in studies}
+    study_editability={study_id: permission in {"edit","manage"} for study_id,permission in study_permissions.items()}
+    annotation_permissions={row.id: study_editability.get(row.study_id,False) and (row.author_id==u.id or study_permissions.get(row.study_id)=="manage") for row in annotation_rows}
+    return render(request, "research_entries.html", user=u, **_workspace_context(project_row, studies), items=items, total=total, pages=pages, page=page, previous_url=page_url(request, page - 1) if page > 1 else None, next_url=page_url(request, page + 1) if page < pages else None, participant_rows=participant_rows, prompts=prompts, codes=codes, filters={"participant_id": selected_participant_id, "prompt_id": selected_prompt_id, "code": code, "q": q, "date_from": date_from, "date_to": date_to, "evidence": evidence, "order": order}, targets=targets, applications=apps_by_response, app_passages=app_passages, code_map=code_map, users=users, active_codes=active_codes, study_editability=study_editability, annotations=annotations_by_response, annotation_passages=annotation_passages, annotation_permissions=annotation_permissions)
 
 @app.post("/studies/{study_id}/responses/{response_id}/code-applications")
 def create_code_application(study_id:int,response_id:int,start:int=Form(...),end:int=Form(...),code_ids:list[int]=Form(...),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
@@ -3427,6 +3437,45 @@ def remove_code_application(study_id:int,application_id:int,u=Depends(current_us
     row=db.scalar(select(CodeApplication).where(CodeApplication.id==application_id,CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id==s.id))
     if row is None: raise HTTPException(404,"Code application not found")
     audit(db,u.organisation_id,u.id,"code_application.removed","code_application",row.id,"passage coding"); db.delete(row); db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
+
+
+@app.post("/studies/{study_id}/responses/{response_id}/annotations")
+def create_research_annotation(study_id:int,response_id:int,start:int=Form(...),end:int=Form(...),body:str=Form(...,max_length=5000),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    response=db.scalar(select(ActivityResponse).where(ActivityResponse.id==response_id,ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id==s.id))
+    if response is None: raise HTTPException(404,"Response not found")
+    source_text=response_body(response.value_json)
+    if not source_text: raise HTTPException(400,"Response has no textual content")
+    target=db.scalar(select(AnalysisTarget).where(AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.study_id==s.id,AnalysisTarget.activity_response_id==response.id))
+    if target is None:
+        target=AnalysisTarget(organisation_id=u.organisation_id,study_id=s.id,target_type="activity_response",activity_response_id=response.id,anchor_json="{}",created_by_id=u.id); db.add(target); db.flush()
+    try: row=create_annotation(db,u,target=target,text=source_text,body=body,start=start,end=end)
+    except (ValueError,PermissionError) as exc: raise HTTPException(400,str(exc)) from exc
+    db.flush(); audit(db,u.organisation_id,u.id,"research_annotation.created","research_annotation",row.id,"passage annotation")
+    db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
+
+
+def editable_annotation(db:Session,u:User,s:Study,annotation_id:int) -> ResearchAnnotation:
+    row=db.scalar(select(ResearchAnnotation).where(ResearchAnnotation.id==annotation_id,ResearchAnnotation.organisation_id==u.organisation_id,ResearchAnnotation.study_id==s.id))
+    if row is None: raise HTTPException(404,"Annotation not found")
+    if row.author_id != u.id and study_permission(db,u,s) != "manage": raise HTTPException(403,"You cannot change this annotation")
+    return row
+
+
+@app.post("/studies/{study_id}/annotations/{annotation_id}/edit")
+def update_research_annotation(study_id:int,annotation_id:int,body:str=Form(...,max_length=5000),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); row=editable_annotation(db,u,s,annotation_id)
+    try: row.body=normalise_annotation_body(body)
+    except ValueError as exc: raise HTTPException(400,str(exc)) from exc
+    audit(db,u.organisation_id,u.id,"research_annotation.updated","research_annotation",row.id,"annotation text updated")
+    db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
+
+
+@app.post("/studies/{study_id}/annotations/{annotation_id}/delete")
+def remove_research_annotation(study_id:int,annotation_id:int,u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); row=editable_annotation(db,u,s,annotation_id)
+    audit(db,u.organisation_id,u.id,"research_annotation.removed","research_annotation",row.id,"passage annotation"); db.delete(row); db.commit()
+    return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 
 @app.get("/projects/{project_id}/workspace/participants", response_class=HTMLResponse)

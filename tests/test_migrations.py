@@ -64,7 +64,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0027" in revision.stdout
+    assert "0028" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -111,7 +111,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0027" in result.stdout
+            assert "0028" in result.stdout
 
     active = subprocess.run(
         [
@@ -253,3 +253,26 @@ def test_analysis_targets_migration_enforces_concrete_sources_and_tenant_scope(t
         capture_output=True, text=True, check=False,
     )
     assert invalid_shape.returncode != 0
+    valid_annotation = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO studies (id, organisation_id, project_id, title, code, description, methodology, status, demographics_schema_json, created_by_id, created_at, updated_at) VALUES (2, 1, 1, 'Other study', 'S2', '', 'diary', 'draft', '[]', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP); INSERT INTO research_annotations (id, organisation_id, study_id, analysis_target_id, author_id, anchor_json, body, created_at, updated_at) VALUES (1, 1, 1, 1, 1, '{\"version\":1}', 'Analytical note', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);"],
+        capture_output=True, text=True, check=False,
+    )
+    assert valid_annotation.returncode == 0, valid_annotation.stderr
+    foreign_author = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO research_annotations (organisation_id, study_id, analysis_target_id, author_id, anchor_json, body, created_at, updated_at) VALUES (1, 1, 1, 2, '{}', 'Forged', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);"],
+        capture_output=True, text=True, check=False,
+    )
+    assert foreign_author.returncode != 0
+    assert "research annotation author scope" in foreign_author.stderr
+    foreign_study_target = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE research_annotations SET study_id = 2 WHERE id = 1;"],
+        capture_output=True, text=True, check=False,
+    )
+    assert foreign_study_target.returncode != 0
+    assert "research annotation target scope" in foreign_study_target.stderr
+    forged_scope_update = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE research_annotations SET organisation_id = 2 WHERE id = 1;"],
+        capture_output=True, text=True, check=False,
+    )
+    assert forged_scope_update.returncode != 0
+    assert "research annotation study scope" in forged_scope_update.stderr
