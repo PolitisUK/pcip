@@ -1,5 +1,7 @@
 import json
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
+from zipfile import ZipFile
 
 import pytest
 from fastapi import FastAPI
@@ -16,6 +18,7 @@ from app.analysis_lifecycle import remove_analytical_references
 from app.analysis_objects import resolve_analytical_object
 from app.analysis_projections import coded_passage_projections
 from app.analysis_router import ANALYSIS_GET_ROUTES, include_analysis_router
+from app.analysis_export import build_analysis_export
 from app.db import Base
 from app.findings import finding_text
 from app.models import (
@@ -24,12 +27,16 @@ from app.models import (
     AnalysisCanvasNode,
     AnalysisTarget,
     AnalyticalRelationship,
+    AuditEvent,
     CodeApplication,
     Organisation,
     Participant,
     Project,
+    ResearchAnalysisSuggestion,
+    ResearchAnnotation,
     ResearchCode,
     ResearchFinding,
+    ResearchMemo,
     ResearchTheme,
     ResearchThemeCode,
     Study,
@@ -254,6 +261,156 @@ def test_shared_projection_is_scoped_traceable_and_unicode_safe(analysis_session
     assert coded_passage_projections(
         analysis_session, organisation_id=1, study_ids=[1], code_ids=set()
     ) == ([], False)
+
+
+def test_structured_export_is_scoped_traceable_unicode_safe_and_typed(analysis_session):
+    user = analysis_session.get(User, 1)
+    project = analysis_session.get(Project, 1)
+    study = analysis_session.get(Study, 1)
+    theme = ResearchTheme(
+        organisation_id=1,
+        study_id=1,
+        name="Access theme",
+        description="Researcher synthesis",
+        created_by_id=1,
+    )
+    memo = ResearchMemo(
+        organisation_id=1,
+        study_id=1,
+        scope_type="response",
+        activity_response_id=1,
+        title="Interpretive memo",
+        body="Researcher reflection",
+        author_id=1,
+    )
+    finding = ResearchFinding(
+        organisation_id=1,
+        study_id=1,
+        title="Access finding",
+        body="Researcher conclusion",
+        created_by_id=1,
+    )
+    annotation = ResearchAnnotation(
+        organisation_id=1,
+        study_id=1,
+        analysis_target_id=1,
+        author_id=1,
+        anchor_json=text_anchor("Before 😀 after", 7, 8),
+        body="Emoji interpretation",
+    )
+    suggestion = ResearchAnalysisSuggestion(
+        organisation_id=1,
+        study_id=1,
+        source_response_id=1,
+        source_snapshot="Before 😀 after",
+        suggested_codes_json='["Access"]',
+        provisional_insight="Untrusted provisional output",
+        model_provider="approved-provider",
+        model_deployment="test-model",
+    )
+    analysis_session.add_all([theme, memo, finding, annotation, suggestion])
+    analysis_session.flush()
+    analysis_session.add_all([
+        ResearchThemeCode(
+            organisation_id=1,
+            study_id=1,
+            research_theme_id=theme.id,
+            research_code_id=1,
+            linked_by_id=1,
+        ),
+        AnalyticalRelationship(
+            organisation_id=1,
+            study_id=1,
+            source_type="memo",
+            source_id=memo.id,
+            relationship_type="supports",
+            target_type="finding",
+            target_id=finding.id,
+            rationale="Traceable relationship",
+            created_by_id=1,
+        ),
+        AuditEvent(
+            organisation_id=1,
+            project_id=1,
+            study_id=1,
+            actor_user_id=1,
+            action="research_memo.created",
+            entity_type="research_memo",
+            entity_id=str(memo.id),
+            detail="response memo",
+        ),
+    ])
+    # JSON preserves formula-like content as inert text rather than a CSV cell.
+    analysis_session.get(ResearchCode, 1).name = '=HYPERLINK("https://invalid")'
+    analysis_session.commit()
+
+    archive, manifest = build_analysis_export(
+        analysis_session, user=user, project=project, studies=[study]
+    )
+    with ZipFile(BytesIO(archive)) as exported:
+        assert set(exported.namelist()) == {
+            "manifest.json",
+            "codebook.json",
+            "coded_passages.json",
+            "annotations.json",
+            "memos.json",
+            "themes.json",
+            "relationships.json",
+            "findings.json",
+            "ai_suggestions.json",
+            "analytical_audit.json",
+        }
+        coded = json.loads(exported.read("coded_passages.json"))
+        assert len(coded) == 1
+        assert coded[0]["passage"] == "😀"
+        assert coded[0]["source_verification"] == "verified"
+        assert coded[0]["participant"] == {"id": 1, "reference": "P-001"}
+        assert "Before 😀 after" not in exported.read("coded_passages.json").decode()
+        assert json.loads(exported.read("annotations.json"))[0]["source_passage"] == "😀"
+        assert json.loads(exported.read("memos.json"))[0]["body"] == "Researcher reflection"
+        assert json.loads(exported.read("themes.json"))[0]["code_links"][0]["code_id"] == 1
+        assert json.loads(exported.read("relationships.json"))[0]["rationale"] == "Traceable relationship"
+        assert json.loads(exported.read("findings.json"))[0]["title"] == "Access finding"
+        ai_row = json.loads(exported.read("ai_suggestions.json"))[0]
+        assert ai_row["content_origin"] == "ai_suggestion"
+        assert ai_row["source_content_origin"] == "participant_source_snapshot"
+        assert ai_row["model"] == {
+            "provider": "approved-provider",
+            "deployment": "test-model",
+        }
+        assert json.loads(exported.read("analytical_audit.json"))[0]["bounded_detail"] == "response memo"
+        assert json.loads(exported.read("codebook.json"))[0]["name"].startswith("=HYPERLINK")
+        assert all(not name.endswith(".csv") for name in exported.namelist())
+        assert all(row["study_id"] == 1 for row in coded)
+
+    assert manifest["schema_version"] == "analysis-workbench-export-v1"
+    assert manifest["project"] == {"id": 1, "title": "Project"}
+    assert manifest["truncated_components"] == []
+
+
+@pytest.mark.parametrize(
+    "anchor",
+    [
+        '{"version":1,"start":0,"end":6,"fingerprint":"wrong"}',
+        "not-json",
+    ],
+)
+def test_structured_export_fails_closed_for_unverifiable_passage(
+    analysis_session, anchor
+):
+    application = analysis_session.get(CodeApplication, 1)
+    application.anchor_json = anchor
+    analysis_session.commit()
+    archive, _ = build_analysis_export(
+        analysis_session,
+        user=analysis_session.get(User, 1),
+        project=analysis_session.get(Project, 1),
+        studies=[analysis_session.get(Study, 1)],
+    )
+    with ZipFile(BytesIO(archive)) as exported:
+        row = json.loads(exported.read("coded_passages.json"))[0]
+    assert row["source_verification"] == "could_not_be_verified"
+    assert row["passage"] is None
 
 
 def test_advanced_query_boolean_theme_relationship_and_cooccurrence(analysis_session):

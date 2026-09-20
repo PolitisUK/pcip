@@ -3,9 +3,11 @@ import json
 import logging
 import struct
 import zlib
+from io import BytesIO
 from pathlib import Path
 from tempfile import gettempdir
 from uuid import uuid4
+from zipfile import ZipFile
 
 TEST_DATABASE_PATH = Path(gettempdir()) / f"pcip-test-{uuid4().hex}.db"
 TEST_DATABASE_PATH.unlink(missing_ok=True)
@@ -4931,6 +4933,47 @@ def test_researcher_with_view_access_can_read_study_participant_but_not_edit_stu
         history = client.get(f'/projects/{project_id}/workspace/audit')
         assert history.status_code == 200
         assert 'Research Finding · Created' in history.text
+        export_page = client.get(f'/projects/{project_id}/workspace/export')
+        assert export_page.status_code == 200
+        assert 'Download structured ZIP' in export_page.text
+        exported = post_with_csrf(
+            f'/projects/{project_id}/workspace/export',
+            data={'study_id': str(study_id)},
+            follow_redirects=False,
+        )
+        assert exported.status_code == 200
+        assert exported.headers['content-type'] == 'application/zip'
+        assert exported.headers['cache-control'] == 'no-store'
+        assert exported.headers['x-content-type-options'] == 'nosniff'
+        assert exported.headers['content-disposition'] == (
+            f'attachment; filename="analysis-workbench-project-{project_id}.zip"'
+        )
+        with ZipFile(BytesIO(exported.content)) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            findings_export = json.loads(archive.read('findings.json'))
+            suggestions_export = json.loads(archive.read('ai_suggestions.json'))
+        assert manifest['studies'] == [{'id': study_id, 'title': f'View study {code}'}]
+        assert [row['title'] for row in findings_export] == ['Read-only visible finding']
+        assert [row['provisional_insight'] for row in suggestions_export] == [
+            'Read-only visible AI suggestion'
+        ]
+        assert post_with_csrf(
+            f'/projects/{project_id}/workspace/export',
+            data={'study_id': '999999'},
+            follow_redirects=False,
+        ).status_code == 404
+        assert post_with_csrf(
+            f'/projects/{project_id}/workspace/export',
+            data={'study_id': '-1'},
+            follow_redirects=False,
+        ).status_code == 422
+        with SessionLocal() as db:
+            from app.models import AuditEvent
+            assert db.scalar(select(AuditEvent).where(
+                AuditEvent.action == 'analysis_export.created',
+                AuditEvent.project_id == project_id,
+                AuditEvent.study_id == study_id,
+            )) is not None
         assert post_with_csrf(
             f'/studies/{study_id}/research-analysis/{suggestion_id}/review',
             data={'decision': 'accepted', 'note': ''},

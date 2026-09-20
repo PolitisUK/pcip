@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Export analysis · {{ project.title }}{% endblock %}
+{% block page_description %}<p class="page-description">Download a bounded, traceable copy of the project’s analysis workspace.</p>{% endblock %}
+{% block contextual_help %}<p>The ZIP contains typed JSON files. Participant source excerpts, researcher-created analysis, AI suggestions, and audit metadata are explicitly distinguished.</p>{% endblock %}
+{% block content %}
+<p class="breadcrumbs"><a href="/projects/{{ project.id }}/workspace">{{ project.title }} research workspace</a> <span aria-hidden="true">/</span> Export</p>
+{% set workspace_section = 'export' %}{% include "_workspace_nav.html" %}
+<section class="card card--action section">
+  <h2>Create analysis export</h2>
+  <p>Exports contain sensitive research material. Store and share the downloaded file according to your organisation’s data-handling rules.</p>
+  <form method="post" action="/projects/{{ project.id }}/workspace/export" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Study
+      <select name="study_id">
+        <option value="">All accessible studies in this project</option>
+        {% for study in workspace_studies %}<option value="{{ study.id }}">{{ study.title }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Download structured ZIP</button>
+  </form>
+</section>
+<section class="card card--data section">
+  <h2>Included components</h2>
+  <ul>
+    <li>Codebook and verified coded passages</li>
+    <li>Annotations, memos, themes, relationships, and findings</li>
+    <li>AI suggestions with review and provider provenance</li>
+    <li>Canonical analysis audit metadata</li>
+  </ul>
+  <p class="muted">Each component is capped at 5,000 records. The manifest identifies any component that reached the bound. The export contains JSON rather than spreadsheet cells, so participant or researcher text is never interpreted as a formula.</p>
+</section>
+{% endblock %}
