@@ -64,7 +64,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0028" in revision.stdout
+    assert "0029" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -111,7 +111,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0028" in result.stdout
+            assert "0029" in result.stdout
 
     active = subprocess.run(
         [
@@ -276,3 +276,20 @@ def test_analysis_targets_migration_enforces_concrete_sources_and_tenant_scope(t
     )
     assert forged_scope_update.returncode != 0
     assert "research annotation study scope" in forged_scope_update.stderr
+    valid_memo = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO research_memos (id, organisation_id, study_id, scope_type, title, body, author_id, created_at, updated_at) VALUES (1, 1, 1, 'study', 'Reflexive note', 'Analytical text', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);"],
+        capture_output=True, text=True, check=False,
+    )
+    assert valid_memo.returncode == 0, valid_memo.stderr
+    forged_memo_scope = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE research_memos SET scope_type='code', research_code_id=999 WHERE id=1;"],
+        capture_output=True, text=True, check=False,
+    )
+    assert forged_memo_scope.returncode != 0
+    assert "research memo code scope" in forged_memo_scope.stderr
+    foreign_memo_author = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE research_memos SET author_id=2 WHERE id=1;"],
+        capture_output=True, text=True, check=False,
+    )
+    assert foreign_memo_author.returncode != 0
+    assert "research memo author scope" in foreign_memo_author.stderr

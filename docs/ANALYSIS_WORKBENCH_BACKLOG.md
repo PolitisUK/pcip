@@ -95,3 +95,20 @@ Alembic revision `0028` adds SQLite/PostgreSQL guards for organisation, study,
 target and author scope. Significant operations are audited without participant
 text, and privacy deletion removes participant-linked annotations before their
 analysis targets.
+
+## AW-05 — Researcher memos — complete
+
+`ResearchMemo` provides researcher-authored analytical writing scoped to a
+study, participant/case, response, `AnalysisTarget`, `ResearchCode`, or
+`ResearchTheme`. Memos retain authorship and creation/update timestamps and use
+an archive/restore lifecycle rather than silently disappearing. Authors may
+change their own memos; study managers may manage all memos; read-only study
+users can inspect them without write controls.
+
+The study memo workspace offers labelled, validated scope choices and supports
+creation, editing, archiving, restoration and archived-history inspection.
+Alembic revision `0029` enforces shape plus organisation/study scope for every
+pointer and researcher at database level on SQLite and PostgreSQL. Audit events
+record actions without memo or participant text. Participant deletion removes
+case-, response-, and participant-derived target memos while retaining reusable
+study/code/theme memos.
