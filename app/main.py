@@ -53,6 +53,7 @@ from .models import (
     AnalysisTarget,
     CodeApplication,
     ResearchAnnotation,
+    ResearchMemo,
     ResearchTheme,
     PublicAuthSession,
     PublicTokenExchange,
@@ -88,6 +89,7 @@ from .theme_explorer import create_theme, parse_suggestion_ids
 from .codebook import archive_code, create_code, restore_code, update_code
 from .passage_coding import apply_codes, verified_passage
 from .annotations import create_annotation, normalise_annotation_body
+from .memos import create_memo, memo_text
 from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
@@ -3476,6 +3478,65 @@ def remove_research_annotation(study_id:int,annotation_id:int,u=Depends(current_
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); row=editable_annotation(db,u,s,annotation_id)
     audit(db,u.organisation_id,u.id,"research_annotation.removed","research_annotation",row.id,"passage annotation"); db.delete(row); db.commit()
     return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
+
+
+@app.get("/studies/{study_id}/memos", response_class=HTMLResponse)
+def research_memos_page(study_id:int,request:Request,include_archived:bool=False,u=Depends(current_user),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); permission=require_study_permission(db,u,s)
+    stmt=select(ResearchMemo).where(ResearchMemo.organisation_id==u.organisation_id,ResearchMemo.study_id==s.id)
+    if not include_archived: stmt=stmt.where(ResearchMemo.archived_at.is_(None))
+    memos=db.scalars(stmt.order_by(ResearchMemo.updated_at.desc()).limit(250)).all()
+    participants=db.scalars(select(Participant).join(StudyEnrolment,StudyEnrolment.participant_id==Participant.id).where(Participant.organisation_id==u.organisation_id,StudyEnrolment.organisation_id==u.organisation_id,StudyEnrolment.study_id==s.id).order_by(Participant.reference).limit(500)).all()
+    responses=db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id==s.id,ActivityResponse.status=="submitted").order_by(ActivityResponse.submitted_at.desc()).limit(500)).all()
+    targets=db.scalars(select(AnalysisTarget).where(AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.study_id==s.id).order_by(AnalysisTarget.id.desc()).limit(500)).all()
+    codes=db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id==s.id).order_by(ResearchCode.name).limit(500)).all()
+    themes=db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id==u.organisation_id,ResearchTheme.study_id==s.id).order_by(ResearchTheme.name).limit(500)).all()
+    participant_map={row.id:row for row in participants}; users={row.id:row for row in db.scalars(select(User).where(User.organisation_id==u.organisation_id)).all()}
+    scope_labels={"study":"Study"}
+    scope_labels.update({f"participant:{row.id}":f"Participant · {row.reference} · {row.name}" for row in participants})
+    scope_labels.update({f"response:{row.id}":f"Entry #{row.id} · {participant_map.get(row.participant_id).reference if participant_map.get(row.participant_id) else 'participant'}" for row in responses})
+    scope_labels.update({f"analysis_target:{row.id}":f"Analysis target #{row.id} · {row.target_type.replace('_',' ')}" for row in targets})
+    scope_labels.update({f"code:{row.id}":f"Code · {row.name}" for row in codes})
+    scope_labels.update({f"theme:{row.id}":f"Theme · {row.name}" for row in themes})
+    def label_for(row):
+        pointer={"participant":row.participant_id,"response":row.activity_response_id,"analysis_target":row.analysis_target_id,"code":row.research_code_id,"theme":row.research_theme_id}.get(row.scope_type)
+        return scope_labels.get(row.scope_type if row.scope_type=="study" else f"{row.scope_type}:{pointer}",row.scope_type.replace("_"," ").title())
+    return render(request,"research_memos.html",user=u,study=s,project=db.get(Project,s.project_id),memos=memos,scope_labels=scope_labels,memo_scope_labels={row.id:label_for(row) for row in memos},users=users,can_edit=permission in {"edit","manage"},can_change={row.id:permission=="manage" or row.author_id==u.id for row in memos},include_archived=include_archived)
+
+
+@app.post("/studies/{study_id}/memos")
+def create_research_memo(study_id:int,scope_ref:str=Form(...),title:str=Form(...,max_length=200),body:str=Form(...,max_length=20000),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    try: row=create_memo(db,u,study_id=s.id,scope_ref=scope_ref,title=title,body=body)
+    except ValueError as exc: raise HTTPException(400,str(exc)) from exc
+    db.flush(); audit(db,u.organisation_id,u.id,"research_memo.created","research_memo",row.id,f"{row.scope_type} memo")
+    db.commit(); return RedirectResponse(f"/studies/{s.id}/memos",303)
+
+
+def changeable_memo(db:Session,u:User,s:Study,memo_id:int) -> ResearchMemo:
+    row=db.scalar(select(ResearchMemo).where(ResearchMemo.id==memo_id,ResearchMemo.organisation_id==u.organisation_id,ResearchMemo.study_id==s.id))
+    if row is None: raise HTTPException(404,"Memo not found")
+    if row.author_id != u.id and study_permission(db,u,s) != "manage": raise HTTPException(403,"You cannot change this memo")
+    return row
+
+
+@app.post("/studies/{study_id}/memos/{memo_id}/edit")
+def update_research_memo(study_id:int,memo_id:int,title:str=Form(...,max_length=200),body:str=Form(...,max_length=20000),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); row=changeable_memo(db,u,s,memo_id)
+    if row.archived_at is not None: raise HTTPException(409,"Restore this memo before editing it")
+    try: row.title,row.body=memo_text(title,body)
+    except ValueError as exc: raise HTTPException(400,str(exc)) from exc
+    audit(db,u.organisation_id,u.id,"research_memo.updated","research_memo",row.id,"memo content updated"); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/memos",303)
+
+
+@app.post("/studies/{study_id}/memos/{memo_id}/{action}")
+def set_research_memo_archive(study_id:int,memo_id:int,action:str,u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    if action not in {"archive","restore"}: raise HTTPException(404,"Memo action not found")
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); row=changeable_memo(db,u,s,memo_id)
+    row.archived_at=now() if action=="archive" else None; row.archived_by_id=u.id if action=="archive" else None
+    audit(db,u.organisation_id,u.id,f"research_memo.{action}d","research_memo",row.id,f"{row.scope_type} memo"); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/memos?include_archived=true",303)
 
 
 @app.get("/projects/{project_id}/workspace/participants", response_class=HTMLResponse)

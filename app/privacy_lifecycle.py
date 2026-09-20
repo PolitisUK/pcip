@@ -19,6 +19,7 @@ from .models import (
     AnalysisTarget,
     CodeApplication,
     ResearchAnnotation,
+    ResearchMemo,
     AuditEvent,
     EvidenceConfidenceAssessment,
     EvidenceFile,
@@ -112,8 +113,10 @@ def _delete_research_derivatives(
         return
     target_ids = set(db.scalars(select(AnalysisTarget.id).where(AnalysisTarget.organisation_id == organisation_id, AnalysisTarget.activity_response_id.in_(response_ids))))
     if target_ids:
+        db.execute(delete(ResearchMemo).where(ResearchMemo.analysis_target_id.in_(target_ids)))
         db.execute(delete(ResearchAnnotation).where(ResearchAnnotation.analysis_target_id.in_(target_ids)))
         db.execute(delete(CodeApplication).where(CodeApplication.analysis_target_id.in_(target_ids)))
+    db.execute(delete(ResearchMemo).where(ResearchMemo.activity_response_id.in_(response_ids)))
     db.execute(delete(AnalysisTarget).where(
         AnalysisTarget.organisation_id == organisation_id,
         AnalysisTarget.activity_response_id.in_(response_ids),
@@ -227,6 +230,13 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
             study_id=study_id,
             response_ids=response_ids,
         )
+        other_target_ids = set(db.scalars(select(AnalysisTarget.id).where(
+            AnalysisTarget.organisation_id == organisation_id,
+            or_(AnalysisTarget.evidence_file_id.in_([row.id for row in evidence_rows]), AnalysisTarget.participant_id == participant_id),
+        )))
+        if other_target_ids:
+            db.execute(delete(ResearchMemo).where(ResearchMemo.analysis_target_id.in_(other_target_ids)))
+        db.execute(delete(ResearchMemo).where(ResearchMemo.organisation_id == organisation_id, ResearchMemo.participant_id == participant_id))
         db.execute(
             delete(AnalysisTarget).where(
                 AnalysisTarget.organisation_id == organisation_id,

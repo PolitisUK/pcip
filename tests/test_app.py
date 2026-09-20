@@ -11225,7 +11225,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         )
         db.add(other_project)
         db.commit()
-        project_id, participant_id, activity_id, study_id, response_id, other_project_id = project.id, participant.id, activity.id, study.id, response.id, other_project.id
+        project_id, participant_id, activity_id, study_id, response_id, target_id, research_code_id, other_project_id = project.id, participant.id, activity.id, study.id, response.id, target.id, research_code.id, other_project.id
 
     with client:
         auth()
@@ -11295,6 +11295,34 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         with SessionLocal() as db:
             from app.models import ResearchAnnotation
             assert db.get(ResearchAnnotation, annotation_id) is None
+        memos_page = client.get(f'/studies/{study_id}/memos')
+        assert memos_page.status_code == 200
+        assert f'value="participant:{participant_id}"' in memos_page.text
+        assert f'value="response:{response_id}"' in memos_page.text
+        assert f'value="analysis_target:{target_id}"' in memos_page.text
+        assert f'value="code:{research_code_id}"' in memos_page.text
+        created_memo = post_with_csrf(
+            f'/studies/{study_id}/memos',
+            data={'scope_ref': f'response:{response_id}', 'title': 'Developing interpretation', 'body': '<script>alert(1)</script> Reflexive analytical memo'},
+            follow_redirects=False,
+        )
+        assert created_memo.status_code == 303
+        with SessionLocal() as db:
+            from app.models import AuditEvent, ResearchMemo
+            memo = db.scalar(select(ResearchMemo).where(ResearchMemo.study_id == study_id))
+            assert memo is not None and memo.activity_response_id == response_id
+            memo_id = memo.id
+            assert db.scalar(select(AuditEvent).where(AuditEvent.action == 'research_memo.created', AuditEvent.entity_id == str(memo_id))) is not None
+        rendered_memos = client.get(f'/studies/{study_id}/memos')
+        assert 'Developing interpretation' in rendered_memos.text
+        assert '&lt;script&gt;alert(1)&lt;/script&gt; Reflexive analytical memo' in rendered_memos.text
+        assert '<script>alert(1)</script>' not in rendered_memos.text
+        assert post_with_csrf(f'/studies/{study_id}/memos/{memo_id}/edit', data={'title': 'Refined interpretation', 'body': 'Updated memo'}, follow_redirects=False).status_code == 303
+        assert post_with_csrf(f'/studies/{study_id}/memos/{memo_id}/archive', follow_redirects=False).status_code == 303
+        assert 'Refined interpretation' not in client.get(f'/studies/{study_id}/memos').text
+        archived_memos = client.get(f'/studies/{study_id}/memos?include_archived=true')
+        assert 'Refined interpretation' in archived_memos.text and '(archived)' in archived_memos.text
+        assert post_with_csrf(f'/studies/{study_id}/memos/{memo_id}/restore', follow_redirects=False).status_code == 303
         assert dossier.status_code == 200
         assert "Longitudinal research timeline" in dossier.text
         assert client.get(f"/projects/{other_project_id}/workspace").status_code == 404

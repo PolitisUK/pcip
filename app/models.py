@@ -796,6 +796,40 @@ class ResearchAnnotation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class ResearchMemo(Base):
+    """Researcher-owned analytical writing scoped to one study object."""
+    __tablename__ = "research_memos"
+    __table_args__ = (
+        CheckConstraint(
+            "(scope_type = 'study' AND participant_id IS NULL AND activity_response_id IS NULL AND analysis_target_id IS NULL AND research_code_id IS NULL AND research_theme_id IS NULL) OR "
+            "(scope_type = 'participant' AND participant_id IS NOT NULL AND activity_response_id IS NULL AND analysis_target_id IS NULL AND research_code_id IS NULL AND research_theme_id IS NULL) OR "
+            "(scope_type = 'response' AND participant_id IS NULL AND activity_response_id IS NOT NULL AND analysis_target_id IS NULL AND research_code_id IS NULL AND research_theme_id IS NULL) OR "
+            "(scope_type = 'analysis_target' AND participant_id IS NULL AND activity_response_id IS NULL AND analysis_target_id IS NOT NULL AND research_code_id IS NULL AND research_theme_id IS NULL) OR "
+            "(scope_type = 'code' AND participant_id IS NULL AND activity_response_id IS NULL AND analysis_target_id IS NULL AND research_code_id IS NOT NULL AND research_theme_id IS NULL) OR "
+            "(scope_type = 'theme' AND participant_id IS NULL AND activity_response_id IS NULL AND analysis_target_id IS NULL AND research_code_id IS NULL AND research_theme_id IS NOT NULL)",
+            name="ck_research_memo_one_scope",
+        ),
+        CheckConstraint("(archived_at IS NULL) = (archived_by_id IS NULL)", name="ck_research_memo_archive_pair"),
+        Index("ix_research_memos_scope", "organisation_id", "study_id", "scope_type"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    scope_type: Mapped[str] = mapped_column(String(30), index=True)
+    participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id"), nullable=True, index=True)
+    activity_response_id: Mapped[int | None] = mapped_column(ForeignKey("activity_responses.id"), nullable=True, index=True)
+    analysis_target_id: Mapped[int | None] = mapped_column(ForeignKey("analysis_targets.id"), nullable=True, index=True)
+    research_code_id: Mapped[int | None] = mapped_column(ForeignKey("research_codes.id"), nullable=True, index=True)
+    research_theme_id: Mapped[int | None] = mapped_column(ForeignKey("research_themes.id"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    archived_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(primary_key=True)
