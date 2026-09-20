@@ -201,5 +201,31 @@ verified coded passages, and links back to the original entry and context.
 The UI explicitly states that temporal order and proximity do not establish
 causation. It is a bounded, paginated read-only view derived from existing
 responses and analytical records; it stores no timeline or participant-text
-copy and introduces no migration. AW-12 is intentionally not started pending
-the planned checkpoint review.
+copy and introduces no migration.
+
+## AW-11.5 — Analysis architecture consolidation — complete
+
+The Analysis Workbench HTTP surface is now registered through a dedicated
+router contract rather than accumulating route declarations in the application
+composition root. Existing handler behaviour and URLs remain unchanged. New
+workbench capabilities can be added behind this boundary without creating a
+second application or frontend stack.
+
+Shared services now provide a bounded coded-passage projection for coding,
+matrix and longitudinal consumers; an allow-listed analytical-object resolver
+with tenant, study and study-permission enforcement; and one lifecycle hook for
+removing canonical relationship references. `AnalyticalRelationship` remains
+the only analytical edge model. Participant privacy deletion uses the shared
+lifecycle hook and retains its existing transaction and fail-safe semantics.
+
+The projection reconstructs exact passages from authoritative responses and
+does not persist participant text. Queries remain explicitly bounded to 5,000
+coding rows and preserve fingerprint verification. The existing query shapes
+already use scope/source indexes introduced by AW-01 through AW-09, so this
+consolidation adds no speculative index or database migration. Dedicated tests
+cover resolver scope and permission enforcement, Unicode projection behaviour,
+canonical relationship creation, lifecycle cleanup and router registration.
+
+The internal contracts and extension rules are documented in
+`docs/ANALYSIS_WORKBENCH_ARCHITECTURE.md`. AW-12 will build on these services;
+it is not implemented in this change.
