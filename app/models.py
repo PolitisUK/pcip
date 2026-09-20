@@ -680,6 +680,9 @@ class EvidenceConfidenceAssessment(Base):
 class ResearchTheme(Base):
     """A researcher-authored working theme, linked to reviewed source analysis."""
     __tablename__ = "research_themes"
+    __table_args__ = (
+        Index("ix_research_themes_scope", "organisation_id", "study_id", "archived_at"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
     study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
@@ -688,6 +691,8 @@ class ResearchTheme(Base):
     source_suggestion_ids_json: Mapped[str] = mapped_column(Text, default="[]")
     status: Mapped[str] = mapped_column(String(30), default="researcher_draft", index=True)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    archived_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -711,6 +716,22 @@ class ResearchCode(Base):
     archived_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ResearchThemeCode(Base):
+    """A researcher-authored link from a working theme to a study code."""
+    __tablename__ = "research_theme_codes"
+    __table_args__ = (
+        UniqueConstraint("research_theme_id", "research_code_id", name="uq_research_theme_code"),
+        Index("ix_research_theme_codes_scope", "organisation_id", "study_id", "research_theme_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    research_theme_id: Mapped[int] = mapped_column(ForeignKey("research_themes.id"), index=True)
+    research_code_id: Mapped[int] = mapped_column(ForeignKey("research_codes.id"), index=True)
+    linked_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class AnalysisTarget(Base):

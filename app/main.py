@@ -56,6 +56,7 @@ from .models import (
     ResearchMemo,
     AnalyticalRelationship,
     ResearchTheme,
+    ResearchThemeCode,
     PublicAuthSession,
     PublicTokenExchange,
     Role,
@@ -86,7 +87,7 @@ from .research_api import (
     ThemeListResponse,
     ThemeResponse,
 )
-from .theme_explorer import create_theme, parse_suggestion_ids
+from .theme_explorer import archive_theme, create_theme, link_code, parse_suggestion_ids, restore_theme, update_theme
 from .codebook import archive_code, create_code, restore_code, update_code
 from .passage_coding import apply_codes, verified_passage
 from .annotations import create_annotation, normalise_annotation_body
@@ -4294,6 +4295,82 @@ def _study_themes(db: Session, user: User, study_row: Study):
     return themes, suggestions
 
 
+def _theme_development_cards(db: Session, user: User, study_row: Study, themes: list[ResearchTheme]):
+    theme_ids = [row.id for row in themes]
+    links = db.scalars(select(ResearchThemeCode).where(
+        ResearchThemeCode.organisation_id == user.organisation_id,
+        ResearchThemeCode.study_id == study_row.id,
+        ResearchThemeCode.research_theme_id.in_(theme_ids),
+    ).order_by(ResearchThemeCode.created_at)).all() if theme_ids else []
+    code_ids = {row.research_code_id for row in links}
+    codes_by_id = {row.id: row for row in db.scalars(select(ResearchCode).where(
+        ResearchCode.organisation_id == user.organisation_id,
+        ResearchCode.study_id == study_row.id,
+        ResearchCode.id.in_(code_ids),
+    )).all()} if code_ids else {}
+    applications = db.scalars(select(CodeApplication).where(
+        CodeApplication.organisation_id == user.organisation_id,
+        CodeApplication.study_id == study_row.id,
+        CodeApplication.research_code_id.in_(code_ids),
+    ).order_by(CodeApplication.created_at.desc()).limit(500)).all() if code_ids else []
+    target_ids = {row.analysis_target_id for row in applications}
+    targets = {row.id: row for row in db.scalars(select(AnalysisTarget).where(
+        AnalysisTarget.organisation_id == user.organisation_id,
+        AnalysisTarget.study_id == study_row.id,
+        AnalysisTarget.id.in_(target_ids),
+        AnalysisTarget.target_type == "activity_response",
+    )).all()} if target_ids else {}
+    response_ids = {row.activity_response_id for row in targets.values() if row.activity_response_id}
+    responses = {row.id: row for row in db.scalars(select(ActivityResponse).where(
+        ActivityResponse.organisation_id == user.organisation_id,
+        ActivityResponse.study_id == study_row.id,
+        ActivityResponse.id.in_(response_ids),
+    )).all()} if response_ids else {}
+    user_ids = {row.created_by_id for row in themes} | {row.linked_by_id for row in links}
+    users = {row.id: row for row in db.scalars(select(User).where(
+        User.organisation_id == user.organisation_id, User.id.in_(user_ids)
+    )).all()} if user_ids else {}
+    links_by_theme: dict[int, list[ResearchThemeCode]] = {}
+    for row in links:
+        links_by_theme.setdefault(row.research_theme_id, []).append(row)
+    applications_by_code: dict[int, list[CodeApplication]] = {}
+    for row in applications:
+        applications_by_code.setdefault(row.research_code_id, []).append(row)
+    cards = []
+    for theme_row in themes:
+        theme_links = links_by_theme.get(theme_row.id, [])
+        extracts = []
+        for link in theme_links:
+            for application in applications_by_code.get(link.research_code_id, []):
+                target = targets.get(application.analysis_target_id)
+                response = responses.get(target.activity_response_id) if target else None
+                if response:
+                    extracts.append({
+                        "application": application,
+                        "code": codes_by_id.get(link.research_code_id),
+                        "response": response,
+                        "passage": verified_passage(response_body(response.value_json), application.anchor_json),
+                    })
+        cards.append({
+            "theme": theme_row,
+            "creator": users.get(theme_row.created_by_id),
+            "links": [{"link": row, "code": codes_by_id.get(row.research_code_id), "researcher": users.get(row.linked_by_id)} for row in theme_links],
+            "extracts": extracts[:100],
+        })
+    return cards
+
+
+def _scoped_theme(db: Session, user: User, study_row: Study, theme_id: int) -> ResearchTheme:
+    row = db.scalar(select(ResearchTheme).where(
+        ResearchTheme.id == theme_id,
+        ResearchTheme.organisation_id == user.organisation_id,
+        ResearchTheme.study_id == study_row.id,
+    ))
+    if not row:
+        raise HTTPException(404, "Theme not found")
+    return row
+
+
 @app.get("/studies/{study_id}/theme-explorer", response_class=HTMLResponse)
 def study_theme_explorer(study_id: int, request: Request, u=Depends(current_user), db: Session = Depends(get_db)):
     if not settings.research_intelligence_enabled:
@@ -4314,7 +4391,13 @@ def study_theme_explorer(study_id: int, request: Request, u=Depends(current_user
         user=u,
         study=s,
         themes=[_theme_response(item, suggestions_by_id) for item in themes],
+        theme_cards=_theme_development_cards(db, u, s, themes),
         accepted_suggestions=accepted_suggestions,
+        active_codes=db.scalars(select(ResearchCode).where(
+            ResearchCode.organisation_id == u.organisation_id,
+            ResearchCode.study_id == s.id,
+            ResearchCode.archived_at.is_(None),
+        ).order_by(ResearchCode.name)).all(),
         can_edit=permission in {"edit", "manage"},
     )
 
@@ -4324,7 +4407,7 @@ def create_research_theme(
     study_id: int,
     name: str = Form(...),
     description: str = Form(""),
-    source_suggestion_ids: str = Form(...),
+    source_suggestion_ids: str = Form(""),
     u=Depends(current_user),
     csrf_ok: None = Depends(csrf_protect),
     db: Session = Depends(get_db),
@@ -4334,7 +4417,7 @@ def create_research_theme(
     s = study(db, study_id, u.organisation_id)
     require_study_permission(db, u, s, edit=True)
     try:
-        identifiers = parse_suggestion_ids(source_suggestion_ids)
+        identifiers = parse_suggestion_ids(source_suggestion_ids) if source_suggestion_ids.strip() else set()
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     suggestions = db.scalars(
@@ -4353,6 +4436,53 @@ def create_research_theme(
     db.flush()
     audit(db, u.organisation_id, u.id, "research_theme.created", "research_theme", row.id, row.name)
     db.commit()
+    return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
+
+
+@app.post("/studies/{study_id}/themes/{theme_id}/edit")
+def edit_research_theme(study_id: int, theme_id: int, name: str = Form(...), description: str = Form(""), u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
+    row = _scoped_theme(db, u, s, theme_id)
+    try: update_theme(row, name=name, description=description)
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+    audit(db, u.organisation_id, u.id, "research_theme.refined", "research_theme", row.id, row.name); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
+
+
+@app.post("/studies/{study_id}/themes/{theme_id}/archive")
+def archive_research_theme(study_id: int, theme_id: int, u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
+    row = _scoped_theme(db, u, s, theme_id); archive_theme(row, u)
+    audit(db, u.organisation_id, u.id, "research_theme.archived", "research_theme", row.id); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
+
+
+@app.post("/studies/{study_id}/themes/{theme_id}/restore")
+def restore_research_theme(study_id: int, theme_id: int, u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
+    row = _scoped_theme(db, u, s, theme_id); restore_theme(row)
+    audit(db, u.organisation_id, u.id, "research_theme.restored", "research_theme", row.id); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
+
+
+@app.post("/studies/{study_id}/themes/{theme_id}/codes")
+def link_research_theme_code(study_id: int, theme_id: int, research_code_id: int = Form(...), u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
+    theme_row = _scoped_theme(db, u, s, theme_id)
+    code = db.scalar(select(ResearchCode).where(ResearchCode.id == research_code_id, ResearchCode.organisation_id == u.organisation_id, ResearchCode.study_id == s.id))
+    if not code: raise HTTPException(400, "Code is unavailable in this study")
+    try: row = link_code(db, u, theme_row, code)
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+    db.flush(); audit(db, u.organisation_id, u.id, "research_theme.code_linked", "research_theme_code", row.id); db.commit()
+    return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
+
+
+@app.post("/studies/{study_id}/themes/{theme_id}/codes/{link_id}/remove")
+def unlink_research_theme_code(study_id: int, theme_id: int, link_id: int, u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
+    s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True); _scoped_theme(db, u, s, theme_id)
+    row = db.scalar(select(ResearchThemeCode).where(ResearchThemeCode.id == link_id, ResearchThemeCode.organisation_id == u.organisation_id, ResearchThemeCode.study_id == s.id, ResearchThemeCode.research_theme_id == theme_id))
+    if not row: raise HTTPException(404, "Theme code link not found")
+    audit(db, u.organisation_id, u.id, "research_theme.code_unlinked", "research_theme_code", row.id); db.delete(row); db.commit()
     return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
 
 
