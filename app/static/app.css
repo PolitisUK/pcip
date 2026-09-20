@@ -3060,3 +3060,20 @@ pre {
 .image-region-stage img { display: block; max-width: 100%; height: auto; }
 .image-region-box { position: absolute; border: 3px solid #8b2f97; background: rgb(139 47 151 / 18%); pointer-events: none; }
 .image-region-box--draft { border-style: dashed; }
+
+.canvas-tools__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1.5rem; align-items: start; }
+.canvas-zoom { display: flex; gap: .55rem; align-items: center; }
+.canvas-zoom button { min-width: 2.75rem; }
+.analysis-canvas__viewport { overflow: auto; max-height: 72vh; border: 1px solid var(--border, #ccd5df); border-radius: 12px; background: #f5f7fa; }
+.analysis-canvas__surface { --canvas-scale: 1; position: relative; width: 4300px; height: 4300px; transform: scale(var(--canvas-scale)); transform-origin: top left; background-image: radial-gradient(circle, #c7d1dc 1px, transparent 1px); background-size: 24px 24px; }
+.analysis-canvas__edges { position: absolute; inset: 0; width: 4300px; height: 4300px; overflow: visible; pointer-events: none; }
+.analysis-canvas__edges line { stroke: #345b83; stroke-width: 3; stroke-dasharray: 8 5; }
+.analysis-canvas__node { position: absolute; width: 240px; min-height: 150px; z-index: 2; padding: 1rem; border: 2px solid #345b83; border-radius: 12px; background: #fff; box-shadow: 0 6px 18px rgb(24 50 74 / 14%); }
+.analysis-canvas__node.is-dragging { z-index: 3; box-shadow: 0 10px 28px rgb(24 50 74 / 24%); }
+.analysis-canvas__node h3 { margin: .2rem 0 .5rem; }
+.analysis-canvas__node .eyebrow { margin: .4rem 0 0; text-transform: uppercase; font-size: .72rem; letter-spacing: .06em; color: #52677c; }
+.analysis-canvas__move { cursor: grab; width: 100%; padding: .35rem .6rem; touch-action: none; }
+.analysis-canvas__move:active { cursor: grabbing; }
+.canvas-position-form { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.canvas-position-form button { grid-column: 1 / -1; }
+.analysis-canvas__empty { position: absolute; top: 2rem; left: 2rem; width: min(520px, calc(100vw - 8rem)); padding: 1.5rem; border: 2px dashed #8293a5; border-radius: 12px; background: #fff; }

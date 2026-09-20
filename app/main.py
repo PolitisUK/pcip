@@ -93,8 +93,9 @@ from .passage_coding import apply_codes, verified_passage
 from .annotations import create_annotation, normalise_annotation_body
 from .memos import create_memo, memo_text
 from .image_regions import create_image_region, parsed_region
-from .relationships import RELATIONSHIP_TYPES, create_relationship
+from .relationships import RELATIONSHIP_TYPES, changeable_relationship, create_relationship
 from .analysis_lifecycle import remove_analytical_references
+from .analysis_canvas_router import analysis_canvas_router
 from .analysis_objects import analytical_study_permission
 from .analysis_projections import coded_passage_projections
 from .analysis_router import include_analysis_router
@@ -921,6 +922,14 @@ def render(request, name, user=None, **ctx):
             **ctx,
         },
     )
+
+
+app.include_router(
+    analysis_canvas_router(
+        current_user_dependency=current_user,
+        render_page=render,
+    )
+)
 
 
 def render_error(request: Request, status_code: int, title: str, detail: str):
@@ -3670,10 +3679,10 @@ def create_analytical_relationship(study_id:int,source_ref:str=Form(...),relatio
 
 @app.post("/studies/{study_id}/relationships/{relationship_id}/delete")
 def remove_analytical_relationship(study_id:int,relationship_id:int,u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
-    s=study(db,study_id,u.organisation_id); permission=require_study_permission(db,u,s,edit=True)
-    row=db.scalar(select(AnalyticalRelationship).where(AnalyticalRelationship.id==relationship_id,AnalyticalRelationship.organisation_id==u.organisation_id,AnalyticalRelationship.study_id==s.id))
-    if row is None: raise HTTPException(404,"Analytical relationship not found")
-    if row.created_by_id!=u.id and permission!="manage": raise HTTPException(403,"You cannot remove this relationship")
+    s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    try: row=changeable_relationship(db,u,study_id=s.id,relationship_id=relationship_id)
+    except ValueError as exc: raise HTTPException(404,str(exc)) from exc
+    except PermissionError as exc: raise HTTPException(403,str(exc)) from exc
     audit(db,u.organisation_id,u.id,"analytical_relationship.removed","analytical_relationship",row.id,row.relationship_type); db.delete(row); db.commit()
     return RedirectResponse(f"/studies/{s.id}/relationships",303)
 

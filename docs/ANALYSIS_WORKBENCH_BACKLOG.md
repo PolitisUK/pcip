@@ -227,5 +227,37 @@ cover resolver scope and permission enforcement, Unicode projection behaviour,
 canonical relationship creation, lifecycle cleanup and router registration.
 
 The internal contracts and extension rules are documented in
-`docs/ANALYSIS_WORKBENCH_ARCHITECTURE.md`. AW-12 will build on these services;
-it is not implemented in this change.
+`docs/ANALYSIS_WORKBENCH_ARCHITECTURE.md`. AW-12 builds on these services and
+was intentionally kept out of the consolidation change itself.
+
+## AW-12 — Visual analysis canvas — complete
+
+Researchers now have a personal, study-scoped visual canvas for arranging
+existing analytical objects. The canvas supports analysis targets (including
+participant/case and image-evidence targets), coded passages, annotations,
+memos, codes and themes. Cards retain bounded labels and summaries, link back
+to their authoritative source, and reconstruct coded passages from the current
+response with fingerprint verification rather than storing another text copy.
+
+Canvas positions are presentation metadata only. Alembic revision `0032` adds
+one canvas per researcher/study and typed node placements containing object IDs
+and bounded coordinates; it stores no participant content. SQLite and
+PostgreSQL guards validate canvas owner/study scope and every supported object
+pointer on INSERT and UPDATE. Canvas loading is capped at 100 nodes and 500
+visible canonical relationships, while the add-object catalogue is bounded per
+object type.
+
+Dragging and zoom/pan use modest progressive JavaScript. Each card also exposes
+keyboard-accessible numeric position controls, source navigation and a normal
+form for removing the card without deleting the underlying object. Read-only
+study users may inspect and arrange their personal layout but cannot create or
+remove analytical relationships.
+
+Canvas connections create the existing `AnalyticalRelationship` records via
+the shared relationship service; there is no second edge store. Relationship
+type, rationale, researcher and date remain inspectable, and existing
+permission/audit rules govern creation and removal. Cross-tenant and
+cross-study forged objects fail closed at the service, route and database
+levels. Participant deletion removes affected placements through the shared
+lifecycle hook while leaving unrelated layout and reusable study analysis
+unchanged.

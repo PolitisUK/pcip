@@ -13,9 +13,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import (
+    ActivityResponse,
     AnalysisTarget,
     AnalyticalRelationship,
     CodeApplication,
+    EvidenceFile,
     Participant,
     ResearchAnnotation,
     ResearchCode,
@@ -26,6 +28,8 @@ from .models import (
     StudyEnrolment,
     User,
 )
+from .passage_coding import verified_passage
+from .research_workspace import response_body
 
 ANALYTICAL_OBJECT_TYPES = frozenset(
     {
@@ -129,7 +133,7 @@ def resolve_analytical_object(
         )
     if row is None:
         return None
-    label, summary, url = _describe(object_type, row, study)
+    label, summary, url = _describe(db, object_type, row, study)
     return AnalyticalObjectSummary(
         object_type=object_type,
         object_id=row.id,
@@ -142,16 +146,256 @@ def resolve_analytical_object(
     )
 
 
-def _describe(object_type: str, row, study: Study) -> tuple[str, str, str | None]:
+def list_analytical_objects(
+    db: Session,
+    user: User,
+    *,
+    study_id: int,
+    object_types: set[str],
+    limit_per_type: int = 40,
+) -> list[AnalyticalObjectSummary]:
+    """List a bounded, explicit set of object types for pickers and canvases."""
+    allowed = object_types & ANALYTICAL_OBJECT_TYPES - {
+        "relationship",
+        "participant_case",
+    }
+    if not allowed:
+        return []
+    study = db.scalar(
+        select(Study).where(
+            Study.id == study_id, Study.organisation_id == user.organisation_id
+        )
+    )
+    permission = analytical_study_permission(db, user, study) if study else None
+    if permission is None:
+        return []
+    safe_limit = min(max(limit_per_type, 1), 50)
+    models = {
+        "analysis_target": AnalysisTarget,
+        "code_application": CodeApplication,
+        "annotation": ResearchAnnotation,
+        "memo": ResearchMemo,
+        "code": ResearchCode,
+        "theme": ResearchTheme,
+    }
+    output = []
+    for object_type in sorted(allowed):
+        model = models[object_type]
+        rows = db.scalars(
+            select(model)
+            .where(
+                model.organisation_id == user.organisation_id,
+                model.study_id == study_id,
+            )
+            .order_by(model.id.desc())
+            .limit(safe_limit)
+        ).all()
+        coded_details = (
+            _coded_application_details(db, rows)
+            if object_type == "code_application"
+            else {}
+        )
+        for row in rows:
+            label, summary, url = _describe(
+                db,
+                object_type,
+                row,
+                study,
+                coded_detail=coded_details.get(row.id),
+            )
+            output.append(
+                AnalyticalObjectSummary(
+                    object_type=object_type,
+                    object_id=row.id,
+                    organisation_id=user.organisation_id,
+                    study_id=study_id,
+                    label=label,
+                    summary=_bounded(summary),
+                    navigation_url=url,
+                    editable=permission in {"edit", "manage"},
+                )
+            )
+    return output
+
+
+def resolve_analytical_objects(
+    db: Session,
+    user: User,
+    *,
+    study_id: int,
+    references: set[tuple[str, int]],
+) -> dict[tuple[str, int], AnalyticalObjectSummary]:
+    """Bulk-resolve a bounded set of typed references without per-node scope queries."""
+    references = {
+        (object_type, object_id)
+        for object_type, object_id in references
+        if object_type in ANALYTICAL_OBJECT_TYPES
+        and object_type not in {"relationship", "participant_case"}
+        and object_id > 0
+    }
+    if not references or len(references) > 100:
+        return {}
+    study = db.scalar(
+        select(Study).where(
+            Study.id == study_id,
+            Study.organisation_id == user.organisation_id,
+        )
+    )
+    permission = analytical_study_permission(db, user, study) if study else None
+    if permission is None:
+        return {}
+    models = {
+        "analysis_target": AnalysisTarget,
+        "code_application": CodeApplication,
+        "annotation": ResearchAnnotation,
+        "memo": ResearchMemo,
+        "code": ResearchCode,
+        "theme": ResearchTheme,
+    }
+    output = {}
+    for object_type, model in models.items():
+        identifiers = {
+            object_id
+            for candidate_type, object_id in references
+            if candidate_type == object_type
+        }
+        if not identifiers:
+            continue
+        rows = db.scalars(
+            select(model).where(
+                model.id.in_(identifiers),
+                model.organisation_id == user.organisation_id,
+                model.study_id == study_id,
+            )
+        ).all()
+        coded_details = (
+            _coded_application_details(db, rows)
+            if object_type == "code_application"
+            else {}
+        )
+        for row in rows:
+            label, summary, url = _describe(
+                db,
+                object_type,
+                row,
+                study,
+                coded_detail=coded_details.get(row.id),
+            )
+            output[(object_type, row.id)] = AnalyticalObjectSummary(
+                object_type=object_type,
+                object_id=row.id,
+                organisation_id=user.organisation_id,
+                study_id=study_id,
+                label=label,
+                summary=_bounded(summary),
+                navigation_url=url,
+                editable=permission in {"edit", "manage"},
+            )
+    return output
+
+
+def _coded_application_details(
+    db: Session, rows: list[CodeApplication]
+) -> dict[int, tuple[ResearchCode, ActivityResponse]]:
+    identifiers = [row.id for row in rows]
+    if not identifiers:
+        return {}
+    details = db.execute(
+        select(CodeApplication.id, ResearchCode, ActivityResponse)
+        .select_from(CodeApplication)
+        .join(AnalysisTarget, AnalysisTarget.id == CodeApplication.analysis_target_id)
+        .join(
+            ActivityResponse, ActivityResponse.id == AnalysisTarget.activity_response_id
+        )
+        .join(ResearchCode, ResearchCode.id == CodeApplication.research_code_id)
+        .where(
+            CodeApplication.id.in_(identifiers),
+            ResearchCode.organisation_id == CodeApplication.organisation_id,
+            ResearchCode.study_id == CodeApplication.study_id,
+            AnalysisTarget.organisation_id == CodeApplication.organisation_id,
+            AnalysisTarget.study_id == CodeApplication.study_id,
+            ActivityResponse.organisation_id == CodeApplication.organisation_id,
+            ActivityResponse.study_id == CodeApplication.study_id,
+        )
+    ).all()
+    return {
+        application_id: (code, response) for application_id, code, response in details
+    }
+
+
+def _describe(
+    db: Session,
+    object_type: str,
+    row,
+    study: Study,
+    *,
+    coded_detail: tuple[ResearchCode, ActivityResponse] | None = None,
+) -> tuple[str, str, str | None]:
     if object_type == "analysis_target":
+        if row.target_type == "participant_case":
+            participant = db.scalar(
+                select(Participant).where(
+                    Participant.id == row.participant_id,
+                    Participant.organisation_id == row.organisation_id,
+                )
+            )
+            if participant:
+                return (
+                    f"Participant / case · {participant.reference}",
+                    participant.name,
+                    f"/participants/{participant.id}",
+                )
+        if row.target_type == "evidence_file":
+            evidence = db.scalar(
+                select(EvidenceFile).where(
+                    EvidenceFile.id == row.evidence_file_id,
+                    EvidenceFile.organisation_id == row.organisation_id,
+                    EvidenceFile.study_id == row.study_id,
+                )
+            )
+            if evidence:
+                return (
+                    f"Evidence region · {evidence.original_name}",
+                    "Image or file evidence analysis target",
+                    f"/evidence/{evidence.id}/analysis",
+                )
+        if row.target_type == "activity_response":
+            response = db.scalar(
+                select(ActivityResponse).where(
+                    ActivityResponse.id == row.activity_response_id,
+                    ActivityResponse.organisation_id == row.organisation_id,
+                    ActivityResponse.study_id == row.study_id,
+                )
+            )
+            if response:
+                return (
+                    f"Source entry #{response.id}",
+                    response_body(response.value_json),
+                    f"/projects/{study.project_id}/workspace/entries",
+                )
         source = row.activity_response_id or row.evidence_file_id or row.participant_id
-        section = "evidence" if row.target_type == "evidence_file" else "entries"
         return (
             "Analysis target",
             f"{row.target_type.replace('_', ' ')} #{source}",
-            f"/projects/{study.project_id}/workspace/{section}",
+            f"/projects/{study.project_id}/workspace/entries",
         )
     if object_type == "code_application":
+        detail = coded_detail or _coded_application_details(db, [row]).get(row.id)
+        if detail:
+            code, response = detail
+            passage = verified_passage(
+                response_body(response.value_json), row.anchor_json
+            )
+            summary = (
+                passage
+                if passage is not None
+                else "Source passage could not be verified"
+            )
+            return (
+                f"Coded passage · {code.name}",
+                summary,
+                f"/projects/{study.project_id}/workspace/coding?study_id={study.id}",
+            )
         return (
             "Coded passage",
             f"Code application #{row.id}",
