@@ -103,6 +103,7 @@ from .findings import finding_text
 from .analysis_objects import analytical_study_permission
 from .analysis_projections import coded_passage_projections
 from .analysis_router import include_analysis_router
+from .analysis_audit import ACTION_FAMILIES, ENTITY_MODELS, analysis_audit_page
 from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
@@ -3558,7 +3559,7 @@ def create_code_application(study_id:int,response_id:int,start:int=Form(...),end
     except (ValueError,PermissionError) as exc: raise HTTPException(400,str(exc)) from exc
     try: db.flush()
     except IntegrityError: db.rollback(); raise HTTPException(409,"That exact code application already exists")
-    for row in rows: audit(db,u.organisation_id,u.id,"code_application.created","code_application",row.id,"passage coding")
+    for row in rows: audit(db,u.organisation_id,u.id,"code_application.created","code_application",row.id,"passage coding",project_id=s.project_id,study_id=s.id)
     db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 @app.post("/studies/{study_id}/code-applications/{application_id}/delete")
@@ -3566,7 +3567,7 @@ def remove_code_application(study_id:int,application_id:int,u=Depends(current_us
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
     row=db.scalar(select(CodeApplication).where(CodeApplication.id==application_id,CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id==s.id))
     if row is None: raise HTTPException(404,"Code application not found")
-    audit(db,u.organisation_id,u.id,"code_application.removed","code_application",row.id,"passage coding"); remove_analytical_references(db,{"code_application":{row.id}}); db.delete(row); db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
+    audit(db,u.organisation_id,u.id,"code_application.removed","code_application",row.id,"passage coding",project_id=s.project_id,study_id=s.id); remove_analytical_references(db,{"code_application":{row.id}}); db.delete(row); db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 
 @app.post("/studies/{study_id}/responses/{response_id}/annotations")
@@ -3581,7 +3582,7 @@ def create_research_annotation(study_id:int,response_id:int,start:int=Form(...),
         target=AnalysisTarget(organisation_id=u.organisation_id,study_id=s.id,target_type="activity_response",activity_response_id=response.id,anchor_json="{}",created_by_id=u.id); db.add(target); db.flush()
     try: row=create_annotation(db,u,target=target,text=source_text,body=body,start=start,end=end)
     except (ValueError,PermissionError) as exc: raise HTTPException(400,str(exc)) from exc
-    db.flush(); audit(db,u.organisation_id,u.id,"research_annotation.created","research_annotation",row.id,"passage annotation")
+    db.flush(); audit(db,u.organisation_id,u.id,"research_annotation.created","research_annotation",row.id,"passage annotation",project_id=s.project_id,study_id=s.id)
     db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 
@@ -3597,14 +3598,14 @@ def update_research_annotation(study_id:int,annotation_id:int,body:str=Form(...,
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); row=editable_annotation(db,u,s,annotation_id)
     try: row.body=normalise_annotation_body(body)
     except ValueError as exc: raise HTTPException(400,str(exc)) from exc
-    audit(db,u.organisation_id,u.id,"research_annotation.updated","research_annotation",row.id,"annotation text updated")
+    audit(db,u.organisation_id,u.id,"research_annotation.updated","research_annotation",row.id,"annotation text updated",project_id=s.project_id,study_id=s.id)
     db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 
 @app.post("/studies/{study_id}/annotations/{annotation_id}/delete")
 def remove_research_annotation(study_id:int,annotation_id:int,u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); row=editable_annotation(db,u,s,annotation_id)
-    audit(db,u.organisation_id,u.id,"research_annotation.removed","research_annotation",row.id,"passage annotation"); remove_analytical_references(db,{"annotation":{row.id}}); db.delete(row); db.commit()
+    audit(db,u.organisation_id,u.id,"research_annotation.removed","research_annotation",row.id,"passage annotation",project_id=s.project_id,study_id=s.id); remove_analytical_references(db,{"annotation":{row.id}}); db.delete(row); db.commit()
     return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 
@@ -3636,7 +3637,7 @@ def create_research_memo(study_id:int,scope_ref:str=Form(...),title:str=Form(...
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
     try: row=create_memo(db,u,study_id=s.id,scope_ref=scope_ref,title=title,body=body)
     except ValueError as exc: raise HTTPException(400,str(exc)) from exc
-    db.flush(); audit(db,u.organisation_id,u.id,"research_memo.created","research_memo",row.id,f"{row.scope_type} memo")
+    db.flush(); audit(db,u.organisation_id,u.id,"research_memo.created","research_memo",row.id,f"{row.scope_type} memo",project_id=s.project_id,study_id=s.id)
     db.commit(); return RedirectResponse(f"/studies/{s.id}/memos",303)
 
 
@@ -3653,7 +3654,7 @@ def update_research_memo(study_id:int,memo_id:int,title:str=Form(...,max_length=
     if row.archived_at is not None: raise HTTPException(409,"Restore this memo before editing it")
     try: row.title,row.body=memo_text(title,body)
     except ValueError as exc: raise HTTPException(400,str(exc)) from exc
-    audit(db,u.organisation_id,u.id,"research_memo.updated","research_memo",row.id,"memo content updated"); db.commit()
+    audit(db,u.organisation_id,u.id,"research_memo.updated","research_memo",row.id,"memo content updated",project_id=s.project_id,study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/memos",303)
 
 
@@ -3662,7 +3663,7 @@ def set_research_memo_archive(study_id:int,memo_id:int,action:str,u=Depends(curr
     if action not in {"archive","restore"}: raise HTTPException(404,"Memo action not found")
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); row=changeable_memo(db,u,s,memo_id)
     row.archived_at=now() if action=="archive" else None; row.archived_by_id=u.id if action=="archive" else None
-    audit(db,u.organisation_id,u.id,f"research_memo.{action}d","research_memo",row.id,f"{row.scope_type} memo"); db.commit()
+    audit(db,u.organisation_id,u.id,f"research_memo.{action}d","research_memo",row.id,f"{row.scope_type} memo",project_id=s.project_id,study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/memos?include_archived=true",303)
 
 
@@ -3695,7 +3696,7 @@ def create_analytical_relationship(study_id:int,source_ref:str=Form(...),relatio
     except ValueError as exc: raise HTTPException(400,str(exc)) from exc
     try: db.flush()
     except IntegrityError: db.rollback(); raise HTTPException(409,"That analytical relationship already exists")
-    audit(db,u.organisation_id,u.id,"analytical_relationship.created","analytical_relationship",row.id,relationship_type); db.commit()
+    audit(db,u.organisation_id,u.id,"analytical_relationship.created","analytical_relationship",row.id,relationship_type,project_id=s.project_id,study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/relationships",303)
 
 
@@ -3705,7 +3706,7 @@ def remove_analytical_relationship(study_id:int,relationship_id:int,u=Depends(cu
     try: row=changeable_relationship(db,u,study_id=s.id,relationship_id=relationship_id)
     except ValueError as exc: raise HTTPException(404,str(exc)) from exc
     except PermissionError as exc: raise HTTPException(403,str(exc)) from exc
-    audit(db,u.organisation_id,u.id,"analytical_relationship.removed","analytical_relationship",row.id,row.relationship_type); db.delete(row); db.commit()
+    audit(db,u.organisation_id,u.id,"analytical_relationship.removed","analytical_relationship",row.id,row.relationship_type,project_id=s.project_id,study_id=s.id); db.delete(row); db.commit()
     return RedirectResponse(f"/studies/{s.id}/relationships",303)
 
 
@@ -3765,7 +3766,7 @@ def create_image_evidence_region(evidence_id:int,x:float=Form(...),y:float=Form(
     if not evidence_row.content_type.startswith("image/") or evidence_row.scan_status!="clean": raise HTTPException(400,"Only clean image evidence can be region-analysed")
     try: target,applications,annotation=create_image_region(db,u,study_id=s.id,evidence_id=evidence_row.id,x=x,y=y,width=width,height=height,code_ids=code_ids,annotation_body=annotation_body)
     except ValueError as exc: raise HTTPException(400,str(exc)) from exc
-    audit(db,u.organisation_id,u.id,"evidence_region.created","analysis_target",target.id,f"image region with {len(applications)} codes and annotation {bool(annotation)}")
+    audit(db,u.organisation_id,u.id,"evidence_region.created","analysis_target",target.id,f"image region with {len(applications)} codes and annotation {bool(annotation)}",project_id=s.project_id,study_id=s.id)
     db.commit(); return RedirectResponse(f"/evidence/{evidence_row.id}/analysis",303)
 
 
@@ -3780,7 +3781,7 @@ def remove_image_evidence_region(evidence_id:int,target_id:int,u=Depends(current
     application_ids=set(db.scalars(select(CodeApplication.id).where(CodeApplication.analysis_target_id==target.id))); annotation_ids=set(db.scalars(select(ResearchAnnotation.id).where(ResearchAnnotation.analysis_target_id==target.id))); memo_ids=set(db.scalars(select(ResearchMemo.id).where(ResearchMemo.analysis_target_id==target.id)))
     remove_analytical_references(db,{"analysis_target":{target.id},"code_application":application_ids,"annotation":annotation_ids,"memo":memo_ids})
     db.execute(delete(CodeApplication).where(CodeApplication.id.in_(application_ids))); db.execute(delete(ResearchAnnotation).where(ResearchAnnotation.id.in_(annotation_ids))); db.execute(delete(ResearchMemo).where(ResearchMemo.id.in_(memo_ids)))
-    audit(db,u.organisation_id,u.id,"evidence_region.removed","analysis_target",target.id,"image region"); db.delete(target); db.commit()
+    audit(db,u.organisation_id,u.id,"evidence_region.removed","analysis_target",target.id,"image region",project_id=s.project_id,study_id=s.id); db.delete(target); db.commit()
     return RedirectResponse(f"/evidence/{evidence_row.id}/analysis",303)
 
 
@@ -3824,7 +3825,7 @@ def create_research_code(study_id: int, name: str = Form(...), definition: str =
     s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
     try: row = create_code(db, u, s, name=name, definition=definition, parent_code_id=parent_code_id)
     except ValueError as exc: raise HTTPException(400, str(exc)) from exc
-    db.flush(); audit(db, u.organisation_id, u.id, "research_code.created", "research_code", row.id, row.name); db.commit()
+    db.flush(); audit(db, u.organisation_id, u.id, "research_code.created", "research_code", row.id, row.name, project_id=s.project_id, study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/codebook", 303)
 
 
@@ -3835,7 +3836,7 @@ def edit_research_code(study_id: int, code_id: int, name: str = Form(...), defin
     if row is None: raise HTTPException(404, "Code not found")
     try: hierarchy_changed = update_code(db, row, name=name, definition=definition, parent_code_id=parent_code_id)
     except ValueError as exc: raise HTTPException(400, str(exc)) from exc
-    audit(db, u.organisation_id, u.id, "research_code.hierarchy_changed" if hierarchy_changed else "research_code.edited", "research_code", row.id, row.name); db.commit()
+    audit(db, u.organisation_id, u.id, "research_code.hierarchy_changed" if hierarchy_changed else "research_code.edited", "research_code", row.id, row.name, project_id=s.project_id, study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/codebook", 303)
 
 
@@ -3844,7 +3845,7 @@ def archive_research_code(study_id: int, code_id: int, u=Depends(current_user), 
     s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
     row = db.scalar(select(ResearchCode).where(ResearchCode.id == code_id, ResearchCode.organisation_id == u.organisation_id, ResearchCode.study_id == s.id))
     if row is None: raise HTTPException(404, "Code not found")
-    archive_code(row, u); audit(db, u.organisation_id, u.id, "research_code.archived", "research_code", row.id, row.name); db.commit()
+    archive_code(row, u); audit(db, u.organisation_id, u.id, "research_code.archived", "research_code", row.id, row.name, project_id=s.project_id, study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/codebook?include_archived=true", 303)
 
 
@@ -3853,7 +3854,7 @@ def restore_research_code(study_id: int, code_id: int, u=Depends(current_user), 
     s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
     row = db.scalar(select(ResearchCode).where(ResearchCode.id == code_id, ResearchCode.organisation_id == u.organisation_id, ResearchCode.study_id == s.id))
     if row is None: raise HTTPException(404, "Code not found")
-    restore_code(row); audit(db, u.organisation_id, u.id, "research_code.restored", "research_code", row.id, row.name); db.commit()
+    restore_code(row); audit(db, u.organisation_id, u.id, "research_code.restored", "research_code", row.id, row.name, project_id=s.project_id, study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/codebook?include_archived=true", 303)
 
 
@@ -3866,6 +3867,54 @@ def project_workspace_analysis(project_id: int, request: Request, u=Depends(curr
     configurations = db.scalars(select(StudyMethodologyConfiguration).where(StudyMethodologyConfiguration.organisation_id == u.organisation_id, StudyMethodologyConfiguration.study_id.in_(study_ids))).all() if study_ids else []
     ai_governance = {row.study_id: row.ai_enabled for row in configurations}
     return render(request, "research_analysis.html", user=u, **_workspace_context(project_row, studies), themes=themes, suggestions=suggestions, permissions=permissions, ai_governance=ai_governance, ai_available=False, ai_unavailable_reason="No approved provider-backed AI job is configured. Participant material will not be sent to an external provider.")
+
+
+def project_workspace_audit(
+    project_id: int,
+    request: Request,
+    page: int = 1,
+    study_id: str | None = None,
+    actor_user_id: str | None = None,
+    action_family: str = "",
+    entity_type: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    u=Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    selected_study_id = optional_positive_query_id(study_id, "Study")
+    selected_actor_id = optional_positive_query_id(actor_user_id, "Actor")
+    if selected_actor_id is not None and db.scalar(select(User.id).where(User.id == selected_actor_id, User.organisation_id == u.organisation_id)) is None:
+        raise HTTPException(404, "Actor is unavailable")
+    try:
+        start = datetime.strptime(date_from, "%Y-%m-%d") if date_from else None
+        end = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1) if date_to else None
+    except ValueError as exc:
+        raise HTTPException(422, "Audit dates must use YYYY-MM-DD") from exc
+    if start and end and start >= end:
+        raise HTTPException(422, "Audit start date must not be after the end date")
+    try:
+        rows, total, pages, truncated, actors = analysis_audit_page(
+            db, u, project_row.id, studies, page=page,
+            study_id=selected_study_id, actor_user_id=selected_actor_id,
+            action_family=action_family, entity_type=entity_type,
+            date_from=start, date_to=end,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    actor_options = sorted(actors.values(), key=lambda actor: actor.name.lower())
+    return render(
+        request, "research_audit.html", user=u,
+        **_workspace_context(project_row, studies), rows=rows, total=total,
+        page=min(max(1, page), pages), pages=pages, truncated=truncated,
+        actor_options=actor_options, action_families=ACTION_FAMILIES,
+        entity_types=ENTITY_MODELS, selected_study_id=selected_study_id,
+        selected_actor_id=selected_actor_id, selected_action_family=action_family,
+        selected_entity_type=entity_type, date_from=date_from, date_to=date_to,
+        previous_page_url=page_url(request, page - 1) if page > 1 else "",
+        next_page_url=page_url(request, page + 1) if page < pages else "",
+    )
 @app.post("/projects/{project_id}/edit")
 def edit_project(project_id:int,title:str=Form(...),description:str=Form(""),status_value:str=Form(...),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=project(db,project_id,u.organisation_id); require_project_permission(db,u,p,edit=True); enum_value(status_value,ProjectStatus,"project status"); p.title=title.strip(); p.description=description.strip(); p.status=status_value; audit(db,u.organisation_id,u.id,"project.updated","project",p.id,p.title); db.commit(); return RedirectResponse(f"/projects/{p.id}",303)
@@ -4180,7 +4229,7 @@ def review_research_analysis(study_id:int,suggestion_id:int,decision:str=Form(..
     if not row: raise HTTPException(404,"Suggestion not found")
     try: review_suggestion(u,row,decision,note)
     except (PermissionError,ValueError) as exc: raise HTTPException(400,str(exc))
-    audit(db,u.organisation_id,u.id,f"research_analysis.{decision}","research_analysis_suggestion",row.id,row.source_response_id.__str__()); db.commit()
+    audit(db,u.organisation_id,u.id,f"research_analysis.{decision}","research_analysis_suggestion",row.id,"AI suggestion disposition recorded",project_id=s.project_id,study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}",303)
 
 
@@ -4231,8 +4280,8 @@ def convert_research_analysis_to_finding(
     suggestion.status = "converted"
     suggestion.reviewer_user_id = u.id
     suggestion.reviewed_at = datetime.now(timezone.utc)
-    audit(db, u.organisation_id, u.id, "research_analysis.converted", "research_analysis_suggestion", suggestion.id, f"research finding {finding.id}")
-    audit(db, u.organisation_id, u.id, "research_finding.created_from_ai_suggestion", "research_finding", finding.id, f"suggestion {suggestion.id}")
+    audit(db, u.organisation_id, u.id, "research_analysis.converted", "research_analysis_suggestion", suggestion.id, f"research finding {finding.id}", project_id=s.project_id, study_id=s.id)
+    audit(db, u.organisation_id, u.id, "research_finding.created_from_ai_suggestion", "research_finding", finding.id, f"suggestion {suggestion.id}", project_id=s.project_id, study_id=s.id)
     db.commit()
     return RedirectResponse(f"/studies/{s.id}/findings#finding-{finding.id}", 303)
 @app.post("/studies/{study_id}/evidence-confidence")
@@ -4563,6 +4612,7 @@ include_analysis_router(app, {
     "themes": project_workspace_themes,
     "codebook": study_codebook,
     "analysis": project_workspace_analysis,
+    "audit": project_workspace_audit,
     "theme_explorer": study_theme_explorer,
 })
 
@@ -4599,7 +4649,7 @@ def create_research_theme(
     except (PermissionError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     db.flush()
-    audit(db, u.organisation_id, u.id, "research_theme.created", "research_theme", row.id, row.name)
+    audit(db, u.organisation_id, u.id, "research_theme.created", "research_theme", row.id, row.name, project_id=s.project_id, study_id=s.id)
     db.commit()
     return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
 
@@ -4610,7 +4660,7 @@ def edit_research_theme(study_id: int, theme_id: int, name: str = Form(...), des
     row = _scoped_theme(db, u, s, theme_id)
     try: update_theme(row, name=name, description=description)
     except ValueError as exc: raise HTTPException(400, str(exc)) from exc
-    audit(db, u.organisation_id, u.id, "research_theme.refined", "research_theme", row.id, row.name); db.commit()
+    audit(db, u.organisation_id, u.id, "research_theme.refined", "research_theme", row.id, row.name, project_id=s.project_id, study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
 
 
@@ -4618,7 +4668,7 @@ def edit_research_theme(study_id: int, theme_id: int, name: str = Form(...), des
 def archive_research_theme(study_id: int, theme_id: int, u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
     s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
     row = _scoped_theme(db, u, s, theme_id); archive_theme(row, u)
-    audit(db, u.organisation_id, u.id, "research_theme.archived", "research_theme", row.id); db.commit()
+    audit(db, u.organisation_id, u.id, "research_theme.archived", "research_theme", row.id, project_id=s.project_id, study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
 
 
@@ -4626,7 +4676,7 @@ def archive_research_theme(study_id: int, theme_id: int, u=Depends(current_user)
 def restore_research_theme(study_id: int, theme_id: int, u=Depends(current_user), csrf_ok: None = Depends(csrf_protect), db: Session = Depends(get_db)):
     s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True)
     row = _scoped_theme(db, u, s, theme_id); restore_theme(row)
-    audit(db, u.organisation_id, u.id, "research_theme.restored", "research_theme", row.id); db.commit()
+    audit(db, u.organisation_id, u.id, "research_theme.restored", "research_theme", row.id, project_id=s.project_id, study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
 
 
@@ -4638,7 +4688,7 @@ def link_research_theme_code(study_id: int, theme_id: int, research_code_id: int
     if not code: raise HTTPException(400, "Code is unavailable in this study")
     try: row = link_code(db, u, theme_row, code)
     except ValueError as exc: raise HTTPException(400, str(exc)) from exc
-    db.flush(); audit(db, u.organisation_id, u.id, "research_theme.code_linked", "research_theme_code", row.id); db.commit()
+    db.flush(); audit(db, u.organisation_id, u.id, "research_theme.code_linked", "research_theme_code", row.id, project_id=s.project_id, study_id=s.id); db.commit()
     return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
 
 
@@ -4647,7 +4697,7 @@ def unlink_research_theme_code(study_id: int, theme_id: int, link_id: int, u=Dep
     s = study(db, study_id, u.organisation_id); require_study_permission(db, u, s, edit=True); _scoped_theme(db, u, s, theme_id)
     row = db.scalar(select(ResearchThemeCode).where(ResearchThemeCode.id == link_id, ResearchThemeCode.organisation_id == u.organisation_id, ResearchThemeCode.study_id == s.id, ResearchThemeCode.research_theme_id == theme_id))
     if not row: raise HTTPException(404, "Theme code link not found")
-    audit(db, u.organisation_id, u.id, "research_theme.code_unlinked", "research_theme_code", row.id); db.delete(row); db.commit()
+    audit(db, u.organisation_id, u.id, "research_theme.code_unlinked", "research_theme_code", row.id, project_id=s.project_id, study_id=s.id); db.delete(row); db.commit()
     return RedirectResponse(f"/studies/{s.id}/theme-explorer", 303)
 
 
