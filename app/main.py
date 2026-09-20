@@ -3416,6 +3416,33 @@ def project_workspace_entries_page(
     annotation_permissions={row.id: study_editability.get(row.study_id,False) and (row.author_id==u.id or study_permissions.get(row.study_id)=="manage") for row in annotation_rows}
     return render(request, "research_entries.html", user=u, **_workspace_context(project_row, studies), items=items, total=total, pages=pages, page=page, previous_url=page_url(request, page - 1) if page > 1 else None, next_url=page_url(request, page + 1) if page < pages else None, participant_rows=participant_rows, prompts=prompts, codes=codes, filters={"participant_id": selected_participant_id, "prompt_id": selected_prompt_id, "code": code, "q": q, "date_from": date_from, "date_to": date_to, "evidence": evidence, "order": order}, targets=targets, applications=apps_by_response, app_passages=app_passages, code_map=code_map, users=users, active_codes=active_codes, study_editability=study_editability, annotations=annotations_by_response, annotation_passages=annotation_passages, annotation_permissions=annotation_permissions)
 
+
+@app.get("/projects/{project_id}/workspace/coding", response_class=HTMLResponse)
+def project_coding_retrieval_page(project_id:int,request:Request,study_id:str|None=Query(None,max_length=20),code_id:str|None=Query(None,max_length=20),participant_id:str|None=Query(None,max_length=20),researcher_id:str|None=Query(None,max_length=20),date_from:str=Query("",max_length=10),date_to:str=Query("",max_length=10),q:str=Query("",max_length=200),page:int=Query(1,ge=1),u=Depends(current_user),db:Session=Depends(get_db)):
+    project_row,studies=project_workspace_scope(db,u,project_id); study_ids=[row.id for row in studies]
+    selected_study=optional_positive_query_id(study_id,"Study"); selected_code=optional_positive_query_id(code_id,"Code"); selected_participant=optional_positive_query_id(participant_id,"Participant"); selected_researcher=optional_positive_query_id(researcher_id,"Researcher")
+    if selected_study is not None and selected_study not in study_ids: raise HTTPException(404,"Study not found")
+    stmt=select(CodeApplication,AnalysisTarget,ActivityResponse,Participant,ResearchCode,User,Activity).join(AnalysisTarget,AnalysisTarget.id==CodeApplication.analysis_target_id).join(ActivityResponse,ActivityResponse.id==AnalysisTarget.activity_response_id).join(Participant,Participant.id==ActivityResponse.participant_id).join(ResearchCode,ResearchCode.id==CodeApplication.research_code_id).join(User,User.id==CodeApplication.applied_by_id).join(Activity,Activity.id==ActivityResponse.activity_id).where(CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id.in_(study_ids),AnalysisTarget.target_type=="activity_response") if study_ids else select(CodeApplication,AnalysisTarget,ActivityResponse,Participant,ResearchCode,User,Activity).where(False)
+    for value,column in ((selected_study,CodeApplication.study_id),(selected_code,CodeApplication.research_code_id),(selected_participant,ActivityResponse.participant_id),(selected_researcher,CodeApplication.applied_by_id)):
+        if value is not None: stmt=stmt.where(column==value)
+    for raw,column,upper in ((date_from,CodeApplication.created_at,False),(date_to,CodeApplication.created_at,True)):
+        if raw:
+            try: parsed=datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
+            except ValueError as exc: raise HTTPException(422,"Coding date must use YYYY-MM-DD.") from exc
+            if upper: parsed+=timedelta(days=1)
+            stmt=stmt.where(column < parsed if upper else column >= parsed)
+    if q.strip(): stmt=stmt.where(ActivityResponse.value_json.ilike(f"%{q.strip()}%"))
+    total=int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0); per_page=30; pages=max(1,(total+per_page-1)//per_page)
+    rows=db.execute(stmt.order_by(CodeApplication.created_at.desc(),CodeApplication.id.desc()).offset((page-1)*per_page).limit(per_page)).all()
+    results=[]
+    for application,target,response,participant,code_row,researcher,activity in rows:
+        results.append({"application":application,"response":response,"participant":participant,"code":code_row,"researcher":researcher,"activity":activity,"passage":verified_passage(response_body(response.value_json),application.anchor_json)})
+    codes=db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id.in_(study_ids)).order_by(ResearchCode.name).limit(1000)).all() if study_ids else []
+    participants=db.scalars(select(Participant).join(ActivityResponse,ActivityResponse.participant_id==Participant.id).where(Participant.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(study_ids)).distinct().order_by(Participant.reference).limit(1000)).all() if study_ids else []
+    researchers=db.scalars(select(User).join(CodeApplication,CodeApplication.applied_by_id==User.id).where(User.organisation_id==u.organisation_id,CodeApplication.study_id.in_(study_ids)).distinct().order_by(User.name).limit(500)).all() if study_ids else []
+    count_rows=db.execute(select(ResearchCode.id,ResearchCode.name,ResearchCode.archived_at,func.count(CodeApplication.id)).join(CodeApplication,CodeApplication.research_code_id==ResearchCode.id).where(ResearchCode.organisation_id==u.organisation_id,CodeApplication.study_id.in_(study_ids)).group_by(ResearchCode.id,ResearchCode.name,ResearchCode.archived_at).order_by(func.count(CodeApplication.id).desc(),ResearchCode.name).limit(100)).all() if study_ids else []
+    return render(request,"research_coding_retrieval.html",user=u,**_workspace_context(project_row,studies),results=results,total=total,page=page,pages=pages,previous_url=page_url(request,page-1) if page>1 else None,next_url=page_url(request,page+1) if page<pages else None,codes=codes,participants=participants,researchers=researchers,code_counts=count_rows,study_map={row.id:row for row in studies},filters={"study_id":selected_study,"code_id":selected_code,"participant_id":selected_participant,"researcher_id":selected_researcher,"date_from":date_from,"date_to":date_to,"q":q})
+
 @app.post("/studies/{study_id}/responses/{response_id}/code-applications")
 def create_code_application(study_id:int,response_id:int,start:int=Form(...),end:int=Form(...),code_ids:list[int]=Form(...),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
