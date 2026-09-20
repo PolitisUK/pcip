@@ -39,7 +39,11 @@ flowchart TD
 
 | Path | Responsibility |
 |---|---|
-| `app/main.py` | FastAPI construction, middleware, startup, route handlers, access checks, participant portal, privacy workflows, health endpoints, and most business logic |
+| `app/main.py` | FastAPI construction, middleware, startup, composition of existing route handlers, access checks, participant portal, privacy workflows, and health endpoints |
+| `app/analysis_router.py` | Dedicated Analysis Workbench route registration boundary |
+| `app/analysis_objects.py` | Allow-listed, tenant/study/permission-scoped analytical object resolution |
+| `app/analysis_projections.py` | Bounded, source-traceable projections shared by analytical views |
+| `app/analysis_lifecycle.py` | Central cleanup hook for canonical analytical relationships |
 | `app/config.py` | Environment-backed Pydantic settings, Key Vault overrides, and hosted-environment safety validation |
 | `app/db.py` | SQLAlchemy engine, declarative base, session factory, and request-scoped session dependency |
 | `app/models.py` | SQLAlchemy ORM entities and database constraints |
@@ -196,7 +200,9 @@ Vault URLs. The authoritative variable catalogue remains
   path performs compensating deletion on handled scan/database failures, but a
   separate reconciliation process is still required for process termination or
   external inconsistency.
-- Application routing and business logic remain concentrated in `app/main.py`.
+- Non-workbench routing and substantial legacy handler logic remain
+  concentrated in `app/main.py`; the Analysis Workbench now has an incremental
+  router and service boundary for subsequent extraction.
 
 These boundaries are tracked with priorities and remediation criteria in
 `TECHNICAL_DEBT.md`.

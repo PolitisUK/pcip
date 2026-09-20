@@ -93,7 +93,11 @@ from .passage_coding import apply_codes, verified_passage
 from .annotations import create_annotation, normalise_annotation_body
 from .memos import create_memo, memo_text
 from .image_regions import create_image_region, parsed_region
-from .relationships import RELATIONSHIP_TYPES, create_relationship, remove_object_relationships
+from .relationships import RELATIONSHIP_TYPES, create_relationship
+from .analysis_lifecycle import remove_analytical_references
+from .analysis_objects import analytical_study_permission
+from .analysis_projections import coded_passage_projections
+from .analysis_router import include_analysis_router
 from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
@@ -1199,14 +1203,7 @@ def participant_export_payload(db: Session, row: Participant):
 
 
 def study_permission(db: Session, user: User, study_row: Study) -> str | None:
-    if user.role in {"owner", "admin"}:
-        return "manage"
-    if study_row.created_by_id == user.id:
-        return "edit"
-    access = db.scalar(select(StudyAccess).where(StudyAccess.study_id == study_row.id, StudyAccess.user_id == user.id, StudyAccess.organisation_id == user.organisation_id))
-    if access:
-        return access.permission
-    return "view" if user.role == "observer" else None
+    return analytical_study_permission(db, user, study_row)
 
 
 def require_study_permission(db: Session, user: User, study_row: Study, edit: bool = False):
@@ -3360,7 +3357,6 @@ def optional_positive_query_id(value: str | None, field: str) -> int | None:
     return identifier
 
 
-@app.get("/projects/{project_id}/workspace", response_class=HTMLResponse)
 def project_workspace(project_id: int, request: Request, u=Depends(current_user), db: Session = Depends(get_db)):
     project_row, studies = project_workspace_scope(db, u, project_id)
     study_ids = [row.id for row in studies]
@@ -3378,7 +3374,6 @@ def project_workspace(project_id: int, request: Request, u=Depends(current_user)
     return render(request, "research_workspace.html", user=u, **_workspace_context(project_row, studies), counts=counts, date_range=date_range, recent_entries=recent_entries, themes=themes)
 
 
-@app.get("/projects/{project_id}/workspace/entries", response_class=HTMLResponse)
 def project_workspace_entries_page(
     project_id: int, request: Request, participant_id: str | None = Query(None, max_length=20), prompt_id: str | None = Query(None, max_length=20),
     code: str = Query("", max_length=120), q: str = Query("", max_length=200), date_from: str = Query("", max_length=10), date_to: str = Query("", max_length=10),
@@ -3421,7 +3416,6 @@ def project_workspace_entries_page(
     return render(request, "research_entries.html", user=u, **_workspace_context(project_row, studies), items=items, total=total, pages=pages, page=page, previous_url=page_url(request, page - 1) if page > 1 else None, next_url=page_url(request, page + 1) if page < pages else None, participant_rows=participant_rows, prompts=prompts, codes=codes, filters={"participant_id": selected_participant_id, "prompt_id": selected_prompt_id, "code": code, "q": q, "date_from": date_from, "date_to": date_to, "evidence": evidence, "order": order}, targets=targets, applications=apps_by_response, app_passages=app_passages, code_map=code_map, users=users, active_codes=active_codes, study_editability=study_editability, annotations=annotations_by_response, annotation_passages=annotation_passages, annotation_permissions=annotation_permissions)
 
 
-@app.get("/projects/{project_id}/workspace/coding", response_class=HTMLResponse)
 def project_coding_retrieval_page(project_id:int,request:Request,study_id:str|None=Query(None,max_length=20),code_id:str|None=Query(None,max_length=20),participant_id:str|None=Query(None,max_length=20),researcher_id:str|None=Query(None,max_length=20),date_from:str=Query("",max_length=10),date_to:str=Query("",max_length=10),q:str=Query("",max_length=200),page:int=Query(1,ge=1),u=Depends(current_user),db:Session=Depends(get_db)):
     project_row,studies=project_workspace_scope(db,u,project_id); study_ids=[row.id for row in studies]
     selected_study=optional_positive_query_id(study_id,"Study"); selected_code=optional_positive_query_id(code_id,"Code"); selected_participant=optional_positive_query_id(participant_id,"Participant"); selected_researcher=optional_positive_query_id(researcher_id,"Researcher")
@@ -3448,7 +3442,6 @@ def project_coding_retrieval_page(project_id:int,request:Request,study_id:str|No
     return render(request,"research_coding_retrieval.html",user=u,**_workspace_context(project_row,studies),results=results,total=total,page=page,pages=pages,previous_url=page_url(request,page-1) if page>1 else None,next_url=page_url(request,page+1) if page<pages else None,codes=codes,participants=participants,researchers=researchers,code_counts=count_rows,study_map={row.id:row for row in studies},filters={"study_id":selected_study,"code_id":selected_code,"participant_id":selected_participant,"researcher_id":selected_researcher,"date_from":date_from,"date_to":date_to,"q":q})
 
 
-@app.get("/projects/{project_id}/workspace/matrices", response_class=HTMLResponse)
 def project_case_matrix_page(project_id:int,request:Request,study_id:str|None=Query(None,max_length=20),dimension:str=Query("code",pattern="^(code|theme)$"),column_id:str|None=Query(None,max_length=20),u=Depends(current_user),db:Session=Depends(get_db)):
     project_row,studies=project_workspace_scope(db,u,project_id); accessible_study_ids=[row.id for row in studies]
     selected_study=optional_positive_query_id(study_id,"Study"); selected_column=optional_positive_query_id(column_id,"Matrix column")
@@ -3467,20 +3460,19 @@ def project_case_matrix_page(project_id:int,request:Request,study_id:str|None=Qu
     else:
         for link in theme_links: code_to_columns.setdefault(link.research_code_id,[]).append(link.research_theme_id)
     relevant_code_ids=set(code_to_columns)
-    stmt=select(CodeApplication,AnalysisTarget,ActivityResponse,Participant,ResearchCode).join(AnalysisTarget,AnalysisTarget.id==CodeApplication.analysis_target_id).join(ActivityResponse,ActivityResponse.id==AnalysisTarget.activity_response_id).join(Participant,Participant.id==ActivityResponse.participant_id).join(ResearchCode,ResearchCode.id==CodeApplication.research_code_id).where(CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id.in_(study_ids),CodeApplication.research_code_id.in_(relevant_code_ids),AnalysisTarget.target_type=="activity_response") if relevant_code_ids else select(CodeApplication,AnalysisTarget,ActivityResponse,Participant,ResearchCode).where(False)
-    raw_rows=db.execute(stmt.order_by(Participant.reference,CodeApplication.created_at).limit(5001)).all(); source_limit_reached=len(raw_rows)>5000; raw_rows=raw_rows[:5000]
+    projection_rows,source_limit_reached=coded_passage_projections(db,organisation_id=u.organisation_id,study_ids=study_ids,code_ids=relevant_code_ids,limit=5000)
     matrix_rows:dict[int,dict]={}
-    for application,target,response,participant,code_row in raw_rows:
+    for item in projection_rows:
+        application,response,participant,code_row=item.application,item.response,item.participant,item.code
+        if code_row.id not in relevant_code_ids: continue
         matrix_row=matrix_rows.setdefault(participant.id,{"participant":participant,"cells":{}})
-        passage=verified_passage(response_body(response.value_json),application.anchor_json)
         for matrix_column_id in code_to_columns.get(code_row.id,[]):
-            matrix_row["cells"].setdefault(matrix_column_id,[]).append({"application":application,"response":response,"code":code_row,"passage":passage})
+            matrix_row["cells"].setdefault(matrix_column_id,[]).append({"application":application,"response":response,"code":code_row,"passage":item.passage})
     participants=db.scalars(select(Participant).join(StudyEnrolment,StudyEnrolment.participant_id==Participant.id).where(Participant.organisation_id==u.organisation_id,StudyEnrolment.organisation_id==u.organisation_id,StudyEnrolment.study_id.in_(study_ids)).distinct().order_by(Participant.reference).limit(500)).all() if study_ids else []
     for participant in participants: matrix_rows.setdefault(participant.id,{"participant":participant,"cells":{}})
     return render(request,"research_case_matrix.html",user=u,**_workspace_context(project_row,studies),columns=columns,matrix_rows=sorted(matrix_rows.values(),key=lambda item:item["participant"].reference),filters={"study_id":selected_study,"dimension":dimension,"column_id":selected_column},available_columns=available_columns,source_limit_reached=source_limit_reached)
 
 
-@app.get("/projects/{project_id}/workspace/longitudinal", response_class=HTMLResponse)
 def project_longitudinal_page(project_id:int,request:Request,study_id:str|None=Query(None,max_length=20),participant_id:str|None=Query(None,max_length=20),dimension:str=Query("code",pattern="^(code|theme)$"),column_id:str|None=Query(None,max_length=20),context_key:str=Query("",max_length=80),context_value:str=Query("",max_length=120),page:int=Query(1,ge=1),u=Depends(current_user),db:Session=Depends(get_db)):
     project_row,studies=project_workspace_scope(db,u,project_id); accessible_study_ids=[row.id for row in studies]
     selected_study=optional_positive_query_id(study_id,"Study"); selected_participant=optional_positive_query_id(participant_id,"Participant"); selected_column=optional_positive_query_id(column_id,"Longitudinal dimension")
@@ -3499,22 +3491,22 @@ def project_longitudinal_page(project_id:int,request:Request,study_id:str|None=Q
     response_stmt=select(ActivityResponse,Participant,Activity).join(Participant,Participant.id==ActivityResponse.participant_id).join(Activity,Activity.id==ActivityResponse.activity_id).where(ActivityResponse.organisation_id==u.organisation_id,ActivityResponse.study_id.in_(study_ids),ActivityResponse.status=="submitted") if study_ids else select(ActivityResponse,Participant,Activity).where(False)
     if selected_participant is not None: response_stmt=response_stmt.where(ActivityResponse.participant_id==selected_participant)
     response_rows=db.execute(response_stmt.order_by(ActivityResponse.submitted_at,ActivityResponse.updated_at,ActivityResponse.id).limit(5001)).all(); source_limit_reached=len(response_rows)>5000; response_rows=response_rows[:5000]
-    response_ids=[row.id for row,_,_ in response_rows]; targets={row.activity_response_id:row for row in db.scalars(select(AnalysisTarget).where(AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.study_id.in_(study_ids),AnalysisTarget.activity_response_id.in_(response_ids),AnalysisTarget.target_type=="activity_response")).all()} if response_ids else {}
-    target_ids=[row.id for row in targets.values()]; applications=db.scalars(select(CodeApplication).where(CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id.in_(study_ids),CodeApplication.analysis_target_id.in_(target_ids)).order_by(CodeApplication.created_at)).all() if target_ids else []
-    code_map={row.id:row for row in codes}; target_to_response={target.id:response_id for response_id,target in targets.items()}; applications_by_response:dict[int,list[CodeApplication]]={}
-    for application in applications: applications_by_response.setdefault(target_to_response.get(application.analysis_target_id),[]).append(application)
+    projection_rows,coding_limit_reached=coded_passage_projections(db,organisation_id=u.organisation_id,study_ids=study_ids,limit=5000)
+    source_limit_reached=source_limit_reached or coding_limit_reached
+    applications_by_response:dict[int,list]={}
+    for item in projection_rows: applications_by_response.setdefault(item.response.id,[]).append(item)
     events=[]; context_keys:set[str]=set(); period_counts:dict[str,dict[str,int]]={}
     for response,participant,activity in response_rows:
         context=response_context(response.value_json); context_keys.update(context)
         if context_key and context_key not in context: continue
         if context_value.strip() and context_value.strip().lower() not in " ".join(f"{key} {value}" for key,value in context.items()).lower(): continue
         relevant=[]
-        for application in applications_by_response.get(response.id,[]):
-            code_row=code_map.get(application.research_code_id); linked_themes=code_to_themes.get(application.research_code_id,[])
+        for item in applications_by_response.get(response.id,[]):
+            application,code_row=item.application,item.code; linked_themes=code_to_themes.get(application.research_code_id,[])
             if selected_column is not None:
                 if dimension=="code" and application.research_code_id!=selected_column: continue
                 if dimension=="theme" and selected_column not in {row.id for row in linked_themes}: continue
-            relevant.append({"application":application,"code":code_row,"themes":linked_themes,"passage":verified_passage(response_body(response.value_json),application.anchor_json)})
+            relevant.append({"application":application,"code":code_row,"themes":linked_themes,"passage":item.passage})
         if selected_column is not None and not relevant: continue
         event_at=response.submitted_at or response.updated_at
         period=event_at.strftime("%Y-%m")
@@ -3545,7 +3537,7 @@ def remove_code_application(study_id:int,application_id:int,u=Depends(current_us
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
     row=db.scalar(select(CodeApplication).where(CodeApplication.id==application_id,CodeApplication.organisation_id==u.organisation_id,CodeApplication.study_id==s.id))
     if row is None: raise HTTPException(404,"Code application not found")
-    audit(db,u.organisation_id,u.id,"code_application.removed","code_application",row.id,"passage coding"); remove_object_relationships(db,"code_application",{row.id}); db.delete(row); db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
+    audit(db,u.organisation_id,u.id,"code_application.removed","code_application",row.id,"passage coding"); remove_analytical_references(db,{"code_application":{row.id}}); db.delete(row); db.commit(); return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 
 @app.post("/studies/{study_id}/responses/{response_id}/annotations")
@@ -3583,11 +3575,10 @@ def update_research_annotation(study_id:int,annotation_id:int,body:str=Form(...,
 @app.post("/studies/{study_id}/annotations/{annotation_id}/delete")
 def remove_research_annotation(study_id:int,annotation_id:int,u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); require_study_permission(db,u,s,edit=True); row=editable_annotation(db,u,s,annotation_id)
-    audit(db,u.organisation_id,u.id,"research_annotation.removed","research_annotation",row.id,"passage annotation"); remove_object_relationships(db,"annotation",{row.id}); db.delete(row); db.commit()
+    audit(db,u.organisation_id,u.id,"research_annotation.removed","research_annotation",row.id,"passage annotation"); remove_analytical_references(db,{"annotation":{row.id}}); db.delete(row); db.commit()
     return RedirectResponse(f"/projects/{s.project_id}/workspace/entries",303)
 
 
-@app.get("/studies/{study_id}/memos", response_class=HTMLResponse)
 def research_memos_page(study_id:int,request:Request,include_archived:bool=False,u=Depends(current_user),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); permission=require_study_permission(db,u,s)
     stmt=select(ResearchMemo).where(ResearchMemo.organisation_id==u.organisation_id,ResearchMemo.study_id==s.id)
@@ -3646,7 +3637,6 @@ def set_research_memo_archive(study_id:int,memo_id:int,action:str,u=Depends(curr
     return RedirectResponse(f"/studies/{s.id}/memos?include_archived=true",303)
 
 
-@app.get("/studies/{study_id}/relationships",response_class=HTMLResponse)
 def analytical_relationships_page(study_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
     s=study(db,study_id,u.organisation_id); permission=require_study_permission(db,u,s)
     targets=db.scalars(select(AnalysisTarget).where(AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.study_id==s.id).order_by(AnalysisTarget.id.desc()).limit(500)).all()
@@ -3688,7 +3678,6 @@ def remove_analytical_relationship(study_id:int,relationship_id:int,u=Depends(cu
     return RedirectResponse(f"/studies/{s.id}/relationships",303)
 
 
-@app.get("/projects/{project_id}/workspace/participants", response_class=HTMLResponse)
 def project_workspace_participants(project_id: int, request: Request, q: str = Query("", max_length=120), u=Depends(current_user), db: Session = Depends(get_db)):
     project_row, studies = project_workspace_scope(db, u, project_id)
     study_ids = [row.id for row in studies]
@@ -3701,7 +3690,6 @@ def project_workspace_participants(project_id: int, request: Request, q: str = Q
     return render(request, "research_participants.html", user=u, **_workspace_context(project_row, studies), participants=rows, response_counts=response_counts, q=q)
 
 
-@app.get("/projects/{project_id}/workspace/evidence", response_class=HTMLResponse)
 def project_workspace_evidence(project_id: int, request: Request, participant_id: int | None = Query(None, ge=1), page: int = Query(1, ge=1), u=Depends(current_user), db: Session = Depends(get_db)):
     project_row, studies = project_workspace_scope(db, u, project_id)
     study_ids = [row.id for row in studies]
@@ -3720,7 +3708,6 @@ def project_workspace_evidence(project_id: int, request: Request, participant_id
     return render(request, "research_evidence.html", user=u, **_workspace_context(project_row, studies), evidence_rows=evidence_rows, participants=participants, activities=activities, responses=responses, participant_rows=participant_rows, participant_id=participant_id, page=page, pages=max(1, (total + 35) // 36), total=total)
 
 
-@app.get("/evidence/{evidence_id}/analysis", response_class=HTMLResponse)
 def image_evidence_analysis_page(evidence_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
     evidence_row=resolve_org_scoped_evidence(db,u.organisation_id,evidence_id)
     if evidence_row is None: raise HTTPException(404,"Evidence not found")
@@ -3760,13 +3747,12 @@ def remove_image_evidence_region(evidence_id:int,target_id:int,u=Depends(current
     if target is None: raise HTTPException(404,"Image region not found")
     if target.created_by_id!=u.id and permission!="manage": raise HTTPException(403,"You cannot remove this image region")
     application_ids=set(db.scalars(select(CodeApplication.id).where(CodeApplication.analysis_target_id==target.id))); annotation_ids=set(db.scalars(select(ResearchAnnotation.id).where(ResearchAnnotation.analysis_target_id==target.id))); memo_ids=set(db.scalars(select(ResearchMemo.id).where(ResearchMemo.analysis_target_id==target.id)))
-    remove_object_relationships(db,"analysis_target",{target.id}); remove_object_relationships(db,"code_application",application_ids); remove_object_relationships(db,"annotation",annotation_ids); remove_object_relationships(db,"memo",memo_ids)
+    remove_analytical_references(db,{"analysis_target":{target.id},"code_application":application_ids,"annotation":annotation_ids,"memo":memo_ids})
     db.execute(delete(CodeApplication).where(CodeApplication.id.in_(application_ids))); db.execute(delete(ResearchAnnotation).where(ResearchAnnotation.id.in_(annotation_ids))); db.execute(delete(ResearchMemo).where(ResearchMemo.id.in_(memo_ids)))
     audit(db,u.organisation_id,u.id,"evidence_region.removed","analysis_target",target.id,"image region"); db.delete(target); db.commit()
     return RedirectResponse(f"/evidence/{evidence_row.id}/analysis",303)
 
 
-@app.get("/projects/{project_id}/workspace/themes", response_class=HTMLResponse)
 def project_workspace_themes(project_id: int, request: Request, u=Depends(current_user), db: Session = Depends(get_db)):
     project_row, studies = project_workspace_scope(db, u, project_id)
     study_ids = [row.id for row in studies]
@@ -3795,7 +3781,6 @@ def _study_codebook_rows(db: Session, user: User, study_row: Study, include_arch
     return rows, output
 
 
-@app.get("/studies/{study_id}/codebook", response_class=HTMLResponse)
 def study_codebook(study_id: int, request: Request, include_archived: bool = Query(False), u=Depends(current_user), db: Session = Depends(get_db)):
     s = study(db, study_id, u.organisation_id); permission = require_study_permission(db, u, s)
     all_codes, code_rows = _study_codebook_rows(db, u, s, include_archived)
@@ -3841,7 +3826,6 @@ def restore_research_code(study_id: int, code_id: int, u=Depends(current_user), 
     return RedirectResponse(f"/studies/{s.id}/codebook?include_archived=true", 303)
 
 
-@app.get("/projects/{project_id}/workspace/analysis", response_class=HTMLResponse)
 def project_workspace_analysis(project_id: int, request: Request, u=Depends(current_user), db: Session = Depends(get_db)):
     project_row, studies = project_workspace_scope(db, u, project_id)
     study_ids = [row.id for row in studies]
@@ -4447,7 +4431,6 @@ def _scoped_theme(db: Session, user: User, study_row: Study, theme_id: int) -> R
     return row
 
 
-@app.get("/studies/{study_id}/theme-explorer", response_class=HTMLResponse)
 def study_theme_explorer(study_id: int, request: Request, u=Depends(current_user), db: Session = Depends(get_db)):
     if not settings.research_intelligence_enabled:
         raise HTTPException(404, "Research Intelligence is disabled")
@@ -4476,6 +4459,24 @@ def study_theme_explorer(study_id: int, request: Request, u=Depends(current_user
         ).order_by(ResearchCode.name)).all(),
         can_edit=permission in {"edit", "manage"},
     )
+
+
+include_analysis_router(app, {
+    "workspace": project_workspace,
+    "entries": project_workspace_entries_page,
+    "coding": project_coding_retrieval_page,
+    "matrices": project_case_matrix_page,
+    "longitudinal": project_longitudinal_page,
+    "memos": research_memos_page,
+    "relationships": analytical_relationships_page,
+    "participants": project_workspace_participants,
+    "evidence": project_workspace_evidence,
+    "image_analysis": image_evidence_analysis_page,
+    "themes": project_workspace_themes,
+    "codebook": study_codebook,
+    "analysis": project_workspace_analysis,
+    "theme_explorer": study_theme_explorer,
+})
 
 
 @app.post("/studies/{study_id}/themes")
