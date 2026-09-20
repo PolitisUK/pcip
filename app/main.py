@@ -90,6 +90,7 @@ from .codebook import archive_code, create_code, restore_code, update_code
 from .passage_coding import apply_codes, verified_passage
 from .annotations import create_annotation, normalise_annotation_body
 from .memos import create_memo, memo_text
+from .image_regions import create_image_region, parsed_region
 from .research_workspace import response_body, response_codes, response_context, code_counts
 from .storage import storage
 from .privacy_lifecycle import process_deletion_request, revoke_participant_access
@@ -3596,6 +3597,50 @@ def project_workspace_evidence(project_id: int, request: Request, participant_id
     responses = {row.id: row for row in db.scalars(select(ActivityResponse).where(ActivityResponse.organisation_id == u.organisation_id, ActivityResponse.id.in_(response_ids))).all()} if response_ids else {}
     participant_rows = db.scalars(select(Participant).join(StudyEnrolment, StudyEnrolment.participant_id == Participant.id).where(Participant.organisation_id == u.organisation_id, StudyEnrolment.organisation_id == u.organisation_id, StudyEnrolment.study_id.in_(study_ids)).distinct().order_by(Participant.reference)).all() if study_ids else []
     return render(request, "research_evidence.html", user=u, **_workspace_context(project_row, studies), evidence_rows=evidence_rows, participants=participants, activities=activities, responses=responses, participant_rows=participant_rows, participant_id=participant_id, page=page, pages=max(1, (total + 35) // 36), total=total)
+
+
+@app.get("/evidence/{evidence_id}/analysis", response_class=HTMLResponse)
+def image_evidence_analysis_page(evidence_id:int,request:Request,u=Depends(current_user),db:Session=Depends(get_db)):
+    evidence_row=resolve_org_scoped_evidence(db,u.organisation_id,evidence_id)
+    if evidence_row is None: raise HTTPException(404,"Evidence not found")
+    s=study(db,evidence_row.study_id,u.organisation_id); permission=require_study_permission(db,u,s)
+    if not evidence_row.content_type.startswith("image/") or evidence_row.scan_status!="clean": raise HTTPException(400,"Only clean image evidence can be region-analysed")
+    targets=db.scalars(select(AnalysisTarget).where(AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.study_id==s.id,AnalysisTarget.evidence_file_id==evidence_row.id).order_by(AnalysisTarget.created_at)).all()
+    target_ids=[row.id for row in targets]
+    applications=db.scalars(select(CodeApplication).where(CodeApplication.organisation_id==u.organisation_id,CodeApplication.analysis_target_id.in_(target_ids))).all() if target_ids else []
+    annotations=db.scalars(select(ResearchAnnotation).where(ResearchAnnotation.organisation_id==u.organisation_id,ResearchAnnotation.analysis_target_id.in_(target_ids))).all() if target_ids else []
+    app_map={}; annotation_map={}
+    for row in applications: app_map.setdefault(row.analysis_target_id,[]).append(row)
+    for row in annotations: annotation_map.setdefault(row.analysis_target_id,[]).append(row)
+    codes={row.id:row for row in db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id==s.id)).all()}
+    users={row.id:row for row in db.scalars(select(User).where(User.organisation_id==u.organisation_id)).all()}
+    regions=[{"target":row,"anchor":parsed_region(row.anchor_json),"applications":app_map.get(row.id,[]),"annotations":annotation_map.get(row.id,[])} for row in targets]
+    return render(request,"research_image_analysis.html",user=u,evidence=evidence_row,study=s,project=db.get(Project,s.project_id),regions=regions,codes=codes,active_codes=[row for row in codes.values() if row.archived_at is None],users=users,can_edit=permission in {"edit","manage"},can_remove={row.id:permission=="manage" or row.created_by_id==u.id for row in targets})
+
+
+@app.post("/evidence/{evidence_id}/analysis/regions")
+def create_image_evidence_region(evidence_id:int,x:float=Form(...),y:float=Form(...),width:float=Form(...),height:float=Form(...),code_ids:list[int]=Form(default=[]),annotation_body:str=Form("",max_length=5000),u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    evidence_row=resolve_org_scoped_evidence(db,u.organisation_id,evidence_id)
+    if evidence_row is None: raise HTTPException(404,"Evidence not found")
+    s=study(db,evidence_row.study_id,u.organisation_id); require_study_permission(db,u,s,edit=True)
+    if not evidence_row.content_type.startswith("image/") or evidence_row.scan_status!="clean": raise HTTPException(400,"Only clean image evidence can be region-analysed")
+    try: target,applications,annotation=create_image_region(db,u,study_id=s.id,evidence_id=evidence_row.id,x=x,y=y,width=width,height=height,code_ids=code_ids,annotation_body=annotation_body)
+    except ValueError as exc: raise HTTPException(400,str(exc)) from exc
+    audit(db,u.organisation_id,u.id,"evidence_region.created","analysis_target",target.id,f"image region with {len(applications)} codes and annotation {bool(annotation)}")
+    db.commit(); return RedirectResponse(f"/evidence/{evidence_row.id}/analysis",303)
+
+
+@app.post("/evidence/{evidence_id}/analysis/regions/{target_id}/delete")
+def remove_image_evidence_region(evidence_id:int,target_id:int,u=Depends(current_user),csrf_ok:None=Depends(csrf_protect),db:Session=Depends(get_db)):
+    evidence_row=resolve_org_scoped_evidence(db,u.organisation_id,evidence_id)
+    if evidence_row is None: raise HTTPException(404,"Evidence not found")
+    s=study(db,evidence_row.study_id,u.organisation_id); permission=require_study_permission(db,u,s,edit=True)
+    target=db.scalar(select(AnalysisTarget).where(AnalysisTarget.id==target_id,AnalysisTarget.organisation_id==u.organisation_id,AnalysisTarget.study_id==s.id,AnalysisTarget.evidence_file_id==evidence_row.id,AnalysisTarget.target_type=="evidence_file"))
+    if target is None: raise HTTPException(404,"Image region not found")
+    if target.created_by_id!=u.id and permission!="manage": raise HTTPException(403,"You cannot remove this image region")
+    db.execute(delete(CodeApplication).where(CodeApplication.analysis_target_id==target.id)); db.execute(delete(ResearchAnnotation).where(ResearchAnnotation.analysis_target_id==target.id)); db.execute(delete(ResearchMemo).where(ResearchMemo.analysis_target_id==target.id))
+    audit(db,u.organisation_id,u.id,"evidence_region.removed","analysis_target",target.id,"image region"); db.delete(target); db.commit()
+    return RedirectResponse(f"/evidence/{evidence_row.id}/analysis",303)
 
 
 @app.get("/projects/{project_id}/workspace/themes", response_class=HTMLResponse)

@@ -126,3 +126,23 @@ document.addEventListener('selectionchange', () => {
     form.querySelector('button[type="submit"]').disabled = false;
   });
 });
+
+document.querySelectorAll('[data-region-picker]').forEach((stage) => {
+  const form = document.querySelector('[data-region-form]');
+  const draft = stage.querySelector('[data-region-draft]');
+  if (!form || !draft) return;
+  let start = null;
+  const point = (event) => {
+    const bounds = stage.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)), y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height)) };
+  };
+  const render = (first, second) => {
+    const x = Math.min(first.x, second.x), y = Math.min(first.y, second.y);
+    const width = Math.abs(first.x - second.x), height = Math.abs(first.y - second.y);
+    Object.assign(draft.style, { left: `${x * 100}%`, top: `${y * 100}%`, width: `${width * 100}%`, height: `${height * 100}%` }); draft.hidden = false;
+    for (const [name, value] of Object.entries({ x, y, width, height })) form.elements[name].value = value.toFixed(6);
+  };
+  stage.addEventListener('pointerdown', (event) => { start = point(event); stage.setPointerCapture(event.pointerId); render(start, start); });
+  stage.addEventListener('pointermove', (event) => { if (start) render(start, point(event)); });
+  stage.addEventListener('pointerup', (event) => { if (start) render(start, point(event)); start = null; });
+});
