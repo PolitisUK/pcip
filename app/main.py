@@ -57,6 +57,7 @@ from .models import (
     AnalyticalRelationship,
     ResearchTheme,
     ResearchThemeCode,
+    ResearchFinding,
     PublicAuthSession,
     PublicTokenExchange,
     Role,
@@ -97,6 +98,7 @@ from .relationships import RELATIONSHIP_TYPES, changeable_relationship, create_r
 from .analysis_lifecycle import remove_analytical_references
 from .analysis_canvas_router import analysis_canvas_router
 from .advanced_query_router import advanced_query_router
+from .findings_router import findings_router
 from .analysis_objects import analytical_study_permission
 from .analysis_projections import coded_passage_projections
 from .analysis_router import include_analysis_router
@@ -927,6 +929,13 @@ def render(request, name, user=None, **ctx):
 
 app.include_router(
     analysis_canvas_router(
+        current_user_dependency=current_user,
+        render_page=render,
+    )
+)
+
+app.include_router(
+    findings_router(
         current_user_dependency=current_user,
         render_page=render,
     )
@@ -3664,6 +3673,7 @@ def analytical_relationships_page(study_id:int,request:Request,u=Depends(current
     memos=db.scalars(select(ResearchMemo).where(ResearchMemo.organisation_id==u.organisation_id,ResearchMemo.study_id==s.id).order_by(ResearchMemo.id.desc()).limit(500)).all()
     codes=db.scalars(select(ResearchCode).where(ResearchCode.organisation_id==u.organisation_id,ResearchCode.study_id==s.id).order_by(ResearchCode.name).limit(500)).all()
     themes=db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id==u.organisation_id,ResearchTheme.study_id==s.id).order_by(ResearchTheme.name).limit(500)).all()
+    findings=db.scalars(select(ResearchFinding).where(ResearchFinding.organisation_id==u.organisation_id,ResearchFinding.study_id==s.id).order_by(ResearchFinding.updated_at.desc()).limit(500)).all()
     code_map={row.id:row for row in codes}; object_labels={}
     object_labels.update({f"analysis_target:{row.id}":f"Target #{row.id} · {row.target_type.replace('_',' ')}" for row in targets})
     object_labels.update({f"code_application:{row.id}":f"Code application #{row.id} · {code_map.get(row.research_code_id).name if code_map.get(row.research_code_id) else 'unavailable code'}" for row in applications})
@@ -3671,6 +3681,7 @@ def analytical_relationships_page(study_id:int,request:Request,u=Depends(current
     object_labels.update({f"memo:{row.id}":f"Memo · {row.title}" for row in memos})
     object_labels.update({f"code:{row.id}":f"Code · {row.name}" for row in codes})
     object_labels.update({f"theme:{row.id}":f"Theme · {row.name}" for row in themes})
+    object_labels.update({f"finding:{row.id}":f"Finding · {row.title}" for row in findings})
     rows=db.scalars(select(AnalyticalRelationship).where(AnalyticalRelationship.organisation_id==u.organisation_id,AnalyticalRelationship.study_id==s.id).order_by(AnalyticalRelationship.created_at.desc()).limit(250)).all()
     users={row.id:row for row in db.scalars(select(User).where(User.organisation_id==u.organisation_id)).all()}
     return render(request,"research_relationships.html",user=u,study=s,project=db.get(Project,s.project_id),relationships=rows,relationship_types=RELATIONSHIP_TYPES,object_labels=object_labels,users=users,can_edit=permission in {"edit","manage"},can_remove={row.id:permission=="manage" or row.created_by_id==u.id for row in rows})

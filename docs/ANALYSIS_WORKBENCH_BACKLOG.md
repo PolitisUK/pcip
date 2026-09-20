@@ -284,3 +284,29 @@ same-source-entry pairs with both entry and case counts, while the interface
 states that frequency and co-occurrence do not establish importance,
 representativeness, conceptual association or causality. This is a derived
 read-only query layer and adds no migration or participant-text copy.
+
+## AW-14 — Researcher findings — complete
+
+`ResearchFinding` is now a first-class researcher-authored analytical
+conclusion with organisation/study scope, substantive title and text, creator,
+timestamps, and auditable edit/archive/restore lifecycle. A finding is kept
+explicitly distinct from a code, theme, memo and AI suggestion. Its workspace
+supports read-only inspection and permission-gated creation or change, with
+participant-derived and researcher content escaped in every rendered view.
+
+Findings connect to existing analytical objects through the canonical
+`AnalyticalRelationship` service and store rather than a finding-specific edge
+table. The vocabulary now includes `qualifies`, `illustrates`, `derived_from`
+and `informed_by` alongside support and contradiction, so a finding can retain
+negative and qualifying material. Linked coded passages are reconstructed from
+the authoritative response and fingerprint checked, while each link retains
+researcher/date/rationale provenance and source navigation.
+
+Alembic revision `0033` creates the finding model and extends the relationship
+and canvas allow-lists. SQLite and PostgreSQL INSERT/UPDATE guards validate the
+finding study, creator and archiver plus finding relationship endpoints and
+canvas pointers. The production-shaped constraint upgrade and
+downgrade/re-upgrade paths are rehearsed. Participant deletion removes links to
+deleted participant-derived objects while retaining unrelated study-level
+researcher findings; no participant source material is copied into relationship
+or canvas records.

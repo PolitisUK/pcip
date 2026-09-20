@@ -21,6 +21,7 @@ from .models import (
     Participant,
     ResearchAnnotation,
     ResearchCode,
+    ResearchFinding,
     ResearchMemo,
     ResearchTheme,
     Study,
@@ -39,6 +40,7 @@ ANALYTICAL_OBJECT_TYPES = frozenset(
         "memo",
         "code",
         "theme",
+        "finding",
         "relationship",
         "participant_case",
     }
@@ -110,6 +112,7 @@ def resolve_analytical_object(
         "memo": ResearchMemo,
         "code": ResearchCode,
         "theme": ResearchTheme,
+        "finding": ResearchFinding,
         "relationship": AnalyticalRelationship,
     }.get(object_type)
     if model is not None:
@@ -132,6 +135,8 @@ def resolve_analytical_object(
             )
         )
     if row is None:
+        return None
+    if require_edit and object_type == "finding" and row.archived_at is not None:
         return None
     label, summary, url = _describe(db, object_type, row, study)
     return AnalyticalObjectSummary(
@@ -177,6 +182,7 @@ def list_analytical_objects(
         "memo": ResearchMemo,
         "code": ResearchCode,
         "theme": ResearchTheme,
+        "finding": ResearchFinding,
     }
     output = []
     for object_type in sorted(allowed):
@@ -251,6 +257,7 @@ def resolve_analytical_objects(
         "memo": ResearchMemo,
         "code": ResearchCode,
         "theme": ResearchTheme,
+        "finding": ResearchFinding,
     }
     output = {}
     for object_type, model in models.items():
@@ -409,6 +416,8 @@ def _describe(
         return row.name, row.definition, f"/studies/{row.study_id}/codebook"
     if object_type == "theme":
         return row.name, row.description, f"/studies/{row.study_id}/theme-explorer"
+    if object_type == "finding":
+        return row.title, row.body, f"/studies/{row.study_id}/findings#finding-{row.id}"
     if object_type == "relationship":
         summary = f"{row.source_type} #{row.source_id} {row.relationship_type.replace('_', ' ')} {row.target_type} #{row.target_id}"
         return (

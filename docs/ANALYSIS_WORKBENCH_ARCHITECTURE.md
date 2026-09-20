@@ -86,6 +86,23 @@ matches, and keeps coded-application, source-entry and participant-case counts
 semantically distinct. Co-occurrence is derived per source entry and is never
 described as analytical importance or population prevalence.
 
+## Finding contract
+
+`ResearchFinding` is researcher-authored study analysis. Its substantive text
+belongs to the finding; evidence excerpts do not. Evidence, contradiction and
+qualification are represented only by `AnalyticalRelationship` pointers to
+allow-listed analytical objects. Resolving a linked CodeApplication therefore
+reconstructs its exact passage from the authoritative response and verifies the
+stored fingerprint.
+
+Finding create/edit/archive/restore operations use study permissions and audit
+events. Relationship creation/removal uses the shared relationship service,
+including its tenant/study resolver and authorship rules. Findings are also an
+explicit supported analytical-object and canvas-node type; canvas layout never
+copies finding or participant content. Participant deletion removes canonical
+relationships whose participant-derived endpoint is deleted, but retains a
+study-level finding that has no participant foreign key.
+
 ## Visual canvas contract
 
 `AnalysisCanvas` and `AnalysisCanvasNode` persist only a researcher's visual

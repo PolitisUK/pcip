@@ -17,6 +17,7 @@ from app.analysis_objects import resolve_analytical_object
 from app.analysis_projections import coded_passage_projections
 from app.analysis_router import ANALYSIS_GET_ROUTES, include_analysis_router
 from app.db import Base
+from app.findings import finding_text
 from app.models import (
     Activity,
     ActivityResponse,
@@ -28,6 +29,7 @@ from app.models import (
     Participant,
     Project,
     ResearchCode,
+    ResearchFinding,
     ResearchTheme,
     ResearchThemeCode,
     Study,
@@ -402,6 +404,62 @@ def test_relationship_service_uses_scoped_object_resolution(analysis_session):
             target_ref="code:2",
             rationale="Forged cross-tenant link",
         )
+
+
+def test_research_finding_is_distinct_resolvable_and_uses_canonical_relationships(
+    analysis_session,
+):
+    user = analysis_session.get(User, 1)
+    title, body = finding_text(
+        "  Access remains unequal  ", "  Researcher-authored conclusion.  "
+    )
+    finding = ResearchFinding(
+        organisation_id=1,
+        study_id=1,
+        title=title,
+        body=body,
+        created_by_id=1,
+    )
+    analysis_session.add(finding)
+    analysis_session.flush()
+    resolved = resolve_analytical_object(
+        analysis_session,
+        user,
+        study_id=1,
+        object_type="finding",
+        object_id=finding.id,
+    )
+    assert resolved is not None
+    assert (resolved.label, resolved.summary) == (
+        "Access remains unequal",
+        "Researcher-authored conclusion.",
+    )
+    relationship = create_relationship(
+        analysis_session,
+        user,
+        study_id=1,
+        source_ref=f"finding:{finding.id}",
+        relationship_type="qualifies",
+        target_ref="code:1",
+        rationale="Not all cases align",
+    )
+    analysis_session.flush()
+    assert relationship.source_type == "finding"
+    assert relationship.relationship_type == "qualifies"
+    finding.archived_at = datetime.now(timezone.utc)
+    finding.archived_by_id = user.id
+    with pytest.raises(ValueError, match="unavailable"):
+        create_relationship(
+            analysis_session,
+            user,
+            study_id=1,
+            source_ref=f"finding:{finding.id}",
+            relationship_type="supports",
+            target_ref="code:1",
+            rationale="Archived findings are read-only",
+        )
+    with pytest.raises(ValueError, match="required"):
+        finding_text("Valid title", "   ")
 
 
 def test_lifecycle_hook_removes_all_requested_relationship_references(monkeypatch):
