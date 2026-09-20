@@ -830,6 +830,31 @@ class ResearchMemo(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class AnalyticalRelationship(Base):
+    """A directional researcher assertion between two analytical objects."""
+    __tablename__ = "analytical_relationships"
+    __table_args__ = (
+        CheckConstraint("relationship_type IN ('supports','contradicts','explains','relates_to','precedes','follows','refines')", name="ck_analytical_relationship_type"),
+        CheckConstraint("source_type IN ('analysis_target','code_application','annotation','memo','code','theme')", name="ck_analytical_relationship_source_type"),
+        CheckConstraint("target_type IN ('analysis_target','code_application','annotation','memo','code','theme')", name="ck_analytical_relationship_target_type"),
+        CheckConstraint("source_type <> target_type OR source_id <> target_id", name="ck_analytical_relationship_not_self"),
+        UniqueConstraint("organisation_id", "study_id", "source_type", "source_id", "relationship_type", "target_type", "target_id", name="uq_analytical_relationship_assertion"),
+        Index("ix_analytical_relationships_source", "organisation_id", "study_id", "source_type", "source_id"),
+        Index("ix_analytical_relationships_target", "organisation_id", "study_id", "target_type", "target_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), index=True)
+    source_type: Mapped[str] = mapped_column(String(40))
+    source_id: Mapped[int] = mapped_column(Integer)
+    relationship_type: Mapped[str] = mapped_column(String(30), index=True)
+    target_type: Mapped[str] = mapped_column(String(40))
+    target_id: Mapped[int] = mapped_column(Integer)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(primary_key=True)

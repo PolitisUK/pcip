@@ -11360,6 +11360,25 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         archived_memos = client.get(f'/studies/{study_id}/memos?include_archived=true')
         assert 'Refined interpretation' in archived_memos.text and '(archived)' in archived_memos.text
         assert post_with_csrf(f'/studies/{study_id}/memos/{memo_id}/restore', follow_redirects=False).status_code == 303
+        relationships_page = client.get(f'/studies/{study_id}/relationships')
+        assert relationships_page.status_code == 200
+        assert f'value="memo:{memo_id}"' in relationships_page.text
+        assert f'value="code:{research_code_id}"' in relationships_page.text
+        self_relationship = post_with_csrf(f'/studies/{study_id}/relationships', data={'source_ref':f'code:{research_code_id}','relationship_type':'supports','target_ref':f'code:{research_code_id}','rationale':''}, follow_redirects=False)
+        assert self_relationship.status_code == 400
+        created_relationship = post_with_csrf(f'/studies/{study_id}/relationships', data={'source_ref':f'memo:{memo_id}','relationship_type':'supports','target_ref':f'code:{research_code_id}','rationale':'<script>alert(1)</script> Interpretive support'}, follow_redirects=False)
+        assert created_relationship.status_code == 303
+        with SessionLocal() as db:
+            from app.models import AnalyticalRelationship, AuditEvent
+            relationship = db.scalar(select(AnalyticalRelationship).where(AnalyticalRelationship.study_id == study_id))
+            assert relationship is not None and relationship.source_type == 'memo' and relationship.target_type == 'code'
+            relationship_id = relationship.id
+            assert db.scalar(select(AuditEvent).where(AuditEvent.action == 'analytical_relationship.created', AuditEvent.entity_id == str(relationship_id))) is not None
+        rendered_relationships = client.get(f'/studies/{study_id}/relationships')
+        assert 'Supports' in rendered_relationships.text
+        assert '&lt;script&gt;alert(1)&lt;/script&gt; Interpretive support' in rendered_relationships.text
+        assert '<script>alert(1)</script>' not in rendered_relationships.text
+        assert post_with_csrf(f'/studies/{study_id}/relationships/{relationship_id}/delete', follow_redirects=False).status_code == 303
         with SessionLocal() as db:
             from app.models import ResearchCode
             archived_code = db.get(ResearchCode, research_code_id)

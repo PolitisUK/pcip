@@ -64,7 +64,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0029" in revision.stdout
+    assert "0030" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -111,7 +111,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0029" in result.stdout
+            assert "0030" in result.stdout
 
     active = subprocess.run(
         [
@@ -293,3 +293,20 @@ def test_analysis_targets_migration_enforces_concrete_sources_and_tenant_scope(t
     )
     assert foreign_memo_author.returncode != 0
     assert "research memo author scope" in foreign_memo_author.stderr
+    valid_relationship = subprocess.run(
+        ["sqlite3", str(database_path), "INSERT INTO analytical_relationships (id, organisation_id, study_id, source_type, source_id, relationship_type, target_type, target_id, rationale, created_by_id, created_at) VALUES (1, 1, 1, 'analysis_target', 1, 'supports', 'code', 1, 'Researcher assertion', 1, CURRENT_TIMESTAMP);"],
+        capture_output=True, text=True, check=False,
+    )
+    assert valid_relationship.returncode == 0, valid_relationship.stderr
+    forged_relationship_target = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE analytical_relationships SET target_id=999 WHERE id=1;"],
+        capture_output=True, text=True, check=False,
+    )
+    assert forged_relationship_target.returncode != 0
+    assert "analytical relationship target scope" in forged_relationship_target.stderr
+    foreign_relationship_author = subprocess.run(
+        ["sqlite3", str(database_path), "UPDATE analytical_relationships SET created_by_id=2 WHERE id=1;"],
+        capture_output=True, text=True, check=False,
+    )
+    assert foreign_relationship_author.returncode != 0
+    assert "analytical relationship author scope" in foreign_relationship_author.stderr
