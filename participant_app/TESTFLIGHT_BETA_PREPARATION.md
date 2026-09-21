@@ -1,7 +1,7 @@
 # Citizen Centric Participant App — private TestFlight preparation
 
-Prepared: 16 August 2026  
-Repository release candidate: participant mobile stack through PR #64
+Prepared: 21 September 2026
+Repository release candidate: coordinated Android/iOS participant release
 
 This file records evidence for a private, internal TestFlight beta. It is not
 an App Store submission and does not authorise public distribution.
@@ -11,9 +11,9 @@ an App Store submission and does not authorise public distribution.
 | Item | Current repository value | Status |
 | --- | --- | --- |
 | Display name | Citizen Centric | Verified |
-| Bundle identifier | `uk.co.politisltd.participantApp` | Existing project value; confirm it is registered to the approved Apple team |
+| Bundle identifier | `uk.co.politisltd.citizencentric.participant` | Verified in the Xcode project; confirm it is registered to the approved Apple team |
 | iOS deployment target | 15.0 | Verified |
-| Current app version/build | 1.0.0 (1) | Confirm the next unused App Store Connect build number before archive |
+| Current app version/build | 1.0.0 (9) | Repository build number; confirm build 9 is unused in App Store Connect before upload |
 | Release API base | `https://citizencentric.co.uk` | Repository/deployment source of truth; pass it explicitly as `PCIP_API_BASE_URL` for the signed build |
 
 For the archive, use the already-approved HTTPS base and an App Store Connect
@@ -30,7 +30,7 @@ identifier before a TestFlight archive can be produced.
 Required owner actions before signing/upload:
 
 1. Sign in to Xcode with the approved Apple Developer account and confirm the
-   team that owns `uk.co.politisltd.participantApp`.
+   team that owns `uk.co.politisltd.citizencentric.participant`.
 2. Confirm the existing App ID, or register it under that approved team.
 3. Confirm/create the private App Store Connect app record and provide the
    organisation-approved SKU if one is required.
@@ -48,13 +48,16 @@ The iOS app declares only the participant-facing permissions used by the app:
 - Camera — optional photo evidence capture.
 - Photo Library — optional photo evidence selection.
 - Microphone — optional voice diary recording.
+- Location When In Use — optional, one-off current-location capture only when a
+  configured activity offers it and the participant chooses it.
 - Document selection uses the system document provider and requests no broad
   filesystem permission.
 
-No location, contacts, Bluetooth, advertising identifier or App Tracking
-Transparency permission is declared. The mobile dependency and source audit
-found no advertising, marketing, analytics or cross-app tracking SDK. ATT is
-therefore **not required** unless a future dependency changes that conclusion.
+No background location, contacts, Bluetooth, advertising identifier or App
+Tracking Transparency permission is declared. The mobile dependency and source
+audit found no advertising, marketing, analytics or cross-app tracking SDK.
+ATT is therefore **not required** unless a future dependency changes that
+conclusion.
 
 ## Recommended App Privacy answers (owner confirmation required)
 
@@ -69,6 +72,7 @@ study; they are not a declaration that the data is used for tracking.
 | User content (text responses, messages, documents) | Yes | Yes | No | Research participation and participant communications |
 | Photos or videos | Yes, when selected | Yes | No | Participant-provided evidence |
 | Audio data | Yes, when recorded | Yes | No | Participant-provided voice diary |
+| Precise location | Yes, only when a participant deliberately captures it for an eligible activity | Yes | No | Participant-provided research evidence |
 | Sensitive information | Study-dependent; confirm | Yes when collected | No | Only where an approved study permits it |
 | Diagnostics/security data | Confirm production telemetry | Potentially | No | Service operation and security only |
 

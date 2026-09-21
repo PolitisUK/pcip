@@ -541,7 +541,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byTooltip('Switch study'), findsOneWidget);
-      expect(find.text('My studies'), findsOneWidget);
+      expect(find.text('My studies'), findsNothing);
     },
   );
 }

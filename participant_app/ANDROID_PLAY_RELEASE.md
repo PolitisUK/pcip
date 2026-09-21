@@ -8,7 +8,7 @@ This document covers the Android build of the canonical Flutter participant appl
 | --- | --- |
 | Application ID / namespace | `uk.co.politisltd.citizencentric.participant` |
 | App name | Citizen Centric |
-| Version | `1.0.0+8` (version name `1.0.0`, version code `8`) |
+| Version | `1.0.0+9` (version name `1.0.0`, version code `9`) |
 | Minimum SDK | 24 (Android 7.0) |
 | Compile / target SDK | 36 (Android 16) |
 | Android Gradle Plugin / Gradle | 9.1.0 / 9.3.1 |

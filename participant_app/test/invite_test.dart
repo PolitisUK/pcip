@@ -66,35 +66,45 @@ void main() {
     },
   );
 
-  testWidgets('password mode exposes obscured credentials and never changes the default', (tester) async {
-    String? username;
-    String? password;
-    await tester.pumpWidget(MaterialApp(
-      home: Invite(
-        error: null,
-        onJoin: _ignore,
-        onPasswordLogin: (value, secret) async {
-          username = value;
-          password = secret;
-        },
-      ),
-    ));
+  testWidgets(
+    'password mode exposes obscured credentials and never changes the default',
+    (tester) async {
+      String? username;
+      String? password;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Invite(
+            error: null,
+            onJoin: _ignore,
+            onPasswordLogin: (value, secret) async {
+              username = value;
+              password = secret;
+            },
+          ),
+        ),
+      );
 
-    expect(find.text('One-time app code'), findsOneWidget);
-    expect(find.text('Username or email'), findsNothing);
-    await tester.tap(find.text('Username & password'));
-    await tester.pumpAndSettle();
-    expect(find.text('Username or email'), findsOneWidget);
-    final fields = tester.widgetList<TextField>(find.byType(TextField)).toList();
-    expect(fields, hasLength(2));
-    expect(fields.last.obscureText, isTrue);
-    await tester.enterText(find.byType(TextField).at(0), 'reviewer@example.org');
-    await tester.enterText(find.byType(TextField).at(1), 'Password123!');
-    await tester.tap(find.text('Sign in'));
-    await tester.pump();
-    expect(username, 'reviewer@example.org');
-    expect(password, 'Password123!');
-  });
+      expect(find.text('One-time app code'), findsOneWidget);
+      expect(find.text('Username or email'), findsNothing);
+      await tester.tap(find.text('Username & password'));
+      await tester.pumpAndSettle();
+      expect(find.text('Username or email'), findsOneWidget);
+      final fields = tester
+          .widgetList<TextField>(find.byType(TextField))
+          .toList();
+      expect(fields, hasLength(2));
+      expect(fields.last.obscureText, isTrue);
+      await tester.enterText(
+        find.byType(TextField).at(0),
+        'reviewer@example.org',
+      );
+      await tester.enterText(find.byType(TextField).at(1), 'Password123!');
+      await tester.tap(find.text('Sign in'));
+      await tester.pump();
+      expect(username, 'reviewer@example.org');
+      expect(password, 'Password123!');
+    },
+  );
 }
 
 Future<void> _ignore(String _) async {}
