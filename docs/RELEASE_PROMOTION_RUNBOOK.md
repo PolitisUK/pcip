@@ -12,6 +12,13 @@ Azure PostgreSQL recovery point, the current production image digest and
 rollback digest, and the candidate commit SHA. The candidate commit must
 already be merged into `main` and its required CI must be green.
 
+Record the window as separate `release_window_start`, `release_window_end` and
+`release_window_timezone` inputs. Start and end use the strict local format
+`YYYY-MM-DDTHH:MM:SS`; the timezone is an IANA name such as `Europe/London`.
+The start is inclusive and the end is exclusive. Ambiguous or nonexistent
+local times around daylight-saving transitions are rejected, so the approver
+must choose unambiguous timestamps.
+
 Configure protected GitHub environments before first use:
 
 - `release-controls` protects release evidence validation;
@@ -68,11 +75,19 @@ SHA and all release evidence. The workflow:
 4. deploys that digest to the isolated staging app, applies migrations
    fail-closed, and verifies health, readiness, and public legal routes;
 5. when explicitly requested and approved by the protected `production`
-   environment, imports the same digest into the production registry and
-   promotes it; and
+   environment, re-checks the approved window against the current UTC clock,
+   imports the same digest into the production registry and promotes it; and
 6. verifies sustained readiness and the public production legal routes.
 
 No workflow uses a mutable image tag as the deployed image reference.
+
+Staging may complete before the approved production window. Production fails
+closed before its first configuration mutation and re-checks the window at the
+artifact-import and application-mutation boundaries. A queued or late
+environment approval cannot bypass the check. If the end has passed, the run
+reports `Production release window has expired. Obtain a new approved release
+window.` Safety cleanup that restores `RUN_MIGRATIONS=false` is deliberately
+not blocked by window expiry.
 
 The supplied recovery-point name and rollback digest are verified against Azure
 before production promotion. Listing a recovery point is not a restore test:

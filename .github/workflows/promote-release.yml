@@ -11,8 +11,16 @@ on:
         description: Named release operator.
         required: true
         type: string
-      release_window:
-        description: Approved release window, including timezone.
+      release_window_start:
+        description: Approved local start in YYYY-MM-DDTHH:MM:SS format.
+        required: true
+        type: string
+      release_window_end:
+        description: Approved local end in YYYY-MM-DDTHH:MM:SS format; the end is exclusive.
+        required: true
+        type: string
+      release_window_timezone:
+        description: Approved IANA timezone name, for example Europe/London.
         required: true
         type: string
       rollback_decision_owner:
@@ -77,7 +85,9 @@ jobs:
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
           RELEASE_OPERATOR: ${{ inputs.release_operator }}
-          RELEASE_WINDOW: ${{ inputs.release_window }}
+          RELEASE_WINDOW_START: ${{ inputs.release_window_start }}
+          RELEASE_WINDOW_END: ${{ inputs.release_window_end }}
+          RELEASE_WINDOW_TIMEZONE: ${{ inputs.release_window_timezone }}
           ROLLBACK_DECISION_OWNER: ${{ inputs.rollback_decision_owner }}
           BACKUP_RECOVERY_POINT: ${{ inputs.backup_recovery_point }}
           CURRENT_ALEMBIC_REVISION: ${{ inputs.current_alembic_revision }}
@@ -86,9 +96,14 @@ jobs:
           SEED_RIVERMERE_DEMO: ${{ inputs.seed_rivermere_demo }}
         run: |
           set -euo pipefail
-          for value in RELEASE_SHA RELEASE_OPERATOR RELEASE_WINDOW ROLLBACK_DECISION_OWNER BACKUP_RECOVERY_POINT CURRENT_ALEMBIC_REVISION; do
+          for value in RELEASE_SHA RELEASE_OPERATOR RELEASE_WINDOW_START RELEASE_WINDOW_END RELEASE_WINDOW_TIMEZONE ROLLBACK_DECISION_OWNER BACKUP_RECOVERY_POINT CURRENT_ALEMBIC_REVISION; do
             test -n "${!value}" || { echo "$value is required." >&2; exit 1; }
           done
+          python scripts/validate_release_window.py \
+            --start "$RELEASE_WINDOW_START" \
+            --end "$RELEASE_WINDOW_END" \
+            --timezone "$RELEASE_WINDOW_TIMEZONE" \
+            --validate-only
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full lowercase commit SHA." >&2; exit 1; }
           if test -n "$APPROVED_IMAGE_DIGEST"; then
             [[ "$APPROVED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "approved_image_digest must be an immutable sha256 digest." >&2; exit 1; }
@@ -107,7 +122,9 @@ jobs:
             echo "## Release evidence"
             echo "- Commit: \`$RELEASE_SHA\`"
             echo "- Operator: $RELEASE_OPERATOR"
-            echo "- Window: $RELEASE_WINDOW"
+            echo "- Window start: $RELEASE_WINDOW_START"
+            echo "- Window end (exclusive): $RELEASE_WINDOW_END"
+            echo "- Window timezone: $RELEASE_WINDOW_TIMEZONE"
             echo "- Rollback decision owner: $ROLLBACK_DECISION_OWNER"
             echo "- Recorded database revision: $CURRENT_ALEMBIC_REVISION"
             echo "- Recovery point: $BACKUP_RECOVERY_POINT"
@@ -312,6 +329,9 @@ jobs:
       PRODUCTION_OPERATIONS_ENABLED: ${{ vars.PCIP_PRODUCTION_OPERATIONS_ENABLED }}
       OPERATIONS_WORKER_DIGEST: ${{ vars.PCIP_PRODUCTION_OPERATIONS_WORKER_DIGEST }}
       OPERATIONS_WORKER_REVISION: ${{ vars.PCIP_PRODUCTION_OPERATIONS_WORKER_REVISION }}
+      RELEASE_WINDOW_START: ${{ inputs.release_window_start }}
+      RELEASE_WINDOW_END: ${{ inputs.release_window_end }}
+      RELEASE_WINDOW_TIMEZONE: ${{ inputs.release_window_timezone }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -331,10 +351,22 @@ jobs:
           test "$candidate_generation" != "$final_generation"
           printf 'candidate_generation=%s\n' "$candidate_generation" >> "$GITHUB_OUTPUT"
           printf 'final_generation=%s\n' "$final_generation" >> "$GITHUB_OUTPUT"
+      - name: Enforce approved production release window
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_release_window.py \
+            --start "$RELEASE_WINDOW_START" \
+            --end "$RELEASE_WINDOW_END" \
+            --timezone "$RELEASE_WINDOW_TIMEZONE"
       - name: Enforce the no-migration production steady state
         shell: bash
         run: |
           set -euo pipefail
+          python scripts/validate_release_window.py \
+            --start "$RELEASE_WINDOW_START" \
+            --end "$RELEASE_WINDOW_END" \
+            --timezone "$RELEASE_WINDOW_TIMEZONE"
           # A normal restart must never discover a stale true setting and run
           # schema changes outside this explicitly approved promotion job.
           az webapp config appsettings set -g "$AZURE_RESOURCE_GROUP" -n "$PRODUCTION_APP" \
@@ -376,9 +408,17 @@ jobs:
           CANDIDATE_STARTUP_GENERATION: ${{ steps.startup_generations.outputs.candidate_generation }}
         run: |
           set -euo pipefail
+          python scripts/validate_release_window.py \
+            --start "$RELEASE_WINDOW_START" \
+            --end "$RELEASE_WINDOW_END" \
+            --timezone "$RELEASE_WINDOW_TIMEZONE"
           az acr import -n "$PRODUCTION_ACR" --source "$SOURCE_LOGIN_SERVER/$IMAGE_REPOSITORY@$IMAGE_DIGEST" --image "$IMAGE_REPOSITORY:sha-$RELEASE_SHA"
           promoted=$(az acr manifest list-metadata -r "$PRODUCTION_ACR" -n "$IMAGE_REPOSITORY" --query "[?tags && contains(tags, 'sha-$RELEASE_SHA')].digest | [0]" -o tsv)
           test "$promoted" = "$IMAGE_DIGEST" || { echo "Imported production digest differs from staged artifact." >&2; exit 1; }
+          python scripts/validate_release_window.py \
+            --start "$RELEASE_WINDOW_START" \
+            --end "$RELEASE_WINDOW_END" \
+            --timezone "$RELEASE_WINDOW_TIMEZONE"
           # This is the only point at which the production workflow arms a
           # schema upgrade.  The always() cleanup below restores false even
           # when deployment or readiness verification fails.
@@ -464,6 +504,10 @@ jobs:
           RIVERMERE_DEMO_OWNER_EMAIL: ${{ secrets.RIVERMERE_DEMO_OWNER_EMAIL }}
         run: |
           set -euo pipefail
+          python scripts/validate_release_window.py \
+            --start "$RELEASE_WINDOW_START" \
+            --end "$RELEASE_WINDOW_END" \
+            --timezone "$RELEASE_WINDOW_TIMEZONE"
           if { test -z "$RIVERMERE_DEMO_OWNER_USER_ID" && test -z "$RIVERMERE_DEMO_OWNER_EMAIL"; } || \
              { test -n "$RIVERMERE_DEMO_OWNER_USER_ID" && test -n "$RIVERMERE_DEMO_OWNER_EMAIL"; }; then
             echo "The protected Rivermere production owner configuration is required." >&2
