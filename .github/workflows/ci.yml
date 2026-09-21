@@ -58,6 +58,7 @@ jobs:
           PYTHONPATH=. pytest -q
           tests/test_postgres_governance_metadata.py
           tests/test_postgres_analysis_membership_scope.py
+          tests/test_postgres_participant_deletion.py
 
   security:
     runs-on: ubuntu-latest

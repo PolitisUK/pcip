@@ -18,28 +18,27 @@ from .analysis_lifecycle import remove_analytical_references
 from .models import (
     ActivityResponse,
     AnalysisTarget,
-    CodeApplication,
-    ResearchAnnotation,
-    ResearchMemo,
     AuditEvent,
+    CodeApplication,
     EvidenceConfidenceAssessment,
     EvidenceFile,
+    OutboxEmail,
     Participant,
     ParticipantAppAccessCode,
-    ParticipantPasswordCredential,
     ParticipantInvitation,
     ParticipantMessage,
+    ParticipantPasswordCredential,
     ParticipantPrivacyRequest,
-    OutboxEmail,
     PublicAuthSession,
     ResearchAnalysisSuggestion,
+    ResearchAnnotation,
     ResearchFinding,
+    ResearchMemo,
     ResearchTheme,
     StudyEnrolment,
     StudyGovernance,
 )
 from .storage import StorageBackend
-
 
 ACTIVE_DELETION_CATEGORIES = (
     "activity_responses",
@@ -146,9 +145,19 @@ def _delete_research_derivatives(
         if finding_ids:
             remove_analytical_references(db, {"finding": finding_ids})
             db.execute(delete(ResearchFinding).where(ResearchFinding.id.in_(finding_ids)))
-        for theme in db.scalars(select(ResearchTheme).where(ResearchTheme.organisation_id == organisation_id)):
-            if _json_ids(theme.source_suggestion_ids_json) & suggestion_ids:
-                db.delete(theme)
+        for theme in db.scalars(
+            select(ResearchTheme).where(
+                ResearchTheme.organisation_id == organisation_id
+            )
+        ):
+            source_suggestion_ids = _json_ids(theme.source_suggestion_ids_json)
+            if source_suggestion_ids & suggestion_ids:
+                # Themes are reusable researcher analysis. Remove provenance
+                # links to deleted participant material without deleting the
+                # theme, its code links, relationships, memos, or canvas node.
+                theme.source_suggestion_ids_json = json.dumps(
+                    sorted(source_suggestion_ids - suggestion_ids)
+                )
         db.execute(delete(ResearchAnalysisSuggestion).where(ResearchAnalysisSuggestion.id.in_(suggestion_ids)))
     for assessment in db.scalars(
         select(EvidenceConfidenceAssessment).where(EvidenceConfidenceAssessment.organisation_id == organisation_id)
@@ -273,12 +282,29 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
                 ),
             )
         )
-        for row in evidence_rows:
-            db.delete(row)
-        for row in response_rows:
-            db.delete(row)
-        for row in db.scalars(message_query):
-            db.delete(row)
+        # Use explicit ordered deletes here rather than relying on SQLAlchemy's
+        # unit-of-work ordering for unrelated mapped objects. PostgreSQL must
+        # remove evidence_files.response_id references before their parent
+        # activity_responses rows; otherwise the final commit can issue the
+        # parent delete first and leave an account deletion retrying.
+        evidence_ids = [row.id for row in evidence_rows]
+        if evidence_ids:
+            db.execute(
+                delete(EvidenceFile).where(EvidenceFile.id.in_(evidence_ids))
+            )
+        if response_ids:
+            db.execute(
+                delete(ActivityResponse).where(
+                    ActivityResponse.id.in_(response_ids)
+                )
+            )
+        db.execute(
+            delete(ParticipantMessage).where(
+                ParticipantMessage.id.in_(
+                    message_query.with_only_columns(ParticipantMessage.id)
+                )
+            )
+        )
 
         scoped_outbox_query = select(OutboxEmail).where(
             OutboxEmail.organisation_id == organisation_id,
@@ -286,8 +312,13 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
         )
         if study_id is not None:
             scoped_outbox_query = scoped_outbox_query.where(OutboxEmail.study_id == study_id)
-        for row in db.scalars(scoped_outbox_query):
-            db.delete(row)
+        db.execute(
+            delete(OutboxEmail).where(
+                OutboxEmail.id.in_(
+                    scoped_outbox_query.with_only_columns(OutboxEmail.id)
+                )
+            )
+        )
 
         invitations = list(db.scalars(invitation_query))
         invitation_ids = [row.id for row in invitations]
@@ -303,10 +334,19 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
                     ParticipantAppAccessCode.participant_invitation_id.in_(invitation_ids)
                 )
             )
-        for row in invitations:
-            db.delete(row)
-        for row in db.scalars(enrolment_query):
-            db.delete(row)
+        if invitation_ids:
+            db.execute(
+                delete(ParticipantInvitation).where(
+                    ParticipantInvitation.id.in_(invitation_ids)
+                )
+            )
+        db.execute(
+            delete(StudyEnrolment).where(
+                StudyEnrolment.id.in_(
+                    enrolment_query.with_only_columns(StudyEnrolment.id)
+                )
+            )
+        )
 
         # Generic historical audit entries may contain participant identifiers;
         # the dedicated privacy request retains only minimised lifecycle state.
@@ -335,9 +375,12 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
                 )
                 .values(participant_id=None)
             )
-            participant = db.get(Participant, participant_id)
-            if participant is not None and participant.organisation_id == organisation_id:
-                db.delete(participant)
+            db.execute(
+                delete(Participant).where(
+                    Participant.id == participant_id,
+                    Participant.organisation_id == organisation_id,
+                )
+            )
 
         request.categories_json = json.dumps(ACTIVE_DELETION_CATEGORIES)
         request.status = "completed"
@@ -346,7 +389,7 @@ def process_deletion_request(db: Session, storage: StorageBackend, request: Part
         request.last_error_code = ""
         db.commit()
         return True
-    except Exception as exc:  # exact storage/database details must not reach participants
+    except Exception as exc:  # noqa: BLE001 - exact details must not reach participants
         db.rollback()
         refreshed = db.get(ParticipantPrivacyRequest, request.id)
         if refreshed is not None:
