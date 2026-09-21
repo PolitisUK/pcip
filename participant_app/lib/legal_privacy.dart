@@ -105,7 +105,9 @@ class _LegalDocumentScreenState extends State<LegalDocumentScreen> {
     if (target != null) {
       Scrollable.ensureVisible(
         target,
-        duration: const Duration(milliseconds: 250),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 250),
       );
     }
   }

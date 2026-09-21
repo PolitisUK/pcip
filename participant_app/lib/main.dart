@@ -20,6 +20,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:geolocator/geolocator.dart';
 
+import 'app_accessibility.dart';
+import 'app_design.dart';
 import 'legal_content.dart';
 import 'legal_privacy.dart';
 
@@ -573,25 +575,7 @@ class SessionStore {
 final _store = SessionStore(FlutterSecureStorage());
 void main() => runApp(ParticipantApp());
 
-final participantTheme = ThemeData(
-  useMaterial3: true,
-  colorScheme: ColorScheme.fromSeed(
-    seedColor: const Color(0xFF215BB3),
-    primary: const Color(0xFF215BB3),
-    secondary: const Color(0xFFC66A2F),
-    surface: const Color(0xFFF8FAFD),
-  ),
-  scaffoldBackgroundColor: const Color(0xFFF4F7FB),
-  inputDecorationTheme: const InputDecorationTheme(
-    border: OutlineInputBorder(),
-    filled: true,
-    fillColor: Colors.white,
-  ),
-  cardTheme: const CardThemeData(
-    elevation: 0,
-    margin: EdgeInsets.symmetric(vertical: 6),
-  ),
-);
+final participantTheme = buildParticipantTheme();
 
 class ParticipantApp extends StatefulWidget {
   ParticipantApp({super.key, SessionStore? store, this.factory})
@@ -603,6 +587,7 @@ class ParticipantApp extends StatefulWidget {
 }
 
 class _ParticipantAppState extends State<ParticipantApp> {
+  final AppTextSizeController textSizeController = AppTextSizeController();
   ParticipantApi? api;
   Map<String, dynamic>? session;
   List<Map<String, dynamic>> studyDocuments = [];
@@ -614,8 +599,26 @@ class _ParticipantAppState extends State<ParticipantApp> {
   @override
   void initState() {
     super.initState();
+    textSizeController.load();
     restore();
   }
+
+  @override
+  void dispose() {
+    textSizeController.dispose();
+    super.dispose();
+  }
+
+  Widget appShell(Widget home) => ValueListenableBuilder<AppTextSize>(
+    valueListenable: textSizeController,
+    builder: (context, _, child) => MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: participantTheme,
+      builder: (context, child) =>
+          participantAccessibilityBuilder(context, child, textSizeController),
+      home: home,
+    ),
+  );
 
   Future<void> loadStudyDocuments() async {
     if (!invitationRequiresStudyDocuments(session)) {
@@ -806,8 +809,8 @@ class _ParticipantAppState extends State<ParticipantApp> {
   @override
   Widget build(BuildContext c) {
     if (busy)
-      return const MaterialApp(
-        home: Scaffold(
+      return appShell(
+        const Scaffold(
           body: Center(
             child: CircularProgressIndicator(
               semanticsLabel: 'Loading your secure session',
@@ -816,19 +819,13 @@ class _ParticipantAppState extends State<ParticipantApp> {
         ),
       );
     if (api == null)
-      return MaterialApp(
-        theme: participantTheme,
-        home: Invite(
-          error: error,
-          onJoin: join,
-          onPasswordLogin: passwordLogin,
-        ),
+      return appShell(
+        Invite(error: error, onJoin: join, onPasswordLogin: passwordLogin),
       );
     final participant = Map<String, dynamic>.from(session!['participant']);
     if (invitationRequiresConsent(session))
-      return MaterialApp(
-        theme: participantTheme,
-        home: Consent(
+      return appShell(
+        Consent(
           error: error,
           documents: studyDocuments,
           documentsRequired: invitationRequiresStudyDocuments(session),
@@ -839,9 +836,8 @@ class _ParticipantAppState extends State<ParticipantApp> {
         ),
       );
     final activeStudyId = (session!['invitation'] as Map?)?['study_id'] as int?;
-    return MaterialApp(
-      theme: participantTheme,
-      home: Home(
+    return appShell(
+      Home(
         key: ValueKey('study-$activeStudyId'),
         api: api! as Api,
         name: participant['display_name'] as String,
@@ -951,23 +947,25 @@ class _InviteState extends State<Invite> {
                       const SizedBox(height: 16),
                       Semantics(
                         label: 'Sign-in method',
-                        child: SegmentedButton<bool>(
-                          segments: const [
-                            ButtonSegment(
-                              value: false,
-                              label: Text('One-time code'),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            ChoiceChip(
+                              label: const Text('One-time code'),
+                              selected: !passwordMode,
+                              onSelected: waiting
+                                  ? null
+                                  : (_) => setState(() => passwordMode = false),
                             ),
-                            ButtonSegment(
-                              value: true,
-                              label: Text('Username & password'),
+                            ChoiceChip(
+                              label: const Text('Username & password'),
+                              selected: passwordMode,
+                              onSelected: waiting
+                                  ? null
+                                  : (_) => setState(() => passwordMode = true),
                             ),
                           ],
-                          selected: {passwordMode},
-                          onSelectionChanged: waiting
-                              ? null
-                              : (selection) => setState(
-                                  () => passwordMode = selection.first,
-                                ),
                         ),
                       ),
                       const SizedBox(height: 20),
@@ -1029,19 +1027,16 @@ class _InviteState extends State<Invite> {
                           ),
                         ),
                       const SizedBox(height: 20),
-                      SizedBox(
-                        height: 50,
-                        child: FilledButton(
-                          onPressed: waiting
-                              ? null
-                              : (passwordMode ? submitPassword : submit),
-                          child: Text(
-                            waiting
-                                ? 'Signing in…'
-                                : (passwordMode
-                                      ? 'Sign in'
-                                      : 'Continue securely'),
-                          ),
+                      FilledButton(
+                        onPressed: waiting
+                            ? null
+                            : (passwordMode ? submitPassword : submit),
+                        child: Text(
+                          waiting
+                              ? 'Signing in…'
+                              : (passwordMode
+                                    ? 'Sign in'
+                                    : 'Continue securely'),
                         ),
                       ),
                     ],
@@ -1201,14 +1196,9 @@ class _ConsentState extends State<Consent> {
                   style: const TextStyle(color: Colors.red),
                 ),
               ),
-            SizedBox(
-              height: 48,
-              child: FilledButton(
-                onPressed: canAccept ? go : null,
-                child: Text(
-                  waiting ? 'Saving consent…' : 'Accept and continue',
-                ),
-              ),
+            FilledButton(
+              onPressed: canAccept ? go : null,
+              child: Text(waiting ? 'Saving consent…' : 'Accept and continue'),
             ),
           ],
         ),
@@ -1307,6 +1297,7 @@ class _HomeState extends State<Home> {
         if (widget.studies.length > 1 && widget.onSwitchStudy != null)
           PopupMenuButton<int>(
             tooltip: 'Switch study',
+            icon: const Icon(Icons.school_outlined),
             onSelected: widget.onSwitchStudy,
             itemBuilder: (context) => widget.studies
                 .map(
@@ -1317,16 +1308,6 @@ class _HomeState extends State<Home> {
                   ),
                 )
                 .toList(),
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                children: [
-                  Icon(Icons.school_outlined),
-                  SizedBox(width: 4),
-                  Text('My studies'),
-                ],
-              ),
-            ),
           ),
         IconButton(
           tooltip: 'Sign out',
@@ -2580,7 +2561,11 @@ class _StructuredResponseActivityState
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(widget.item['prompt']?.toString() ?? 'Share your response.'),
+        ActivityHeader(
+          type: widget.item['activity_type']?.toString(),
+          prompt: widget.item['prompt']?.toString() ?? 'Share your response.',
+          status: submitted ? 'Submitted' : 'Ready to complete',
+        ),
         const SizedBox(height: 16),
         if (submitted)
           const Text(
@@ -2634,12 +2619,9 @@ class _StructuredResponseActivityState
           onPressed: working || submitted ? null : () => save(false),
           child: const Text('Save draft'),
         ),
-        SizedBox(
-          height: 48,
-          child: FilledButton(
-            onPressed: working || submitted ? null : () => save(true),
-            child: Text(repeatable ? 'Add entry' : 'Submit response'),
-          ),
+        FilledButton(
+          onPressed: working || submitted ? null : () => save(true),
+          child: Text(repeatable ? 'Add entry' : 'Submit response'),
         ),
       ],
     ),
@@ -2735,6 +2717,7 @@ class _ActivitiesState extends State<Activities> with WidgetsBindingObserver {
             setState(() => load = widget.api.activities());
           },
           child: ListView(
+            padding: const EdgeInsets.all(14),
             children: [
               if (label.isNotEmpty)
                 Semantics(
@@ -2744,31 +2727,52 @@ class _ActivitiesState extends State<Activities> with WidgetsBindingObserver {
                     child: Text(label),
                   ),
                 ),
-              ...rows.map(
-                (r) => ListTile(
-                  title: Text(r['title'] ?? 'Activity'),
-                  subtitle: Text(
+              ...rows.map((r) {
+                final presentation = activityPresentation(
+                  r['activity_type']?.toString(),
+                );
+                final status =
                     r['allow_multiple_entries'] == true &&
-                            (r['submitted_entry_count'] as num? ?? 0) > 0
-                        ? 'Add new entry · ${(r['submitted_entry_count'] as num).toInt()} saved'
-                        : r['availability']?['status'] ?? 'Available',
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    await Navigator.push(
-                      c,
-                      MaterialPageRoute(
-                        builder: (_) => participantActivityPage(
-                          widget.api,
-                          Map<String, dynamic>.from(r),
-                          studyId: widget.studyId,
-                        ),
+                        (r['submitted_entry_count'] as num? ?? 0) > 0
+                    ? 'Add new entry · ${(r['submitted_entry_count'] as num).toInt()} saved'
+                    : r['availability']?['status']?.toString() ?? 'Available';
+                return Semantics(
+                  button: true,
+                  label:
+                      '${r['title'] ?? 'Activity'}. ${presentation.label}. Status: $status',
+                  child: Card(
+                    child: ListTile(
+                      leading: ActivityIcon(
+                        type: r['activity_type']?.toString(),
                       ),
-                    );
-                    if (mounted) setState(() => load = widget.api.activities());
-                  },
-                ),
-              ),
+                      title: ExcludeSemantics(
+                        child: Text(r['title'] ?? 'Activity'),
+                      ),
+                      subtitle: ExcludeSemantics(
+                        child: Text('${presentation.label} · $status'),
+                      ),
+                      trailing: const ExcludeSemantics(
+                        child: Icon(Icons.chevron_right),
+                      ),
+                      onTap: () async {
+                        await Navigator.push(
+                          c,
+                          MaterialPageRoute(
+                            builder: (_) => participantActivityPage(
+                              widget.api,
+                              Map<String, dynamic>.from(r),
+                              studyId: widget.studyId,
+                            ),
+                          ),
+                        );
+                        if (mounted) {
+                          setState(() => load = widget.api.activities());
+                        }
+                      },
+                    ),
+                  ),
+                );
+              }),
             ],
           ),
         );
@@ -2949,8 +2953,12 @@ class _LocationActivityState extends State<LocationActivity> {
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(
-          widget.item['prompt']?.toString() ?? 'Share your current location.',
+        ActivityHeader(
+          type: widget.item['activity_type']?.toString(),
+          prompt:
+              widget.item['prompt']?.toString() ??
+              'Share your current location.',
+          status: submitted ? 'Submitted' : 'Ready to complete',
         ),
         const SizedBox(height: 16),
         if (submitted)
@@ -2989,15 +2997,12 @@ class _LocationActivityState extends State<LocationActivity> {
           onPressed: working || submitted ? null : () => save(false),
           child: const Text('Save draft'),
         ),
-        SizedBox(
-          height: 48,
-          child: FilledButton(
-            onPressed: working || submitted ? null : () => save(true),
-            child: Text(
-              widget.item['allow_multiple_entries'] == true
-                  ? 'Add entry'
-                  : 'Submit response',
-            ),
+        FilledButton(
+          onPressed: working || submitted ? null : () => save(true),
+          child: Text(
+            widget.item['allow_multiple_entries'] == true
+                ? 'Add entry'
+                : 'Submit response',
           ),
         ),
       ],
@@ -3230,87 +3235,86 @@ class _TextActivityState extends State<TextActivity> {
               ),
             ],
     ),
-    body: Padding(
+    body: ListView(
       padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(widget.item['prompt'] ?? 'Share your response.'),
-          const SizedBox(height: 12),
-          Expanded(
-            child: submitted
-                ? const Center(
-                    child: Text(
-                      'This activity has already been submitted. You can view it in Submission history.',
-                      textAlign: TextAlign.center,
-                    ),
-                  )
-                : TextField(
-                    controller: text,
-                    maxLines: widget.singleLine ? 1 : null,
-                    expands: !widget.singleLine,
-                    decoration: const InputDecoration(
-                      labelText: 'Your response',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
+      children: [
+        ActivityHeader(
+          type: widget.item['activity_type']?.toString(),
+          prompt: widget.item['prompt'] ?? 'Share your response.',
+          status: submitted ? 'Submitted' : 'Ready to complete',
+        ),
+        const SizedBox(height: 12),
+        if (submitted)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Text(
+              'This activity has already been submitted. You can view it in Submission history.',
+              textAlign: TextAlign.center,
+            ),
+          )
+        else
+          TextField(
+            controller: text,
+            minLines: widget.singleLine ? 1 : 5,
+            maxLines: widget.singleLine ? 1 : null,
+            decoration: const InputDecoration(
+              labelText: 'Your response',
+              border: OutlineInputBorder(),
+              alignLabelWithHint: true,
+            ),
           ),
-          if (!submitted && allowLocation) ...[
-            const SizedBox(height: 12),
-            if (location == null)
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Add location (optional)'),
-                  OutlinedButton.icon(
-                    onPressed: working ? null : captureLocation,
-                    icon: const Icon(Icons.my_location_outlined),
-                    label: const Text('Use my current location'),
-                  ),
-                ],
-              )
-            else
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.location_on_outlined),
-                  title: const Text('Location added'),
-                  subtitle: Text(
-                    'Approximate accuracy: ${(location!['accuracy_metres'] as num).round()} m',
-                  ),
-                  trailing: TextButton(
-                    onPressed: working ? null : removeLocation,
-                    child: const Text('Remove'),
-                  ),
+        if (!submitted && allowLocation) ...[
+          const SizedBox(height: 12),
+          if (location == null)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Add location (optional)'),
+                OutlinedButton.icon(
+                  onPressed: working ? null : captureLocation,
+                  icon: const Icon(Icons.my_location_outlined),
+                  label: const Text('Use my current location'),
+                ),
+              ],
+            )
+          else
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.location_on_outlined),
+                title: const Text('Location added'),
+                subtitle: Text(
+                  'Approximate accuracy: ${(location!['accuracy_metres'] as num).round()} m',
+                ),
+                trailing: TextButton(
+                  onPressed: working ? null : removeLocation,
+                  child: const Text('Remove'),
                 ),
               ),
-          ],
-          if (status.isNotEmpty)
-            Semantics(
-              liveRegion: true,
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Text(status),
-              ),
             ),
-          OutlinedButton(
-            onPressed: working || submitted ? null : () => save(false),
-            child: const Text('Save draft'),
-          ),
-          SizedBox(
-            height: 48,
-            child: FilledButton(
-              onPressed: working || submitted ? null : () => save(true),
-              child: Text(
-                working
-                    ? 'Saving…'
-                    : repeatable
-                    ? 'Add entry'
-                    : 'Submit response',
-              ),
-            ),
-          ),
         ],
-      ),
+        if (status.isNotEmpty)
+          Semantics(
+            liveRegion: true,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(status),
+            ),
+          ),
+        OutlinedButton(
+          onPressed: working || submitted ? null : () => save(false),
+          child: const Text('Save draft'),
+        ),
+        FilledButton(
+          onPressed: working || submitted ? null : () => save(true),
+          child: Text(
+            working
+                ? 'Saving…'
+                : repeatable
+                ? 'Add entry'
+                : 'Submit response',
+          ),
+        ),
+      ],
     ),
   );
 }
@@ -3400,6 +3404,28 @@ class _ProfileState extends State<Profile> {
                 ),
               ),
               const SizedBox(height: 20),
+              if (AppTextSizeScope.maybeOf(c) case final textSize?) ...[
+                DropdownButtonFormField<AppTextSize>(
+                  initialValue: textSize.value,
+                  decoration: const InputDecoration(
+                    labelText: 'Text size',
+                    helperText:
+                        'This is added to the text size set on your device.',
+                  ),
+                  items: AppTextSize.values
+                      .map(
+                        (size) => DropdownMenuItem(
+                          value: size,
+                          child: Text(size.label),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (size) {
+                    if (size != null) textSize.select(size);
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
               DropdownButtonFormField<String>(
                 initialValue: p['communication_preference'],
                 decoration: const InputDecoration(
@@ -3932,12 +3958,9 @@ class _ComposeState extends State<Compose> {
               child: Text(error!, style: const TextStyle(color: Colors.red)),
             ),
           const SizedBox(height: 12),
-          SizedBox(
-            height: 48,
-            child: FilledButton(
-              onPressed: sending ? null : send,
-              child: Text(sending ? 'Sending…' : 'Send message'),
-            ),
+          FilledButton(
+            onPressed: sending ? null : send,
+            child: Text(sending ? 'Sending…' : 'Send message'),
           ),
           if (sending)
             Semantics(
@@ -4096,27 +4119,26 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
       padding: const EdgeInsets.all(20),
       child: ListView(
         children: [
-          Text(widget.prompt ?? 'Choose a photo to attach to this activity.'),
+          ActivityHeader(
+            type: 'photo',
+            prompt:
+                widget.prompt ?? 'Choose a photo to attach to this activity.',
+            status: widget.submitted ? 'Submitted' : 'Ready to add evidence',
+          ),
           const SizedBox(height: 16),
           if (widget.submitted && photo == null) ...[
             const Text('Submitted activities cannot be changed.'),
           ] else if (photo == null) ...[
-            SizedBox(
-              height: 48,
-              child: FilledButton.icon(
-                onPressed: () => choose(ImageSource.camera),
-                icon: const Icon(Icons.camera_alt),
-                label: const Text('Take a photo'),
-              ),
+            FilledButton.icon(
+              onPressed: () => choose(ImageSource.camera),
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Take a photo'),
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              height: 48,
-              child: OutlinedButton.icon(
-                onPressed: () => choose(ImageSource.gallery),
-                icon: const Icon(Icons.photo_library),
-                label: const Text('Choose from library'),
-              ),
+            OutlinedButton.icon(
+              onPressed: () => choose(ImageSource.gallery),
+              icon: const Icon(Icons.photo_library),
+              label: const Text('Choose from library'),
             ),
           ] else ...[
             Semantics(
@@ -4143,12 +4165,9 @@ class _PhotoEvidenceState extends State<PhotoEvidence> {
                 ),
               ],
             ),
-            SizedBox(
-              height: 48,
-              child: FilledButton(
-                onPressed: uploading || widget.submitted ? null : upload,
-                child: Text(uploading ? 'Uploading…' : 'Upload photo'),
-              ),
+            FilledButton(
+              onPressed: uploading || widget.submitted ? null : upload,
+              child: Text(uploading ? 'Uploading…' : 'Upload photo'),
             ),
           ],
           if (status.isNotEmpty)
@@ -4282,9 +4301,12 @@ class _VideoEvidenceState extends State<VideoEvidence> {
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(
-          widget.prompt ??
+        ActivityHeader(
+          type: 'video',
+          prompt:
+              widget.prompt ??
               'Record or choose a video to attach to this activity.',
+          status: widget.submitted ? 'Submitted' : 'Ready to add evidence',
         ),
         const SizedBox(height: 16),
         if (widget.submitted && pending == null)
@@ -4462,20 +4484,19 @@ class _DocumentEvidenceState extends State<DocumentEvidence> {
       padding: const EdgeInsets.all(20),
       child: ListView(
         children: [
-          Text(
-            widget.prompt ?? 'Choose a PDF, Word, text or CSV document to attach to this activity.',
+          ActivityHeader(
+            type: 'file',
+            prompt: widget.prompt ?? 'Choose a PDF, Word, text or CSV document to attach to this activity.',
+            status: widget.submitted ? 'Submitted' : 'Ready to add evidence',
           ),
           const SizedBox(height: 16),
           if (widget.submitted && file == null)
             const Text('Submitted activities cannot be changed.')
           else if (file == null)
-            SizedBox(
-              height: 48,
-              child: FilledButton.icon(
-                onPressed: choose,
-                icon: const Icon(Icons.upload_file),
-                label: const Text('Choose document'),
-              ),
+            FilledButton.icon(
+              onPressed: choose,
+              icon: const Icon(Icons.upload_file),
+              label: const Text('Choose document'),
             )
           else ...[
             Semantics(
@@ -4498,12 +4519,9 @@ class _DocumentEvidenceState extends State<DocumentEvidence> {
                 ),
               ],
             ),
-            SizedBox(
-              height: 48,
-              child: FilledButton(
-                onPressed: uploading || widget.submitted ? null : upload,
-                child: Text(uploading ? 'Uploading…' : 'Upload document'),
-              ),
+            FilledButton(
+              onPressed: uploading || widget.submitted ? null : upload,
+              child: Text(uploading ? 'Uploading…' : 'Upload document'),
             ),
           ],
           if (status.isNotEmpty)
@@ -4669,18 +4687,18 @@ class _VoiceDiaryState extends State<VoiceDiary> {
       padding: const EdgeInsets.all(20),
       child: ListView(
         children: [
-          Text(
-            widget.prompt ??
+          ActivityHeader(
+            type: 'audio',
+            prompt:
+                widget.prompt ??
                 'Record your thoughts, then listen back before you upload.',
+            status: widget.submitted ? 'Submitted' : 'Ready to add evidence',
           ),
           const SizedBox(height: 16),
-          SizedBox(
-            height: 56,
-            child: FilledButton.icon(
-              onPressed: widget.submitted ? null : toggle,
-              icon: Icon(recording ? Icons.stop : Icons.mic),
-              label: Text(recording ? 'Stop recording' : 'Start recording'),
-            ),
+          FilledButton.icon(
+            onPressed: widget.submitted ? null : toggle,
+            icon: Icon(recording ? Icons.stop : Icons.mic),
+            label: Text(recording ? 'Stop recording' : 'Start recording'),
           ),
           if (path != null) ...[
             TextButton.icon(
@@ -4692,12 +4710,9 @@ class _VoiceDiaryState extends State<VoiceDiary> {
               onPressed: removeRecording,
               child: const Text('Delete recording'),
             ),
-            SizedBox(
-              height: 48,
-              child: FilledButton(
-                onPressed: uploading || widget.submitted ? null : upload,
-                child: Text(uploading ? 'Uploading…' : 'Upload voice diary'),
-              ),
+            FilledButton(
+              onPressed: uploading || widget.submitted ? null : upload,
+              child: Text(uploading ? 'Uploading…' : 'Upload voice diary'),
             ),
           ],
           if (status != null)
@@ -4734,55 +4749,46 @@ class PrivacyChoices extends StatelessWidget {
           'These are separate choices. Withdrawal stops this study. Deletion also asks Citizen Centric to remove identifiable active data where it can lawfully do so.',
         ),
         const SizedBox(height: 20),
-        SizedBox(
-          height: 52,
-          child: OutlinedButton(
-            onPressed: () => Navigator.push(
-              c,
-              MaterialPageRoute(
-                builder: (_) => PrivacyConfirm(
-                  api: api,
-                  action: PrivacyAction.withdraw,
-                  onSessionEnded: onSessionEnded,
-                ),
+        OutlinedButton(
+          onPressed: () => Navigator.push(
+            c,
+            MaterialPageRoute(
+              builder: (_) => PrivacyConfirm(
+                api: api,
+                action: PrivacyAction.withdraw,
+                onSessionEnded: onSessionEnded,
               ),
             ),
-            child: const Text('Withdraw from this study'),
           ),
+          child: const Text('Withdraw from this study'),
         ),
         const SizedBox(height: 12),
-        SizedBox(
-          height: 52,
-          child: OutlinedButton(
-            onPressed: () => Navigator.push(
-              c,
-              MaterialPageRoute(
-                builder: (_) => PrivacyConfirm(
-                  api: api,
-                  action: PrivacyAction.studyDeletion,
-                  onSessionEnded: onSessionEnded,
-                ),
+        OutlinedButton(
+          onPressed: () => Navigator.push(
+            c,
+            MaterialPageRoute(
+              builder: (_) => PrivacyConfirm(
+                api: api,
+                action: PrivacyAction.studyDeletion,
+                onSessionEnded: onSessionEnded,
               ),
             ),
-            child: const Text('Withdraw and delete my data'),
           ),
+          child: const Text('Withdraw and delete my data'),
         ),
         const SizedBox(height: 12),
-        SizedBox(
-          height: 52,
-          child: OutlinedButton(
-            onPressed: () => Navigator.push(
-              c,
-              MaterialPageRoute(
-                builder: (_) => PrivacyConfirm(
-                  api: api,
-                  action: PrivacyAction.accountDeletion,
-                  onSessionEnded: onSessionEnded,
-                ),
+        OutlinedButton(
+          onPressed: () => Navigator.push(
+            c,
+            MaterialPageRoute(
+              builder: (_) => PrivacyConfirm(
+                api: api,
+                action: PrivacyAction.accountDeletion,
+                onSessionEnded: onSessionEnded,
               ),
             ),
-            child: const Text('Delete my Citizen Centric account'),
           ),
+          child: const Text('Delete my Citizen Centric account'),
         ),
       ],
     ),
@@ -4876,12 +4882,9 @@ class _PrivacyConfirmState extends State<PrivacyConfirm> {
               ),
             ),
           const SizedBox(height: 12),
-          SizedBox(
-            height: 52,
-            child: FilledButton(
-              onPressed: agreed && !sending ? send : null,
-              child: Text(sending ? 'Confirming…' : 'Confirm'),
-            ),
+          FilledButton(
+            onPressed: agreed && !sending ? send : null,
+            child: Text(sending ? 'Confirming…' : 'Confirm'),
           ),
         ],
       ),

@@ -3,12 +3,12 @@ name: Mobile CI
 on:
   pull_request:
     paths:
-      - "mobile/participant-app/**"
+      - "participant_app/**"
       - ".github/workflows/mobile-ci.yml"
   push:
     branches: [main]
     paths:
-      - "mobile/participant-app/**"
+      - "participant_app/**"
       - ".github/workflows/mobile-ci.yml"
 
 jobs:
@@ -16,15 +16,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: mobile/participant-app
+        working-directory: participant_app
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: subosito/flutter-action@v2
         with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: mobile/participant-app/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test -- --ci
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build apk --debug --dart-define=PCIP_API_BASE_URL=https://citizencentric.co.uk

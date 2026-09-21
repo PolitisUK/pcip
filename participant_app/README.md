@@ -1,9 +1,19 @@
 # Citizen Centric participant app
 
-The participant app uses the PCIP participant API only. After reviewing and
-accepting the study-specific consent documents on the web, a participant asks
-the portal for a short-lived, single-use app access code. Participants are
-never asked to enter a service address, email address, or password.
+The participant app uses the PCIP participant API only. The normal participant
+journey uses an invitation, study-specific consent, and a short-lived,
+single-use app access code. A separately provisioned reusable username and
+password is also available for authorised review and accessibility use cases;
+the invitation/app-code option remains the default. Participants are never
+asked to enter a service address.
+
+## Accessibility
+
+The app follows the device text-size setting on Android and iOS. A participant
+can also choose **Standard**, **Large**, or **Extra Large** in Profile; this
+supplements rather than replaces the device setting. Activity icons are
+decorative, while activity type and state are exposed as text and screen-reader
+semantics. Primary controls use at least 48 logical-pixel touch targets.
 
 ## API configuration
 

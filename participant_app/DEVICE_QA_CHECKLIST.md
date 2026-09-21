@@ -20,6 +20,11 @@ recent Android device. Do not use real participant material.
 | M. Accessibility spot check | VoiceOver/TalkBack reads controls and status changes meaningfully; enlarged text remains usable; status is not colour-only. |
 | N. Permission-denied flows | Camera, photo-library, microphone, and picker denial leave the app usable with a clear retry or alternative action. |
 | O. Background and resume | Returning from the background retains unsent text/media state and performs only safe queue replay after a confirmed session. |
+| P. Text sizing | At device Standard/Large/largest accessibility text, and each in-app text-size choice, content reflows without clipped text or controls. The in-app choice adds to the device setting. |
+| Q. Narrow and rotated layouts | On the narrowest supported phone and in portrait/landscape, sign-in, consent, activities, messages, privacy choices and evidence controls remain reachable by scrolling. |
+| R. Activity communication | Activity type and draft/saved/submitted state are understandable without colour; decorative activity graphics are not announced by VoiceOver/TalkBack. |
+| S. Switch/keyboard order | Switch Access, external keyboard or Full Keyboard Access follows a logical reading order and can activate every visible action. |
+| T. Reduced motion | With the platform reduce-motion setting enabled, no essential state or completion information depends on animation. |
 
 ## Device QA evidence
 
