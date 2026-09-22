@@ -23,6 +23,7 @@ class _ReviewerBackend {
   bool consented = false;
   int passwordLogins = 0;
   int portalLoads = 0;
+  int logouts = 0;
 }
 
 class _ReviewerApi extends Api {
@@ -84,11 +85,14 @@ class _ReviewerApi extends Api {
 
   @override
   Future<void> consent(Map<String, String> documentHashes) async {
-    expect(documentHashes.keys, unorderedEquals({
-      'participant_information',
-      'privacy_notice',
-      'consent_text',
-    }));
+    expect(
+      documentHashes.keys,
+      unorderedEquals({
+        'participant_information',
+        'privacy_notice',
+        'consent_text',
+      }),
+    );
     backend.consented = true;
   }
 
@@ -98,7 +102,7 @@ class _ReviewerApi extends Api {
   ];
 
   @override
-  Future<void> logout() async {}
+  Future<void> logout() async => backend.logouts += 1;
 
   @override
   Future<Map<String, dynamic>> request(
@@ -124,7 +128,7 @@ class _ReviewerApi extends Api {
 
 void main() {
   testWidgets(
-    'reusable reviewer login is consent-first and remains reusable after consent',
+    'pending-consent reviewer can sign out and sign in again without data access',
     (tester) async {
       tester.view.physicalSize = const Size(800, 1200);
       tester.view.devicePixelRatio = 1;
@@ -138,27 +142,54 @@ void main() {
       ParticipantApi factory(String _, String? token) =>
           _ReviewerApi(backend, token ?? 'anonymous');
 
-      await tester.pumpWidget(
-        ParticipantApp(store: store, factory: factory),
-      );
+      Future<void> passwordLogin() async {
+        await tester.tap(find.text('Username & password'));
+        await tester.pump();
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Username or email'),
+          'store-reviewer',
+        );
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Password'),
+          'review-password',
+        );
+        final signIn = find.widgetWithText(FilledButton, 'Sign in');
+        await tester.ensureVisible(signIn);
+        await tester.tap(signIn);
+        await tester.pumpAndSettle();
+      }
+
+      await tester.pumpWidget(ParticipantApp(store: store, factory: factory));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Username & password'));
-      await tester.pump();
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Username or email'),
-        'store-reviewer',
-      );
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Password'),
-        'review-password',
-      );
-      final firstSignIn = find.widgetWithText(FilledButton, 'Sign in');
-      await tester.ensureVisible(firstSignIn);
-      await tester.tap(firstSignIn);
-      await tester.pumpAndSettle();
+      await passwordLogin();
 
       expect(find.text('Before you begin'), findsOneWidget);
       expect(find.textContaining('Welcome, Store Reviewer'), findsNothing);
+      expect(backend.portalLoads, 0);
+      expect(backend.consented, isFalse);
+      final pendingConsentSignOut = find.widgetWithText(
+        OutlinedButton,
+        'Sign out',
+      );
+      await tester.ensureVisible(pendingConsentSignOut);
+      expect(pendingConsentSignOut, findsOneWidget);
+      expect(tester.getSemantics(pendingConsentSignOut).label, 'Sign out');
+      await tester.tap(pendingConsentSignOut);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Join your study'), findsOneWidget);
+      expect(find.text('Before you begin'), findsNothing);
+      expect(store.saved, isNull);
+      expect(backend.logouts, 1);
+      expect(backend.consented, isFalse);
+      expect(backend.portalLoads, 0);
+
+      await passwordLogin();
+      expect(find.text('Before you begin'), findsOneWidget);
+      expect(find.textContaining('Welcome, Store Reviewer'), findsNothing);
+      expect(find.text('Sign out'), findsOneWidget);
+      expect(backend.passwordLogins, 2);
+      expect(backend.consented, isFalse);
       expect(backend.portalLoads, 0);
 
       for (final title in [
@@ -170,7 +201,10 @@ void main() {
         await tester.ensureVisible(link);
         await tester.tap(link);
         await tester.pumpAndSettle();
-        expect(find.text('Synthetic $title for app-store review.'), findsOneWidget);
+        expect(
+          find.text('Synthetic $title for app-store review.'),
+          findsOneWidget,
+        );
         await tester.pageBack();
         await tester.pumpAndSettle();
       }
@@ -189,24 +223,11 @@ void main() {
 
       await tester.tap(find.byTooltip('Sign out'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Username & password'));
-      await tester.pump();
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Username or email'),
-        'store-reviewer',
-      );
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Password'),
-        'review-password',
-      );
-      final secondSignIn = find.widgetWithText(FilledButton, 'Sign in');
-      await tester.ensureVisible(secondSignIn);
-      await tester.tap(secondSignIn);
-      await tester.pumpAndSettle();
+      await passwordLogin();
 
       expect(find.text('Welcome, Store Reviewer'), findsOneWidget);
       expect(find.text('Before you begin'), findsNothing);
-      expect(backend.passwordLogins, 2);
+      expect(backend.passwordLogins, 3);
       expect(backend.portalLoads, 2);
     },
   );

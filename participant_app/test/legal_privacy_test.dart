@@ -66,6 +66,7 @@ void main() {
             documentsError: null,
             onRetry: () async {},
             onAccept: (_) async {},
+            onLogout: () async {},
           ),
         ),
       );
@@ -164,6 +165,7 @@ void main() {
               documentsError: loaded ? null : 'We could not load this study’s consent documents. Your consent has not been submitted.',
               onRetry: () async => setState(() => loaded = true),
               onAccept: (hashes) async => acceptedHashes = hashes,
+              onLogout: () async {},
             ),
           ),
         ),
