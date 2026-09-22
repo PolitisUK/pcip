@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
     text,
 )
@@ -343,6 +344,14 @@ class Participant(Base):
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default=ParticipantStatus.prospective.value)
     consent_status: Mapped[str] = mapped_column(String(30), default=ConsentStatus.pending.value)
+    # Explicit, owner/admin-controlled designation for fictional app-store
+    # reviewers. This permits only pre-consent password authentication; it
+    # never grants consent or study-content access.
+    is_store_reviewer: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=false(),
+    )
     communication_preference: Mapped[str] = mapped_column(String(30), default="email")
     tags: Mapped[str] = mapped_column(Text, default="")
     demographics_json: Mapped[str] = mapped_column(Text, default="{}")
@@ -516,7 +525,7 @@ class ParticipantAppAccessCode(Base):
 
 
 class ParticipantPasswordCredential(Base):
-    """An explicitly enabled reusable credential for one accepted participant invitation."""
+    """An explicitly enabled reusable credential bound to one participant invitation."""
 
     __tablename__ = "participant_password_credentials"
     __table_args__ = (

@@ -7,6 +7,62 @@ import sys
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_store_reviewer_designation_upgrade_downgrade_and_fresh_schema(tmp_path):
+    database_path = tmp_path / "store-reviewer-0037.db"
+    environment = os.environ.copy()
+    environment["DATABASE_URL"] = f"sqlite:///{database_path}"
+
+    def run_alembic(*arguments):
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", *arguments],
+            cwd=REPOSITORY_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return result
+
+    def participant_columns():
+        result = subprocess.run(
+            ["sqlite3", str(database_path), "PRAGMA table_info(participants);"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    run_alembic("upgrade", "0036")
+    # 0001 uses current ORM metadata when building a fresh rehearsal schema.
+    assert "is_store_reviewer" in participant_columns()
+    removed = subprocess.run(
+        [
+            "sqlite3",
+            str(database_path),
+            "ALTER TABLE participants DROP COLUMN is_store_reviewer;",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert removed.returncode == 0, removed.stderr
+    assert "is_store_reviewer" not in participant_columns()
+
+    run_alembic("upgrade", "0037")
+    columns = participant_columns()
+    assert "is_store_reviewer" in columns
+    assert "is_store_reviewer|BOOLEAN|1|0" in columns
+    assert "0037" in run_alembic("current").stdout
+
+    run_alembic("downgrade", "0036")
+    assert "is_store_reviewer" not in participant_columns()
+    run_alembic("upgrade", "head")
+    assert "is_store_reviewer" in participant_columns()
+    run_alembic("check")
+
+
 def test_analysis_actor_guards_use_active_organisation_memberships(tmp_path):
     database_path = tmp_path / "analysis-actor-memberships.db"
     environment = os.environ.copy()
@@ -166,7 +222,7 @@ def test_optional_participant_location_upgrade_downgrade_and_reupgrade(tmp_path)
         assert result.returncode == 0, result.stderr
     revision = subprocess.run([sys.executable, "-m", "alembic", "current"], cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, check=False)
     assert revision.returncode == 0, revision.stderr
-    assert "0036" in revision.stdout
+    assert "0037" in revision.stdout
     columns = subprocess.run(["sqlite3", str(database_path), "PRAGMA table_info(activity_responses);"], capture_output=True, text=True, check=False)
     assert columns.returncode == 0, columns.stderr
     assert "location_latitude" in columns.stdout
@@ -213,7 +269,7 @@ def test_organisation_archiving_upgrade_preserves_existing_rows_and_downgrade_is
         )
         assert result.returncode == 0, result.stderr
         if command[-1] == "current":
-            assert "0036" in result.stdout
+            assert "0037" in result.stdout
 
     active = subprocess.run(
         [

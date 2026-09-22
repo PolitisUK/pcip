@@ -73,9 +73,13 @@ paths:
       summary: Exchange an explicitly provisioned participant credential for a session.
       description: >-
         Available only to a participant with a dedicated, enabled reusable
-        credential. The response is deliberately identical to the one-time
-        code session exchange. Invalid usernames, disabled credentials and
-        incorrect passwords receive the same generic response.
+        credential. An explicitly designated fictional store reviewer may
+        authenticate against one pending invitation; that response returns
+        `next_action: consent_required` and remains restricted to the bound
+        documents and consent flow until consent succeeds. Ordinary
+        participants retain the accepted-invitation and active-consent
+        prerequisite. Invalid usernames, disabled credentials and incorrect
+        passwords receive the same generic response.
       security: []
       requestBody:
         required: true

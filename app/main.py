@@ -1153,6 +1153,7 @@ def participant_export_payload(db: Session, row: Participant):
             "phone": row.phone,
             "status": row.status,
             "consent_status": row.consent_status,
+            "is_store_reviewer": row.is_store_reviewer,
             "communication_preference": row.communication_preference,
             "tags": row.tags,
             "demographics_json": row.demographics_json,
@@ -1723,6 +1724,54 @@ def _participant_api_exchange_conflict() -> HTTPException:
     )
 
 
+def _participant_consent_is_active(
+    invitation: ParticipantInvitation,
+    participant_row: Participant,
+) -> bool:
+    """Return whether this study invitation has completed active consent."""
+    return bool(
+        invitation.accepted_at
+        and participant_row.consent_status == ConsentStatus.granted.value
+    )
+
+
+def _participant_invitation_has_active_enrolment(
+    db: Session,
+    invitation: ParticipantInvitation,
+) -> bool:
+    return db.scalar(
+        select(StudyEnrolment.id).where(
+            StudyEnrolment.organisation_id == invitation.organisation_id,
+            StudyEnrolment.study_id == invitation.study_id,
+            StudyEnrolment.participant_id == invitation.participant_id,
+            StudyEnrolment.status != "withdrawn",
+        )
+    ) is not None
+
+
+def _participant_password_invitation_is_eligible(
+    db: Session,
+    participant_row: Participant,
+    invitation: ParticipantInvitation,
+) -> bool:
+    if (
+        invitation.organisation_id != participant_row.organisation_id
+        or invitation.participant_id != participant_row.id
+        or invitation.revoked_at is not None
+        or participant_row.status == ParticipantStatus.withdrawn.value
+        or participant_row.consent_status == ConsentStatus.withdrawn.value
+        or not _participant_invitation_has_active_enrolment(db, invitation)
+    ):
+        return False
+    if _participant_consent_is_active(invitation, participant_row):
+        return True
+    return bool(
+        participant_row.is_store_reviewer
+        and invitation.accepted_at is None
+        and unexpired(invitation.expires_at)
+    )
+
+
 def _extract_bearer_token(request: Request) -> str:
     header = (request.headers.get("authorization") or "").strip()
     scheme, _, token = header.partition(" ")
@@ -1740,17 +1789,9 @@ def _resolve_participant_api_context(
     if not session_row:
         raise _participant_api_unauthorised()
     password_credential_session = session_row.participant_password_credential_id is not None
+    credential = None
     if password_credential_session:
-        credential = db.get(
-            ParticipantPasswordCredential,
-            session_row.participant_password_credential_id,
-        )
-        if (
-            not credential
-            or not credential.enabled
-            or credential.participant_invitation_id != session_row.participant_invitation_id
-        ):
-            raise _participant_api_unauthorised()
+        credential = db.get(ParticipantPasswordCredential, session_row.participant_password_credential_id)
     invitation = db.get(ParticipantInvitation, session_row.participant_invitation_id)
     if (
         not invitation
@@ -1763,8 +1804,23 @@ def _resolve_participant_api_context(
     ):
         raise _participant_api_unauthorised()
     participant_row = db.get(Participant, invitation.participant_id)
-    if not participant_row:
+    if (
+        not participant_row
+        or participant_row.organisation_id != invitation.organisation_id
+    ):
         raise _participant_api_unauthorised()
+    if password_credential_session:
+        if (
+            not credential
+            or not credential.enabled
+            or credential.organisation_id != invitation.organisation_id
+            or credential.participant_id != participant_row.id
+            or credential.participant_invitation_id != invitation.id
+            or not _participant_password_invitation_is_eligible(
+                db, participant_row, invitation
+            )
+        ):
+            raise _participant_api_unauthorised()
     return session_row, invitation, participant_row
 
 
@@ -1846,7 +1902,11 @@ def _participant_session_exchange_response(
             accepted_at=invitation.accepted_at,
             requires_study_documents=invitation.consent_bundle_id is not None,
         ),
-        next_action="portal" if invitation.accepted_at else "consent_required",
+        next_action=(
+            "portal"
+            if _participant_consent_is_active(invitation, participant_row)
+            else "consent_required"
+        ),
     )
 
 
@@ -4975,7 +5035,12 @@ def participant_detail(participant_id:int,request:Request,u=Depends(current_user
             ParticipantPasswordCredential.organisation_id == u.organisation_id,
         )
     )
-    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=[m for m in messages if not m.internal_note],internal_notes=[m for m in messages if m.internal_note],statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token,timeline=timeline,previous_participant=previous_participant,next_participant=next_participant,password_credential=password_credential,can_manage_password_credential=u.role in {"owner", "admin"})
+    password_credential_invitations = [
+        invitation
+        for invitation in invs
+        if _participant_password_invitation_is_eligible(db, p, invitation)
+    ]
+    return render(request,"participant_detail.html",user=u,participant=p,enrolments=ens,studies=studies,invitations=invs,responses=responses,evidence_files=evidence_files,messages=[m for m in messages if not m.internal_note],internal_notes=[m for m in messages if m.internal_note],statuses=[x.value for x in ParticipantStatus],consent_statuses=[x.value for x in ConsentStatus],is_privacy_admin=u.role in {"owner", "admin"},privacy_counts=privacy_counts,privacy_workflow_token=privacy_workflow_token,timeline=timeline,previous_participant=previous_participant,next_participant=next_participant,password_credential=password_credential,password_credential_invitations=password_credential_invitations,can_manage_password_credential=u.role in {"owner", "admin"})
 
 
 @app.get("/participants/{participant_id}/export")
@@ -5105,7 +5170,7 @@ def apply_privacy_retention(request:Request,u=Depends(roles("owner","admin")),cs
     db.commit()
     return RedirectResponse("/participants",303)
 @app.post("/participants/{participant_id}/update")
-def update_participant(participant_id:int,name:str=Form(None),email:str=Form(None),phone:str=Form(None),status_value:str=Form(...),consent_status:str=Form(...),communication_preference:str=Form(...),tags:str=Form(""),notes:str=Form(""),demographics_json:str=Form("{}"),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
+def update_participant(participant_id:int,name:str=Form(None),email:str=Form(None),phone:str=Form(None),status_value:str=Form(...),consent_status:str=Form(...),communication_preference:str=Form(...),tags:str=Form(""),notes:str=Form(""),demographics_json:str=Form("{}"),is_store_reviewer:bool=Form(False),u=Depends(roles("owner","admin","researcher")),csrf_ok: None = Depends(csrf_protect),db:Session=Depends(get_db)):
     p=participant(db,participant_id,u.organisation_id); enum_value(status_value,ParticipantStatus,"participant status"); enum_value(consent_status,ConsentStatus,"consent status")
     if communication_preference not in COMMUNICATION_PREFERENCES: raise HTTPException(400,"Invalid communication preference.")
     if u.role == "researcher":
@@ -5121,6 +5186,22 @@ def update_participant(participant_id:int,name:str=Form(None),email:str=Form(Non
     if name is not None: p.name=nonblank(name,"Participant name",3); p.email=validated_email(email or ""); p.phone=(phone or "").strip() or None
     try: json.loads(demographics_json or "{}")
     except json.JSONDecodeError: raise HTTPException(400,"Demographics must be valid JSON.")
+    if u.role in {"owner", "admin"} and p.is_store_reviewer != is_store_reviewer:
+        p.is_store_reviewer = is_store_reviewer
+        if not is_store_reviewer:
+            credential_ids = select(ParticipantPasswordCredential.id).where(
+                ParticipantPasswordCredential.organisation_id == u.organisation_id,
+                ParticipantPasswordCredential.participant_id == p.id,
+            )
+            db.execute(
+                update(PublicAuthSession)
+                .where(
+                    PublicAuthSession.participant_password_credential_id.in_(credential_ids),
+                    PublicAuthSession.revoked_at.is_(None),
+                )
+                .values(revoked_at=now())
+            )
+        audit(db,u.organisation_id,u.id,"participant.store_reviewer_designation_changed","participant",p.id,"enabled" if is_store_reviewer else "disabled")
     p.status=status_value; p.consent_status=consent_status; p.communication_preference=communication_preference; p.tags=tags.strip(); p.notes=notes.strip(); p.demographics_json=demographics_json or "{}"; audit(db,u.organisation_id,u.id,"participant.updated","participant",p.id,p.reference); db.commit(); return RedirectResponse(f"/participants/{p.id}",303)
 
 
@@ -5138,8 +5219,9 @@ def set_participant_password_credential(
     """Provision or rotate one explicitly authorised reusable app credential.
 
     This narrowly scoped, CSRF-protected workflow intentionally has no API that
-    returns credentials or hashes.  A credential can only be bound to an
-    accepted invitation for this participant in the current organisation.
+    returns credentials or hashes. A credential can be bound to an accepted
+    invitation, or to one pending invitation for an explicitly designated
+    fictional store reviewer in the current organisation.
     """
     p = participant(db, participant_id, u.organisation_id)
     identifier = login_identifier.strip().lower()
@@ -5150,8 +5232,8 @@ def set_participant_password_credential(
         ParticipantInvitation.organisation_id == u.organisation_id,
         ParticipantInvitation.participant_id == p.id,
     ))
-    if not invitation or invitation.revoked_at or not invitation.accepted_at or p.consent_status != ConsentStatus.granted.value:
-        raise HTTPException(400, "Choose an accepted participant invitation.")
+    if not invitation or not _participant_password_invitation_is_eligible(db, p, invitation):
+        raise HTTPException(400, "Choose an eligible participant invitation.")
     credential = db.scalar(select(ParticipantPasswordCredential).where(
         ParticipantPasswordCredential.participant_id == p.id,
         ParticipantPasswordCredential.organisation_id == u.organisation_id,
@@ -6094,10 +6176,15 @@ def participant_api_session_exchange(
         or not organisation_is_active(db, invitation.organisation_id)
     ):
         raise HTTPException(400, "This participant link is invalid or expired.")
-    if access_code and not invitation.accepted_at:
-        raise HTTPException(400, "This participant link is invalid or expired.")
     participant_row = db.get(Participant, invitation.participant_id)
-    if not participant_row:
+    if (
+        not participant_row
+        or participant_row.organisation_id != invitation.organisation_id
+        or participant_row.status == ParticipantStatus.withdrawn.value
+        or participant_row.consent_status == ConsentStatus.withdrawn.value
+        or not _participant_invitation_has_active_enrolment(db, invitation)
+        or (access_code and not _participant_consent_is_active(invitation, participant_row))
+    ):
         raise HTTPException(400, "This participant link is invalid or expired.")
 
     existing_sessions = list(
@@ -6130,7 +6217,11 @@ def participant_api_session_exchange(
         "participant.api_session_exchanged",
         "participant_invitation",
         invitation.id,
-        "portal" if invitation.accepted_at else "consent_required",
+        (
+            "portal"
+            if _participant_consent_is_active(invitation, participant_row)
+            else "consent_required"
+        ),
     )
     if access_code:
         access_code.redeemed_at = now()
@@ -6171,9 +6262,8 @@ def participant_api_password_session(
     if (
         not invitation or not participant_row or invitation.participant_id != participant_row.id
         or invitation.organisation_id != credential.organisation_id
-        or invitation.revoked_at
-        or not invitation.accepted_at or participant_row.consent_status != ConsentStatus.granted.value
-        or participant_row.status == ParticipantStatus.withdrawn.value
+        or credential.participant_id != participant_row.id
+        or not _participant_password_invitation_is_eligible(db, participant_row, invitation)
         or not organisation_is_active(db, credential.organisation_id)
     ):
         raise failure
@@ -6188,7 +6278,12 @@ def participant_api_password_session(
         participant_password_credential_id=credential.id,
         ttl_seconds=settings.session_max_age_seconds,
     )
-    audit(db, credential.organisation_id, None, "participant.password_session_exchanged", "participant_password_credential", credential.id, "portal")
+    next_action = (
+        "portal"
+        if _participant_consent_is_active(invitation, participant_row)
+        else "consent_required"
+    )
+    audit(db, credential.organisation_id, None, "participant.password_session_exchanged", "participant_password_credential", credential.id, next_action)
     db.commit()
     _cache_control_no_store(response)
     return _participant_session_exchange_response(raw_token, session_row, invitation, participant_row)
@@ -6218,7 +6313,11 @@ def participant_api_session(
             accepted_at=invitation.accepted_at,
             requires_study_documents=invitation.consent_bundle_id is not None,
         ),
-        next_action="portal" if invitation.accepted_at else "consent_required",
+        next_action=(
+            "portal"
+            if _participant_consent_is_active(invitation, participant_row)
+            else "consent_required"
+        ),
         study_scope=[invitation.study_id],
     )
 
@@ -6392,6 +6491,8 @@ def participant_api_consent_accept(
     _session_row, invitation, participant_row = _resolve_participant_api_context(request, db)
     if invitation.revoked_at or not unexpired(invitation.expires_at):
         raise _participant_api_unauthorised()
+    if invitation.accepted_at and not _participant_consent_is_active(invitation, participant_row):
+        raise HTTPException(409, "Participant consent state is inconsistent. Contact the research team.")
     if not invitation.accepted_at:
         governance = governance_for_study(db, study(db, invitation.study_id, invitation.organisation_id))
         try:
