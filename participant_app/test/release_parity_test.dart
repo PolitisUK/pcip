@@ -5,13 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const applicationId = 'uk.co.politisltd.citizencentric.participant';
 
-  test('Android and iOS share release identity and version 1.0.0+9', () {
+  test('Android and iOS share release identity and version 1.0.0+11', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
     final android = File('android/app/build.gradle.kts').readAsStringSync();
     final ios = File('ios/Runner.xcodeproj/project.pbxproj').readAsStringSync();
     final iosInfo = File('ios/Runner/Info.plist').readAsStringSync();
 
-    expect(pubspec, contains('version: 1.0.0+9'));
+    expect(pubspec, contains('version: 1.0.0+11'));
     expect(android, contains('applicationId = "$applicationId"'));
     expect(android, contains('versionCode = flutter.versionCode'));
     expect(android, contains('versionName = flutter.versionName'));
