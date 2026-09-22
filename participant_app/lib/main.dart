@@ -837,6 +837,7 @@ class _ParticipantAppState extends State<ParticipantApp> {
           documentsError: documentsError,
           onRetry: loadStudyDocuments,
           onAccept: accept,
+          onLogout: signOut,
         ),
       );
     final activeStudyId = (session!['invitation'] as Map?)?['study_id'] as int?;
@@ -1073,12 +1074,14 @@ class Consent extends StatefulWidget {
     required this.documentsError,
     required this.onRetry,
     required this.onAccept,
+    required this.onLogout,
   });
   final String? error, documentsError;
   final List<Map<String, dynamic>> documents;
   final bool documentsRequired, documentsLoading;
   final Future<void> Function() onRetry;
   final Future<void> Function(Map<String, String>) onAccept;
+  final Future<void> Function() onLogout;
   @override
   State<Consent> createState() => _ConsentState();
 }
@@ -1203,6 +1206,12 @@ class _ConsentState extends State<Consent> {
             FilledButton(
               onPressed: canAccept ? go : null,
               child: Text(waiting ? 'Saving consent…' : 'Accept and continue'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: waiting ? null : widget.onLogout,
+              icon: const Icon(Icons.logout),
+              label: const Text('Sign out'),
             ),
           ],
         ),
