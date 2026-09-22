@@ -92,7 +92,11 @@ String? invitationCodeError(String value) =>
     value.trim().isEmpty ? 'Enter your one-time app code to continue.' : null;
 bool invitationRequiresConsent(Map<String, dynamic>? session) {
   final action = session?['next_action'];
-  if (action is String) return action == 'consent_required';
+  if (action == 'consent_required') return true;
+  final participant = session?['participant'];
+  if (participant is Map && participant['consent_status'] != 'granted') {
+    return true;
+  }
   final invitation = session?['invitation'];
   return invitation is Map && invitation['accepted_at'] == null;
 }

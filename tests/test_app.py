@@ -8226,6 +8226,565 @@ def _password_login(username: str, password: str):
     )
 
 
+def _pending_store_reviewer_credential(email_suffix: str = 'preconsent-reviewer'):
+    """Provision a pending-consent credential through the owner/admin UI."""
+    from app.models import Activity, AuditEvent, Participant, ParticipantInvitation
+    from app.security import token_hash
+
+    token, participant_id, study_id = _create_participant_invitation_for_api(email_suffix)
+    identifier = f"{unique_value('store-reviewer').lower()}"
+    password = 'A-long-reviewer-test-password-123!'
+    with SessionLocal() as db:
+        invitation = db.scalar(
+            select(ParticipantInvitation).where(
+                ParticipantInvitation.token_hash == token_hash(token)
+            )
+        )
+        participant_row = db.get(Participant, participant_id)
+        activity_id = db.scalar(
+            select(Activity.id).where(Activity.study_id == study_id).order_by(Activity.id)
+        )
+        assert invitation is not None and participant_row is not None and activity_id is not None
+        invitation_id = invitation.id
+
+    designated = post_with_csrf(
+        f'/participants/{participant_id}/update',
+        data={
+            'name': 'Participant API Auth',
+            'email': f'{email_suffix}@example.org',
+            'phone': '',
+            'status_value': 'invited',
+            'consent_status': 'pending',
+            'communication_preference': 'email',
+            'tags': 'fictional,store-review',
+            'notes': '',
+            'demographics_json': '{}',
+            'is_store_reviewer': 'true',
+        },
+        follow_redirects=False,
+    )
+    assert designated.status_code == 303
+    provisioned = post_with_csrf(
+        f'/participants/{participant_id}/password-credential',
+        data={
+            'invitation_id': invitation_id,
+            'login_identifier': identifier,
+            'password': password,
+            'enabled': 'true',
+        },
+        follow_redirects=False,
+    )
+    assert provisioned.status_code == 303
+    with SessionLocal() as db:
+        designation_audit = db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == 'participant.store_reviewer_designation_changed',
+                AuditEvent.entity_id == str(participant_id),
+            )
+        )
+        assert designation_audit is not None
+    return identifier, password, participant_id, study_id, invitation_id, activity_id
+
+
+def test_preconsent_credential_requires_explicit_owner_controlled_store_reviewer_designation():
+    from app.models import AuditEvent, Participant, ParticipantInvitation, ParticipantPasswordCredential
+    from app.security import token_hash
+
+    with client:
+        client.cookies.clear()
+        auth()
+        token, participant_id, _study_id = _create_participant_invitation_for_api('ordinary-preconsent')
+        with SessionLocal() as db:
+            invitation = db.scalar(
+                select(ParticipantInvitation).where(
+                    ParticipantInvitation.token_hash == token_hash(token)
+                )
+            )
+            assert invitation is not None
+            invitation_id = invitation.id
+        rejected = post_with_csrf(
+            f'/participants/{participant_id}/password-credential',
+            data={
+                'invitation_id': invitation_id,
+                'login_identifier': unique_value('ordinary-reviewer').lower(),
+                'password': 'A-long-test-password-123!',
+                'enabled': 'true',
+            },
+        )
+        assert rejected.status_code == 400
+        assert 'eligible participant invitation' in rejected.text
+        with SessionLocal() as db:
+            participant_row = db.get(Participant, participant_id)
+            invitation = db.get(ParticipantInvitation, invitation_id)
+            credential = db.scalar(
+                select(ParticipantPasswordCredential).where(
+                    ParticipantPasswordCredential.participant_id == participant_id
+                )
+            )
+            assert participant_row is not None and participant_row.is_store_reviewer is False
+            assert participant_row.consent_status == 'pending'
+            assert invitation is not None and invitation.accepted_at is None
+            assert credential is None
+
+        identifier, _password, reviewer_id, _study_id, reviewer_invitation_id, _activity_id = (
+            _pending_store_reviewer_credential('designated-preconsent')
+        )
+        page = client.get(f'/participants/{reviewer_id}')
+        assert page.status_code == 200
+        assert 'Designated fictional store-review participant' in page.text
+        assert 'Consent still required.' in page.text
+        assert 'consent pending' in page.text
+        with SessionLocal() as db:
+            participant_row = db.get(Participant, reviewer_id)
+            invitation = db.get(ParticipantInvitation, reviewer_invitation_id)
+            credential = db.scalar(
+                select(ParticipantPasswordCredential).where(
+                    ParticipantPasswordCredential.participant_id == reviewer_id
+                )
+            )
+            assert participant_row is not None and participant_row.is_store_reviewer is True
+            assert participant_row.consent_status == 'pending'
+            assert participant_row.status == 'invited'
+            assert invitation is not None and invitation.accepted_at is None
+            assert credential is not None and credential.login_identifier_normalised == identifier
+            assert db.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.action.in_([
+                        'participant.api_consent_accepted',
+                        'participant.invitation_accepted',
+                    ]),
+                    AuditEvent.entity_id == str(reviewer_id),
+                )
+            ) is None
+
+
+def test_preconsent_reviewer_password_session_is_consent_only_until_normal_acceptance():
+    from app.models import Participant, ParticipantAppAccessCode, ParticipantInvitation
+
+    with client:
+        client.cookies.clear()
+        auth()
+        identifier, password, participant_id, study_id, invitation_id, activity_id = (
+            _pending_store_reviewer_credential('reviewer-consent-gate')
+        )
+        login_response = _password_login(identifier, password)
+        assert login_response.status_code == 200
+        payload = login_response.json()
+        assert payload['next_action'] == 'consent_required'
+        assert payload['participant']['consent_status'] == 'pending'
+        assert payload['invitation']['study_id'] == study_id
+        token = payload['session']['access_token']
+        headers = {'Authorization': f'Bearer {token}'}
+
+        session = client.get('/api/v1/participant/session', headers=headers)
+        assert session.status_code == 200
+        assert session.json()['next_action'] == 'consent_required'
+        documents = client.get('/api/v1/participant/legal-documents', headers=headers)
+        assert documents.status_code == 200
+        document_hashes = {
+            item['document_type']: item['content_sha256']
+            for item in documents.json()['documents']
+        }
+        for method, path, kwargs in (
+            ('get', '/api/v1/participant/portal', {}),
+            ('get', '/api/v1/participant/activities', {}),
+            ('get', '/api/v1/participant/submissions', {}),
+            ('get', '/api/v1/participant/messages', {}),
+            ('get', '/api/v1/participant/session/available-studies', {}),
+            ('put', f'/api/v1/participant/activities/{activity_id}/draft', {
+                'json': {'answer': 'must not persist'},
+                'headers': {**headers, 'Idempotency-Key': 'preconsent-draft'},
+            }),
+            ('post', f'/api/v1/participant/activities/{activity_id}/submit', {
+                'json': {'answer': 'must not persist'},
+                'headers': {**headers, 'Idempotency-Key': 'preconsent-submit'},
+            }),
+            ('get', '/api/v1/participant/evidence/999999/status', {}),
+        ):
+            call_headers = kwargs.pop('headers', headers)
+            response = getattr(client, method)(path, headers=call_headers, **kwargs)
+            assert response.status_code == 403, (method, path, response.text)
+
+        with SessionLocal() as db:
+            participant_row = db.get(Participant, participant_id)
+            invitation = db.get(ParticipantInvitation, invitation_id)
+            assert participant_row is not None and participant_row.consent_status == 'pending'
+            assert invitation is not None and invitation.accepted_at is None
+            assert db.scalar(
+                select(ParticipantAppAccessCode).where(
+                    ParticipantAppAccessCode.participant_invitation_id == invitation_id
+                )
+            ) is None
+
+        accepted = client.post(
+            '/api/v1/participant/consent',
+            json={'consent': True, 'document_hashes': document_hashes},
+            headers=headers,
+        )
+        assert accepted.status_code == 200
+        assert client.get('/api/v1/participant/session', headers=headers).json()['next_action'] == 'portal'
+        assert client.get('/api/v1/participant/activities', headers=headers).status_code == 200
+
+        second_login = _password_login(identifier, password)
+        assert second_login.status_code == 200
+        assert second_login.json()['next_action'] == 'portal'
+        assert second_login.json()['session']['access_token'] != token
+        assert client.get('/api/v1/participant/session', headers=headers).status_code == 401
+
+
+def test_preconsent_reviewer_password_rotation_revokes_old_secret_and_session():
+    from app.models import ParticipantPasswordCredential
+
+    with client:
+        client.cookies.clear()
+        auth()
+        identifier, password, participant_id, _study_id, invitation_id, _activity_id = (
+            _pending_store_reviewer_credential('reviewer-rotation')
+        )
+        first = _password_login(identifier, password)
+        assert first.status_code == 200
+        old_token = first.json()['session']['access_token']
+        new_password = 'A-different-long-reviewer-password-456!'
+        rotated = post_with_csrf(
+            f'/participants/{participant_id}/password-credential',
+            data={
+                'invitation_id': invitation_id,
+                'login_identifier': identifier,
+                'password': new_password,
+                'enabled': 'true',
+            },
+            follow_redirects=False,
+        )
+        assert rotated.status_code == 303
+        assert _password_login(identifier, password).status_code == 401
+        assert _password_login(identifier, new_password).status_code == 200
+        assert client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {old_token}'},
+        ).status_code == 401
+        with SessionLocal() as db:
+            credential = db.scalar(
+                select(ParticipantPasswordCredential).where(
+                    ParticipantPasswordCredential.participant_id == participant_id
+                )
+            )
+            assert credential is not None and credential.rotated_at is not None
+
+
+def test_removing_store_reviewer_designation_revokes_pending_password_session():
+    from app.models import PublicAuthSession
+    from app.security import token_hash
+
+    with client:
+        client.cookies.clear()
+        auth()
+        identifier, password, participant_id, _study_id, _invitation_id, _activity_id = (
+            _pending_store_reviewer_credential('reviewer-designation-revoked')
+        )
+        login_response = _password_login(identifier, password)
+        assert login_response.status_code == 200
+        api_token = login_response.json()['session']['access_token']
+        removed = post_with_csrf(
+            f'/participants/{participant_id}/update',
+            data={
+                'name': 'Participant API Auth',
+                'email': 'reviewer-designation-revoked@example.org',
+                'phone': '',
+                'status_value': 'invited',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': 'fictional,store-review',
+                'notes': '',
+                'demographics_json': '{}',
+            },
+            follow_redirects=False,
+        )
+        assert removed.status_code == 303
+        assert client.get(
+            '/api/v1/participant/session',
+            headers={'Authorization': f'Bearer {api_token}'},
+        ).status_code == 401
+        with SessionLocal() as db:
+            session_row = db.scalar(
+                select(PublicAuthSession).where(
+                    PublicAuthSession.session_hash == token_hash(api_token)
+                )
+            )
+            assert session_row is not None and session_row.revoked_at is not None
+
+
+def test_store_reviewer_pending_second_study_is_not_switchable_before_its_consent():
+    from app.models import ParticipantInvitation, Project, Study, StudyEnrolment, User
+    from app.security import token_hash
+
+    with client:
+        client.cookies.clear()
+        auth()
+        identifier, password, participant_id, study_id, _invitation_id, _activity_id = (
+            _pending_store_reviewer_credential('reviewer-second-study')
+        )
+        login_response = _password_login(identifier, password)
+        token = login_response.json()['session']['access_token']
+        headers = {'Authorization': f'Bearer {token}'}
+        documents = client.get('/api/v1/participant/legal-documents', headers=headers).json()[
+            'documents'
+        ]
+        accepted = client.post(
+            '/api/v1/participant/consent',
+            json={
+                'consent': True,
+                'document_hashes': {
+                    item['document_type']: item['content_sha256'] for item in documents
+                },
+            },
+            headers=headers,
+        )
+        assert accepted.status_code == 200
+
+        with SessionLocal() as db:
+            first_study = db.get(Study, study_id)
+            owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            assert first_study is not None and owner is not None
+            project = db.get(Project, first_study.project_id)
+            assert project is not None
+            second_study = Study(
+                organisation_id=first_study.organisation_id,
+                project_id=project.id,
+                title='Pending reviewer consent study',
+                code=unique_value('REVIEW-PENDING').upper(),
+                created_by_id=owner.id,
+            )
+            db.add(second_study)
+            db.flush()
+            db.add(
+                StudyEnrolment(
+                    organisation_id=first_study.organisation_id,
+                    study_id=second_study.id,
+                    participant_id=participant_id,
+                )
+            )
+            second_invitation = ParticipantInvitation(
+                organisation_id=first_study.organisation_id,
+                participant_id=participant_id,
+                study_id=second_study.id,
+                token_hash=token_hash(unique_value('reviewer-second-invitation')),
+                expires_at=now() + timedelta(days=1),
+                invited_by_id=owner.id,
+            )
+            db.add(second_invitation)
+            db.commit()
+            second_study_id = second_study.id
+
+        available = client.get(
+            '/api/v1/participant/session/available-studies', headers=headers
+        )
+        assert available.status_code == 200
+        assert {item['study_id'] for item in available.json()['data']} == {study_id}
+        switched = client.post(
+            '/api/v1/participant/session/switch',
+            json={'study_id': second_study_id},
+            headers=headers,
+        )
+        assert switched.status_code == 403
+
+
+def test_apple_and_google_store_reviewer_credentials_remain_separate():
+    from app.models import ParticipantPasswordCredential, PublicAuthSession
+    from app.security import token_hash
+
+    with client:
+        client.cookies.clear()
+        auth()
+        google = _pending_store_reviewer_credential('google-review-account')
+        apple = _pending_store_reviewer_credential('apple-review-account')
+        google_login = _password_login(google[0], google[1])
+        apple_login = _password_login(apple[0], apple[1])
+        assert google_login.status_code == 200
+        assert apple_login.status_code == 200
+        assert google_login.json()['session']['access_token'] != apple_login.json()['session'][
+            'access_token'
+        ]
+        with SessionLocal() as db:
+            google_session = db.scalar(
+                select(PublicAuthSession).where(
+                    PublicAuthSession.session_hash
+                    == token_hash(google_login.json()['session']['access_token'])
+                )
+            )
+            apple_session = db.scalar(
+                select(PublicAuthSession).where(
+                    PublicAuthSession.session_hash
+                    == token_hash(apple_login.json()['session']['access_token'])
+                )
+            )
+            assert google_session is not None
+            assert apple_session is not None
+            assert google_session.participant_invitation_id == google[4]
+            assert apple_session.participant_invitation_id == apple[4]
+            credentials = db.scalars(
+                select(ParticipantPasswordCredential).where(
+                    ParticipantPasswordCredential.participant_id.in_([google[2], apple[2]])
+                )
+            ).all()
+            assert len(credentials) == 2
+            assert {item.participant_id for item in credentials} == {google[2], apple[2]}
+            assert len({item.login_identifier_normalised for item in credentials}) == 2
+
+
+def test_store_reviewer_designation_and_pending_invitation_cannot_be_forged_across_roles_or_tenants():
+    from app.models import Organisation, Participant, ParticipantInvitation, Project, Study, StudyEnrolment, User
+    from app.security import hash_password, token_hash
+
+    with client:
+        client.cookies.clear()
+        auth()
+        _token, participant_id, _study_id = _create_participant_invitation_for_api('reviewer-forgery')
+        researcher_email = f"{unique_value('reviewer-researcher')}@example.org"
+        researcher_password = 'SecurePass123!'
+        with SessionLocal() as db:
+            participant_row = db.get(Participant, participant_id)
+            owner = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            assert participant_row is not None and owner is not None
+            researcher = User(
+                organisation_id=owner.organisation_id,
+                name='Reviewer designation researcher',
+                email=researcher_email,
+                password_hash=hash_password(researcher_password),
+                role='researcher',
+            )
+            db.add(researcher)
+            db.flush()
+            participant_row.created_by_id = researcher.id
+
+            other_org = Organisation(
+                name=unique_value('Other reviewer org'),
+                slug=unique_value('other-reviewer-org').lower(),
+            )
+            db.add(other_org)
+            db.flush()
+            other_owner = User(
+                organisation_id=other_org.id,
+                name='Other owner',
+                email=f"{unique_value('other-owner')}@example.org",
+                password_hash=hash_password('OtherSecurePass123!'),
+                role='owner',
+            )
+            db.add(other_owner)
+            db.flush()
+            other_project = Project(
+                organisation_id=other_org.id,
+                title='Other project',
+                code=unique_value('OTHER-PROJECT').upper(),
+                created_by_id=other_owner.id,
+            )
+            db.add(other_project)
+            db.flush()
+            other_study = Study(
+                organisation_id=other_org.id,
+                project_id=other_project.id,
+                title='Other study',
+                code=unique_value('OTHER-STUDY').upper(),
+                created_by_id=other_owner.id,
+            )
+            other_participant = Participant(
+                organisation_id=other_org.id,
+                reference=unique_value('OTHER-P').upper(),
+                name='Other participant',
+                created_by_id=other_owner.id,
+                is_store_reviewer=True,
+            )
+            db.add_all([other_study, other_participant])
+            db.flush()
+            db.add(
+                StudyEnrolment(
+                    organisation_id=other_org.id,
+                    study_id=other_study.id,
+                    participant_id=other_participant.id,
+                )
+            )
+            other_invitation = ParticipantInvitation(
+                organisation_id=other_org.id,
+                participant_id=other_participant.id,
+                study_id=other_study.id,
+                token_hash=token_hash(unique_value('other-invitation')),
+                expires_at=now() + timedelta(days=1),
+                invited_by_id=other_owner.id,
+            )
+            db.add(other_invitation)
+            db.commit()
+            other_invitation_id = other_invitation.id
+
+        client.cookies.clear()
+        assert login_as(researcher_email, researcher_password).status_code == 303
+        forged_designation = post_with_csrf(
+            f'/participants/{participant_id}/update',
+            data={
+                'name': 'Participant API Auth',
+                'email': 'reviewer-forgery@example.org',
+                'phone': '',
+                'status_value': 'invited',
+                'consent_status': 'pending',
+                'communication_preference': 'email',
+                'tags': '',
+                'notes': '',
+                'demographics_json': '{}',
+                'is_store_reviewer': 'true',
+            },
+            follow_redirects=False,
+        )
+        assert forged_designation.status_code == 303
+        with SessionLocal() as db:
+            participant_row = db.get(Participant, participant_id)
+            assert participant_row is not None and participant_row.is_store_reviewer is False
+
+        client.cookies.clear()
+        auth()
+        forged_invitation = post_with_csrf(
+            f'/participants/{participant_id}/password-credential',
+            data={
+                'invitation_id': other_invitation_id,
+                'login_identifier': unique_value('cross-tenant-reviewer').lower(),
+                'password': 'A-long-test-password-123!',
+                'enabled': 'true',
+            },
+        )
+        assert forged_invitation.status_code == 400
+
+
+@pytest.mark.parametrize('invalid_state', ['designation_removed', 'invitation_expired', 'enrolment_withdrawn', 'consent_withdrawn'])
+def test_preconsent_reviewer_login_fails_closed_for_invalid_state(invalid_state):
+    from app.models import Participant, ParticipantInvitation, StudyEnrolment
+
+    with client:
+        client.cookies.clear()
+        auth()
+        identifier, password, participant_id, study_id, invitation_id, _activity_id = (
+            _pending_store_reviewer_credential(f'reviewer-invalid-{invalid_state}')
+        )
+        with SessionLocal() as db:
+            participant_row = db.get(Participant, participant_id)
+            invitation = db.get(ParticipantInvitation, invitation_id)
+            enrolment = db.scalar(
+                select(StudyEnrolment).where(
+                    StudyEnrolment.participant_id == participant_id,
+                    StudyEnrolment.study_id == study_id,
+                )
+            )
+            assert participant_row is not None and invitation is not None and enrolment is not None
+            if invalid_state == 'designation_removed':
+                participant_row.is_store_reviewer = False
+            elif invalid_state == 'invitation_expired':
+                invitation.expires_at = now() - timedelta(seconds=1)
+            elif invalid_state == 'enrolment_withdrawn':
+                enrolment.status = 'withdrawn'
+            else:
+                participant_row.consent_status = 'withdrawn'
+            db.commit()
+        rejected = _password_login(identifier, password)
+        assert rejected.status_code == 401
+        assert rejected.json()['detail'] == 'Incorrect username or password.'
+
+
 def test_participant_password_login_issues_the_normal_scoped_session_and_preserves_code_flow():
     from app.models import PublicAuthSession
     from app.security import token_hash

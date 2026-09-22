@@ -29,6 +29,10 @@
         <div class="field"><label>Contact preference</label><select name="communication_preference">{% for s in ['email','sms','phone','none'] %}<option {% if s==participant.communication_preference %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
       </div>
       <div class="field"><label>Tags</label><input name="tags" value="{{ participant.tags }}"></div>
+      {% if can_manage_password_credential %}
+      <label class="control-row"><input type="checkbox" name="is_store_reviewer" value="true" {% if participant.is_store_reviewer %}checked{% endif %}> Designated fictional store-review participant</label>
+      <p class="muted">This designation permits a reusable sign-in before consent. It does not grant consent or access to study activities.</p>
+      {% endif %}
       <div class="field"><label>Demographic data</label><textarea name="demographics_json">{{ participant.demographics_json }}</textarea></div>
       <div class="field"><label>Private notes</label><textarea name="notes" rows="4">{{ participant.notes }}</textarea></div>
       <button>Save participant</button>
@@ -43,13 +47,16 @@
 <section class="card section" id="app-password-credential">
   <h2>Reusable app credential</h2>
   <p class="muted">Use only for an explicitly authorised participant account. The password is stored securely and is never displayed again. Updating or disabling this credential immediately revokes its active app sessions.</p>
+  {% if participant.is_store_reviewer and participant.consent_status != 'granted' %}
+  <p class="notice warning"><strong>Consent still required.</strong> Reusable credentials will allow this reviewer to sign in and review the bound study documents, but study activities remain unavailable until consent is granted.</p>
+  {% endif %}
   {% if password_credential %}
   <p><strong>Status:</strong> {{ 'Enabled' if password_credential.enabled else 'Disabled' }} · <strong>Username:</strong> {{ password_credential.login_identifier_normalised }}{% if password_credential.rotated_at %} · last changed {{ password_credential.rotated_at.strftime('%d %b %Y') }}{% endif %}</p>
   {% endif %}
   <form method="post" action="/participants/{{ participant.id }}/password-credential" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="row">
-      <div class="field"><label for="credential-invitation">Accepted study invitation</label><select id="credential-invitation" name="invitation_id" required>{% for invitation in invitations if invitation.accepted_at and not invitation.revoked_at %}<option value="{{ invitation.id }}" {% if password_credential and password_credential.participant_invitation_id == invitation.id %}selected{% endif %}>{{ studies[invitation.study_id].title }} · accepted {{ invitation.accepted_at.strftime('%d %b %Y') }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="credential-invitation">Eligible study invitation</label><select id="credential-invitation" name="invitation_id" required>{% for invitation in password_credential_invitations %}<option value="{{ invitation.id }}" {% if password_credential and password_credential.participant_invitation_id == invitation.id %}selected{% endif %}>{{ studies[invitation.study_id].title }} · {% if invitation.accepted_at %}accepted {{ invitation.accepted_at.strftime('%d %b %Y') }}{% else %}consent pending{% endif %}</option>{% endfor %}</select></div>
       <div class="field"><label for="credential-username">Username or email</label><input id="credential-username" name="login_identifier" value="{{ password_credential.login_identifier_normalised if password_credential else '' }}" autocomplete="off" required></div>
     </div>
     <div class="row">
