@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Ask AI · {{ project.title }}{% endblock %}
+{% block page_description %}<p class="page-description">Ask bounded questions of authorised study material, with source links and methodological safeguards.</p>{% endblock %}
+{% block content %}
+<p class="breadcrumbs"><a href="/projects/{{ project.id }}/workspace">{{ project.title }} research workspace</a> <span aria-hidden="true">/</span> Ask AI</p>
+{% set workspace_section = 'ask_ai' %}{% include "_workspace_nav.html" %}
+
+<section class="card card--data section" aria-labelledby="assistant-scope-title">
+  <div class="section-head"><div><h2 id="assistant-scope-title">Research scope</h2><p class="muted">Choose one study explicitly. The assistant cannot search another study or organisation.</p></div><span class="badge {{ 'accepted' if provider_available else 'awaiting_researcher_review' }}">{{ 'Provider ready' if provider_available else 'Provider unavailable' }}</span></div>
+  <p>{{ provider_message }}</p>
+  <form method="post" action="/projects/{{ project.id }}/workspace/ask-ai" class="stack" id="research-assistant-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Study
+      <select name="study_id" required>
+        <option value="">Select an authorised study</option>
+        {% for item in workspace_studies %}<option value="{{ item.id }}" {% if selected_study and selected_study.id == item.id %}selected{% endif %}>{{ item.title }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Task
+      <select name="task" required>{% for value, label in assistant_tasks.items() %}<option value="{{ value }}" {% if selected_task == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+    </label>
+    <label>Research question
+      <textarea name="question" maxlength="2000" required aria-describedby="assistant-question-help">{{ question }}</textarea>
+    </label>
+    <small id="assistant-question-help" class="muted">Ask for evidence, contrasts, or material to revisit. AI output is provisional and cannot make final analytical decisions.</small>
+    <label class="control-row"><input type="checkbox" name="include_researcher_analysis" value="true" {% if include_researcher_analysis %}checked{% endif %}><span>Include researcher-authored codes, coded passages, themes, memos, findings and relationships</span></label>
+    <button id="research-assistant-submit" {% if not provider_available %}disabled aria-disabled="true"{% endif %}>Ask within this scope</button>
+    <p class="muted" role="status" id="research-assistant-progress" hidden>Retrieving authorised sources and preparing a grounded response…</p>
+  </form>
+  <details><summary>Suggested questions</summary><ul>{% for prompt in suggested_prompts %}<li>{{ prompt }}</li>{% endfor %}</ul></details>
+</section>
+
+{% if methodology_decision %}
+<section class="card card--data section" aria-live="polite">
+  <h2>Methodology decision: {{ methodology_decision.status }}</h2>
+  <p>{{ methodology_decision.message }}</p>
+  {% if methodology_decision.grounding %}<p class="muted">{{ methodology_decision.grounding.methodology_name }}{% if methodology_decision.grounding.variant %} · {{ methodology_decision.grounding.variant }}{% endif %} · controlled library {{ methodology_decision.grounding.library_version }}</p>{% endif %}
+</section>
+{% endif %}
+
+{% if error %}<section class="card card--data section" role="alert"><h2>Assistant did not run</h2><p>{{ error }}</p><p class="muted">No answer has been fabricated. Adjust the study methodology/task or ask an administrator to configure the approved provider.</p></section>{% endif %}
+
+{% if answer %}
+<section class="card card--data section" aria-labelledby="assistant-answer-title">
+  <div class="section-head"><div><h2 id="assistant-answer-title">Provisional AI response</h2><p class="muted">Researcher review required · {{ answer.provider }} · {{ answer.model }}</p></div><span class="badge awaiting_researcher_review">AI-generated</span></div>
+  <p>{{ answer.answer }}</p>
+  <p><strong>Sources used:</strong> {{ cited_sources|length }}{% if cited_case_count %} across {{ cited_case_count }} participant/case reference{{ '' if cited_case_count == 1 else 's' }}{% endif %}.</p>
+  <h3>Limitations</h3>
+  <ul>{% for item in answer.limitations %}<li>{{ item }}</li>{% else %}<li>No provider limitations were returned; treat this response as provisional.</li>{% endfor %}</ul>
+  <h3>Sources cited</h3>
+  {% for source in cited_sources %}<article class="source-summary"><strong>[{{ source.citation_id }}] {{ source.label }}</strong><p>{{ source.excerpt }}</p><a href="{{ source.source_url }}">Open authoritative source</a></article>{% endfor %}
+  <p class="muted">Retrieval is capped at 20 sources and 20,000 source characters. A bounded answer may not cover every record in the study.</p>
+</section>
+{% endif %}
+
+<section class="card card--data section"><h2>Privacy and research boundaries</h2><ul><li>No chat history, embedding index, or AI answer is stored by this feature.</li><li>Only the selected authorised study is retrieved for a request.</li><li>Participant material is not used for model training or cross-customer learning.</li><li>Questions are audited as metadata only; raw question and participant text are excluded from the audit event.</li><li>AI cannot apply codes, change themes, create findings, or modify participant records.</li></ul></section>
+<script src="/static/research_assistant.js" defer></script>
+{% endblock %}

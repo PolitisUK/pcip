@@ -80,6 +80,18 @@ from .research_intelligence import (
     review_confidence_assessment,
     review_suggestion,
 )
+from .research_assistant import (
+    AssistantUnavailable,
+    SUGGESTED_PROMPTS,
+    TASKS as RESEARCH_ASSISTANT_TASKS,
+    UnsafeAssistantResponse,
+    methodology_decision,
+    normalise_question,
+    provider_from_settings,
+    retrieve_study_sources,
+    run_assistant,
+    study_methodology_configuration,
+)
 from .evidence_explorer import evidence_items, filter_evidence
 from .research_api import (
     EvidenceExplorerResponse,
@@ -3952,6 +3964,120 @@ def project_workspace_analysis(project_id: int, request: Request, u=Depends(curr
     return render(request, "research_analysis.html", user=u, **_workspace_context(project_row, studies), themes=themes, suggestions=suggestions, study_map={row.id:row for row in studies}, suggestion_source_urls=suggestion_source_urls, permissions=permissions, ai_governance=ai_governance, ai_available=False, ai_unavailable_reason="No approved provider-backed AI job is configured. Participant material will not be sent to an external provider.")
 
 
+def _research_assistant_page(
+    request: Request, *, user: User, project_row: Project, studies: list[Study],
+    selected_study: Study | None = None, question: str = "", task: str = "retrieval",
+    include_researcher_analysis: bool = True, decision=None, sources=None,
+    answer=None, error: str = "",
+):
+    source_map = {source.citation_id: source for source in (sources or [])}
+    cited_sources = [source_map[item] for item in (answer.citation_ids if answer else ()) if item in source_map]
+    cited_case_count = len({source.participant_reference for source in cited_sources if source.participant_reference})
+    try:
+        provider_from_settings(settings)
+        provider_available = True
+        provider_message = "Approved server-side provider is available."
+    except AssistantUnavailable as exc:
+        provider_available = False
+        provider_message = str(exc)
+    return render(
+        request, "research_assistant.html", user=user,
+        **_workspace_context(project_row, studies), selected_study=selected_study,
+        question=question, selected_task=task,
+        include_researcher_analysis=include_researcher_analysis,
+        methodology_decision=decision, sources=sources or [],
+        cited_sources=cited_sources, cited_case_count=cited_case_count,
+        answer=answer, error=error,
+        provider_available=provider_available, provider_message=provider_message,
+        assistant_tasks=RESEARCH_ASSISTANT_TASKS, suggested_prompts=SUGGESTED_PROMPTS,
+    )
+
+
+def project_workspace_research_assistant(
+    project_id: int, request: Request, study_id: str | None = None,
+    u=Depends(current_user), db: Session = Depends(get_db),
+):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    selected_id = optional_positive_query_id(study_id, "Study")
+    selected_study = next((row for row in studies if row.id == selected_id), None)
+    if selected_id is not None and selected_study is None:
+        raise HTTPException(404, "Study is unavailable")
+    decision = None
+    if selected_study is not None:
+        configuration = study_methodology_configuration(db, u.organisation_id, selected_study.id)
+        decision = methodology_decision(configuration, "retrieval", "")
+    return _research_assistant_page(
+        request, user=u, project_row=project_row, studies=studies,
+        selected_study=selected_study, decision=decision,
+    )
+
+
+@app.post("/projects/{project_id}/workspace/ask-ai", response_class=HTMLResponse)
+def ask_research_assistant(
+    project_id: int, request: Request, study_id: int = Form(...),
+    question: str = Form(...), task: str = Form("retrieval"),
+    include_researcher_analysis: bool = Form(False),
+    u=Depends(current_user), csrf_ok: None = Depends(csrf_protect),
+    db: Session = Depends(get_db),
+):
+    project_row, studies = project_workspace_scope(db, u, project_id)
+    selected_study = next((row for row in studies if row.id == study_id), None)
+    if selected_study is None:
+        raise HTTPException(404, "Study is unavailable")
+    try:
+        question = normalise_question(question)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    configuration = study_methodology_configuration(db, u.organisation_id, selected_study.id)
+    decision = methodology_decision(configuration, task, question)
+    sources = []
+    answer = None
+    error = ""
+    result = "blocked" if decision.status == "BLOCK" else "failed"
+    provider_name = "none"
+    provider_model = "none"
+    try:
+        if decision.status == "BLOCK":
+            raise MethodologyGateViolation(decision.message)
+        provider = provider_from_settings(settings)
+        provider_name = provider.name
+        provider_model = provider.model
+        sources = retrieve_study_sources(
+            db, organisation_id=u.organisation_id, project_id=project_row.id,
+            study_id=selected_study.id, question=question,
+            include_researcher_analysis=include_researcher_analysis,
+        )
+        answer = run_assistant(
+            provider=provider, question=question, task=task,
+            sources=sources, decision=decision,
+        )
+        result = "answered"
+    except (ValueError, MethodologyGateViolation, AssistantUnavailable, UnsafeAssistantResponse) as exc:
+        error = str(exc)
+        if isinstance(exc, AssistantUnavailable):
+            result = "provider_unavailable"
+    audit(
+        db, u.organisation_id, u.id, "research_assistant.queried",
+        "research_assistant", selected_study.id,
+        json.dumps({
+            "task": task if task in RESEARCH_ASSISTANT_TASKS else "unsupported",
+            "methodology_decision": decision.status,
+            "source_count": len(sources),
+            "source_types": sorted({source.source_type for source in sources}),
+            "include_researcher_analysis": include_researcher_analysis,
+            "provider": provider_name, "model": provider_model, "result": result,
+        }, separators=(",", ":")),
+        project_id=project_row.id, study_id=selected_study.id,
+    )
+    db.commit()
+    return _research_assistant_page(
+        request, user=u, project_row=project_row, studies=studies,
+        selected_study=selected_study, question=question, task=task,
+        include_researcher_analysis=include_researcher_analysis,
+        decision=decision, sources=sources, answer=answer, error=error,
+    )
+
+
 def project_workspace_audit(
     project_id: int,
     request: Request,
@@ -4779,6 +4905,7 @@ include_analysis_router(app, {
     "themes": project_workspace_themes,
     "codebook": study_codebook,
     "analysis": project_workspace_analysis,
+    "ask_ai": project_workspace_research_assistant,
     "audit": project_workspace_audit,
     "export": project_workspace_export,
     "theme_explorer": study_theme_explorer,
