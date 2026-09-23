@@ -17,6 +17,12 @@ def test_research_ai_infrastructure_is_dedicated_private_and_identity_only():
     assert "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd" in bicep
     assert "Contributor" not in bicep
 
+    private_endpoint = bicep.partition(
+        "resource privateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01'"
+    )[2].partition("\n}\n")[0]
+    assert "location: resourceGroup().location" in private_endpoint
+    assert "location: aiLocation" not in private_endpoint
+
 
 def test_research_ai_model_and_processing_boundary_are_governed():
     bicep = Path("infra/research-ai.bicep").read_text(encoding="utf-8")
