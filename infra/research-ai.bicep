@@ -139,7 +139,7 @@ resource privateDnsZone 'Microsoft.Network/privateDnsZones@2024-06-01' = {
 
 resource privateDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = {
   parent: privateDnsZone
-  name: 'research-ai-vnet-link'
+  name: '${environmentName}-research-ai-vnet-link'
   location: 'global'
   properties: {
     registrationEnabled: false

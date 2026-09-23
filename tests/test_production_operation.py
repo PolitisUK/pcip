@@ -237,10 +237,22 @@ def test_worker_calls_only_fixed_alembic_lookup_and_emits_minimal_result(monkeyp
     assert json.loads(capsys.readouterr().out)["result"] == {"alembic_revision": "0023"}
 
 
+@pytest.mark.parametrize(
+    ("operation", "executor_name"),
+    [
+        ("set-research-intelligence-enabled", "execute_set_research_intelligence_enabled"),
+        (
+            "set-research-intelligence-ai-coding-enabled",
+            "execute_set_research_intelligence_ai_coding_enabled",
+        ),
+    ],
+)
 @pytest.mark.parametrize("enabled", [False, True])
-def test_worker_calls_only_fixed_research_intelligence_operation(monkeypatch, capsys, enabled):
+def test_worker_calls_only_fixed_research_intelligence_operation(
+    monkeypatch, capsys, enabled, operation, executor_name
+):
     message, request = request_message(
-        operation="set-research-intelligence-enabled",
+        operation=operation,
         enabled=enabled,
     )
     request.pop("email")
@@ -264,7 +276,7 @@ def test_worker_calls_only_fixed_research_intelligence_operation(monkeypatch, ca
 
     monkeypatch.setattr(
         worker.set_research_intelligence_enabled,
-        "execute_set_research_intelligence_enabled",
+        executor_name,
         fixed_operation,
     )
     assert worker.main(
@@ -562,10 +574,19 @@ def test_worker_refuses_unapproved_or_malformed_messages_without_echoing_content
         {"enabled": True, "environment_variable": "OTHER_SETTING"},
     ],
 )
-def test_research_intelligence_request_schema_rejects_non_boolean_or_extra_fields(payload):
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "set-research-intelligence-enabled",
+        "set-research-intelligence-ai-coding-enabled",
+    ],
+)
+def test_research_intelligence_request_schema_rejects_non_boolean_or_extra_fields(
+    payload, operation
+):
     request = {
         "correlation_id": str(uuid4()),
-        "operation": "set-research-intelligence-enabled",
+        "operation": operation,
         **payload,
     }
     with pytest.raises(worker.ProductionOperationError, match="refused"):
@@ -620,6 +641,7 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "- get-alembic-revision" in workflow
     assert "- get-latest-failed-account-deletion-status" in workflow
     assert "- set-research-intelligence-enabled" in workflow
+    assert "- set-research-intelligence-ai-coding-enabled" in workflow
     assert 'case "$OPERATION" in' in workflow
     assert "get-alembic-revision)" in workflow
     assert "get-latest-failed-account-deletion-status)" in workflow
@@ -633,6 +655,16 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/set_research_intelligence_enabled.py"' in workflow
     assert 'RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION = "set-research-intelligence-enabled"' in workflow
     assert "set_research_intelligence_enabled.execute_set_research_intelligence_enabled" in workflow
+    assert "set-research-intelligence-ai-coding-enabled)" in workflow
+    assert (
+        'RESEARCH_INTELLIGENCE_AI_CODING_CONFIGURATION_OPERATION = ('
+        in workflow
+    )
+    assert '"set-research-intelligence-ai-coding-enabled"' in workflow
+    assert (
+        "set_research_intelligence_enabled.execute_set_research_intelligence_ai_coding_enabled"
+        in workflow
+    )
     assert "set-platform-admin-dry-run)" in workflow
     assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/platform_admin_dry_run.py"' in workflow
     assert 'git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py"' in workflow
@@ -1118,8 +1150,17 @@ def test_operation_result_parser_accepts_only_exact_alembic_revision_schema():
         ) == []
 
 
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "set-research-intelligence-enabled",
+        "set-research-intelligence-ai-coding-enabled",
+    ],
+)
 @pytest.mark.parametrize("enabled", [False, True])
-def test_operation_result_parser_accepts_only_exact_research_intelligence_schema(enabled):
+def test_operation_result_parser_accepts_only_exact_research_intelligence_schema(
+    enabled, operation
+):
     correlation_id = "11111111-1111-4111-8111-111111111111"
     result = {
         "prior_value": not enabled,
@@ -1134,7 +1175,6 @@ def test_operation_result_parser_accepts_only_exact_research_intelligence_schema
         {"correlation_id": correlation_id, "status": "succeeded", "result": result},
         sort_keys=True,
     )
-    operation = "set-research-intelligence-enabled"
     enabled_text = str(enabled).lower()
 
     assert _parse_approved_operation_logs(

@@ -94,6 +94,11 @@ Production activation is blocked until either:
 2. Thomas explicitly accepts the documented standard storage and possible
    human-review boundary.
 
+The final production provider design, owner decision text, exact settings, and
+protected activation order are recorded in
+`RESEARCH_AI_PRODUCTION_ACTIVATION_READINESS.md`. Production AI remains disabled
+until that separate decision and activation process is completed.
+
 ## Technical data-processing statement
 
 Research AI is available only to authorised researchers. Each request is

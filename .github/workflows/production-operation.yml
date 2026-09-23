@@ -14,8 +14,9 @@ on:
           - get-alembic-revision
           - get-latest-failed-account-deletion-status
           - set-research-intelligence-enabled
+          - set-research-intelligence-ai-coding-enabled
       enabled:
-        description: Boolean target state used only by set-research-intelligence-enabled.
+        description: Boolean target state used only by the two fixed Research Intelligence operations.
         required: false
         type: boolean
         default: false
@@ -114,6 +115,15 @@ jobs:
               worker_source=$(git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py")
               grep -Fq 'RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION = "set-research-intelligence-enabled"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
               grep -Fq 'set_research_intelligence_enabled.execute_set_research_intelligence_enabled' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              ;;
+            set-research-intelligence-ai-coding-enabled)
+              test -z "$OPERATION_EMAIL" && test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
+              test "$OPERATION_ENABLED" = true || test "$OPERATION_ENABLED" = false || { echo "The approved operation input was rejected." >&2; exit 1; }
+              git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/set_research_intelligence_enabled.py" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              worker_source=$(git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py")
+              grep -Fq 'RESEARCH_INTELLIGENCE_AI_CODING_CONFIGURATION_OPERATION = (' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              grep -Fq '"set-research-intelligence-ai-coding-enabled"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              grep -Fq 'set_research_intelligence_enabled.execute_set_research_intelligence_ai_coding_enabled' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
               ;;
             lookup-user-identity)
               test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
@@ -227,7 +237,7 @@ jobs:
               jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" --arg email "$OPERATION_EMAIL" --argjson user_id "$OPERATION_USER_ID" \
                 '{correlation_id: $correlation_id, operation: $operation, email: $email, user_id: $user_id}' > "$request_file"
               ;;
-            set-research-intelligence-enabled)
+            set-research-intelligence-enabled|set-research-intelligence-ai-coding-enabled)
               jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" --argjson enabled "$OPERATION_ENABLED" \
                 '{correlation_id: $correlation_id, operation: $operation, enabled: $enabled}' > "$request_file"
               ;;
@@ -341,7 +351,7 @@ jobs:
                       all(.result.memberships[]; type == "object" and (keys | sort) == ["is_active", "organisation_id", "role"] and (.organisation_id | type == "number") and (.role | type == "string") and (.is_active | type == "boolean"))
                     ) or
                     (
-                      $operation == "set-research-intelligence-enabled" and
+                      ($operation == "set-research-intelligence-enabled" or $operation == "set-research-intelligence-ai-coding-enabled") and
                       (.result | (keys | sort) == ["alembic_revision", "effective_value", "image_digest", "prior_value", "readiness_status", "release_sha", "requested_value"]) and
                       (.result.prior_value | type == "boolean") and
                       (.result.requested_value | type == "boolean") and

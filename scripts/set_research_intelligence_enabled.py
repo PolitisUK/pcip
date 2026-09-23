@@ -21,6 +21,8 @@ from azure.identity import DefaultAzureCredential
 from scripts.get_alembic_revision import execute_get_alembic_revision
 
 SETTING_NAME = "RESEARCH_INTELLIGENCE_ENABLED"
+AI_CODING_SETTING_NAME = "RESEARCH_INTELLIGENCE_AI_CODING_ENABLED"
+APPROVED_SETTING_NAMES = frozenset({SETTING_NAME, AI_CODING_SETTING_NAME})
 ARM_SCOPE = "https://management.azure.com/.default"
 ARM_API_VERSION = "2024-04-01"
 IMMUTABLE_IMAGE_PATTERN = re.compile(r"@(?P<digest>sha256:[0-9a-f]{64})\Z")
@@ -182,6 +184,51 @@ def set_research_intelligence_enabled(
     wait: Callable[[float], None] = time.sleep,
 ) -> ResearchIntelligenceConfigurationResult:
     """Set only the fixed flag and fail closed on any release or safety drift."""
+    return _set_fixed_research_intelligence_setting(
+        SETTING_NAME,
+        enabled,
+        environ=environ,
+        client=client,
+        token=token,
+        revision_lookup=revision_lookup,
+        wait=wait,
+    )
+
+
+def set_research_intelligence_ai_coding_enabled(
+    enabled: bool,
+    *,
+    environ: Mapping[str, str],
+    client: httpx.Client,
+    token: str,
+    revision_lookup: Callable[[], Any] = execute_get_alembic_revision,
+    wait: Callable[[float], None] = time.sleep,
+) -> ResearchIntelligenceConfigurationResult:
+    """Set only the fixed provider-backed Research AI gate."""
+    return _set_fixed_research_intelligence_setting(
+        AI_CODING_SETTING_NAME,
+        enabled,
+        environ=environ,
+        client=client,
+        token=token,
+        revision_lookup=revision_lookup,
+        wait=wait,
+    )
+
+
+def _set_fixed_research_intelligence_setting(
+    setting_name: str,
+    enabled: bool,
+    *,
+    environ: Mapping[str, str],
+    client: httpx.Client,
+    token: str,
+    revision_lookup: Callable[[], Any],
+    wait: Callable[[float], None],
+) -> ResearchIntelligenceConfigurationResult:
+    """Change one internally selected allowlisted boolean setting."""
+    if setting_name not in APPROVED_SETTING_NAMES:
+        raise ResearchIntelligenceConfigurationError("Production setting was not approved.")
     if type(enabled) is not bool:
         raise ResearchIntelligenceConfigurationError("The requested value must be boolean.")
     subscription_id, resource_group, app_name = _required_environment(environ)
@@ -197,11 +244,11 @@ def set_research_intelligence_enabled(
     before_revision = _alembic_revision(revision_lookup)
     before = _settings(client, token, settings_url)
     _validate_safety_settings(before)
-    prior_value = _boolean_setting(before, SETTING_NAME)
+    prior_value = _boolean_setting(before, setting_name)
 
     if prior_value != enabled:
         updated = dict(before)
-        updated[SETTING_NAME] = "true" if enabled else "false"
+        updated[setting_name] = "true" if enabled else "false"
         _arm_request(
             client,
             token,
@@ -222,7 +269,7 @@ def set_research_intelligence_enabled(
             continue
         if current_sha != release_sha:
             raise ResearchIntelligenceConfigurationError("Production release changed during the operation.")
-        if _boolean_setting(effective, SETTING_NAME) == enabled and current_status == "ready":
+        if _boolean_setting(effective, setting_name) == enabled and current_status == "ready":
             readiness_status = current_status
             break
         wait(10)
@@ -232,8 +279,8 @@ def set_research_intelligence_enabled(
     if effective is None:
         raise ResearchIntelligenceConfigurationError("Production settings could not be verified.")
     _validate_safety_settings(effective)
-    if {key: value for key, value in effective.items() if key != SETTING_NAME} != {
-        key: value for key, value in before.items() if key != SETTING_NAME
+    if {key: value for key, value in effective.items() if key != setting_name} != {
+        key: value for key, value in before.items() if key != setting_name
     }:
         raise ResearchIntelligenceConfigurationError("Unrelated production settings changed.")
     after_hostname, after_digest = _site_state(client, token, site_url)
@@ -246,7 +293,7 @@ def set_research_intelligence_enabled(
     return ResearchIntelligenceConfigurationResult(
         prior_value=prior_value,
         requested_value=enabled,
-        effective_value=_boolean_setting(effective, SETTING_NAME),
+        effective_value=_boolean_setting(effective, setting_name),
         readiness_status=readiness_status,
         release_sha=release_sha,
         image_digest=image_digest,
@@ -267,6 +314,26 @@ def execute_set_research_intelligence_enabled(
     token = credential.get_token(ARM_SCOPE).token
     with client_factory() as client:
         return set_research_intelligence_enabled(
+            enabled,
+            environ=values,
+            client=client,
+            token=token,
+        )
+
+
+def execute_set_research_intelligence_ai_coding_enabled(
+    enabled: bool,
+    *,
+    environ: Mapping[str, str] | None = None,
+    credential_factory: Callable[..., Any] = DefaultAzureCredential,
+    client_factory: Callable[[], httpx.Client] = httpx.Client,
+) -> ResearchIntelligenceConfigurationResult:
+    """Execute the fixed provider-backed Research AI toggle."""
+    values = os.environ if environ is None else environ
+    credential = credential_factory(exclude_interactive_browser_credential=True)
+    token = credential.get_token(ARM_SCOPE).token
+    with client_factory() as client:
+        return set_research_intelligence_ai_coding_enabled(
             enabled,
             environ=values,
             client=client,

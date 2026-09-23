@@ -36,6 +36,9 @@ PLATFORM_ADMIN_ENABLE_OPERATION = "set-platform-admin"
 ALEMBIC_REVISION_OPERATION = "get-alembic-revision"
 FAILED_ACCOUNT_DELETION_STATUS_OPERATION = "get-latest-failed-account-deletion-status"
 RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION = "set-research-intelligence-enabled"
+RESEARCH_INTELLIGENCE_AI_CODING_CONFIGURATION_OPERATION = (
+    "set-research-intelligence-ai-coding-enabled"
+)
 
 
 class ProductionOperationError(RuntimeError):
@@ -91,7 +94,10 @@ def parse_request(body: bytes) -> OperationRequest:
         if set(payload) != {"correlation_id", "operation"}:
             raise ProductionOperationError("Production operation refused.")
         return OperationRequest(correlation_id=correlation_id, operation=operation)
-    if operation == RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION:
+    if operation in {
+        RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION,
+        RESEARCH_INTELLIGENCE_AI_CODING_CONFIGURATION_OPERATION,
+    }:
         if set(payload) != {"correlation_id", "operation", "enabled"}:
             raise ProductionOperationError("Production operation refused.")
         enabled = payload.get("enabled")
@@ -224,16 +230,17 @@ def _validated_result(request: OperationRequest) -> dict[str, Any]:
         if not _valid_failed_account_deletion_status(result):
             raise ProductionOperationError("Production operation refused.")
         return result
-    if (
-        request.operation == RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION
-        and request.enabled is not None
-    ):
+    if request.operation in {
+        RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION,
+        RESEARCH_INTELLIGENCE_AI_CODING_CONFIGURATION_OPERATION,
+    } and request.enabled is not None:
         try:
-            result = (
-                set_research_intelligence_enabled.execute_set_research_intelligence_enabled(
-                    request.enabled
-                ).approved_result()
+            execute = (
+                set_research_intelligence_enabled.execute_set_research_intelligence_enabled
+                if request.operation == RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION
+                else set_research_intelligence_enabled.execute_set_research_intelligence_ai_coding_enabled
             )
+            result = execute(request.enabled).approved_result()
         except set_research_intelligence_enabled.ResearchIntelligenceConfigurationError as exc:
             raise ProductionOperationError("Production operation refused.") from exc
         if (

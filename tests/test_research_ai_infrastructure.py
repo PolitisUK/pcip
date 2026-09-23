@@ -16,6 +16,8 @@ def test_research_ai_infrastructure_is_dedicated_private_and_identity_only():
     )  # role is fixed by immutable ID
     assert "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd" in bicep
     assert "Contributor" not in bicep
+    assert "name: '${environmentName}-research-ai-vnet-link'" in bicep
+    assert "name: 'research-ai-vnet-link'" not in bicep
 
     private_endpoint = bicep.partition(
         "resource privateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01'"
