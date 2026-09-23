@@ -134,6 +134,85 @@ def test_health_and_version():
         assert data['version'] == '0.6.0'
 
 
+def test_research_assistant_page_is_scoped_escaped_audited_and_fails_closed():
+    from app.models import AuditEvent, Project, Study, User
+
+    with client:
+        client.cookies.clear()
+        auth()
+        with SessionLocal() as db:
+            project_row = db.scalar(select(Project).order_by(Project.id))
+            study_row = db.scalar(
+                select(Study).where(Study.project_id == project_row.id).order_by(Study.id)
+            )
+            assert study_row is not None
+        page = client.get(f'/projects/{project_row.id}/workspace/ask-ai')
+        assert page.status_code == 200
+        assert 'Ask AI' in page.text
+        assert 'Select an authorised study' in page.text
+        assert 'No chat history, embedding index, or AI answer is stored' in page.text
+
+        question = '<script>alert("tenant")</script> Find relevant material'
+        result = post_with_csrf(
+            f'/projects/{project_row.id}/workspace/ask-ai',
+            data={
+                'study_id': str(study_row.id),
+                'question': question,
+                'task': 'retrieval',
+                'include_researcher_analysis': 'true',
+            },
+        )
+        assert result.status_code == 200
+        assert '<script>alert("tenant")</script>' not in result.text
+        assert '&lt;script&gt;' in result.text
+        assert 'Assistant did not run' in result.text
+        with SessionLocal() as db:
+            event = db.scalar(
+                select(AuditEvent)
+                .where(AuditEvent.action == 'research_assistant.queried')
+                .order_by(AuditEvent.id.desc())
+            )
+            assert event is not None
+            assert question not in event.detail
+            assert 'source_count' in event.detail
+        history = client.get(f'/projects/{project_row.id}/workspace/audit')
+        assert history.status_code == 200
+        assert 'Research Assistant · Queried' in history.text
+        assert question not in history.text
+
+        with SessionLocal() as db:
+            creator = db.scalar(select(User).where(User.email == 'admin@politis.local'))
+            other_project = Project(
+                organisation_id=creator.organisation_id,
+                title=unique_value('Other project'),
+                code=unique_value('OTHER'),
+                created_by_id=creator.id,
+            )
+            db.add(other_project)
+            db.flush()
+            other_study = Study(
+                organisation_id=creator.organisation_id,
+                project_id=other_project.id,
+                title='Outside selected project',
+                code=unique_value('OUTSIDE'),
+                created_by_id=creator.id,
+            )
+            db.add(other_study)
+            db.commit()
+            other_study_id = other_study.id
+        forged = client.get(
+            f'/projects/{project_row.id}/workspace/ask-ai?study_id={other_study_id}'
+        )
+        assert forged.status_code == 404
+        with SessionLocal() as db:
+            other_study = db.get(Study, other_study_id)
+            other_project = db.get(Project, other_study.project_id)
+            db.delete(other_study)
+            db.flush()
+            db.delete(other_project)
+            db.commit()
+
+
 def test_checkbox_control_rows_cannot_inherit_full_width_field_input_layout():
     """Protect checkbox/radio geometry, not merely input/label association."""
     css = Path('app/static/app.css').read_text()
@@ -12492,6 +12571,7 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert "Longitudinal research timeline" in dossier.text
         assert client.get(f"/projects/{other_project_id}/workspace").status_code == 404
         assert client.get(f"/projects/{other_project_id}/workspace/analysis").status_code == 404
+        assert client.get(f"/projects/{other_project_id}/workspace/ask-ai").status_code == 404
         assert client.get(f"/projects/{other_project_id}/workspace/audit").status_code == 404
         for filter_name, label in (("participant_id", "Participant"), ("prompt_id", "Prompt")):
             for invalid_id in ("invalid", "0", "-1"):

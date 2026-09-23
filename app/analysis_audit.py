@@ -30,6 +30,7 @@ ACTION_FAMILIES = {
     "research_theme": "Theme development",
     "research_finding": "Finding development",
     "research_analysis": "AI suggestion review",
+    "research_assistant": "AI assistant queries",
     "evidence_region": "Image-region analysis",
     "analysis_export": "Analysis exports",
 }
