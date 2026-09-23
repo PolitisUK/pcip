@@ -25,9 +25,10 @@ never fall back to the broader release-promotion identity.
 The workflow accepts only the enumerated fixed operations
 `lookup-user-identity`, `set-platform-admin-dry-run`, `set-platform-admin`,
 `get-alembic-revision`, `get-latest-failed-account-deletion-status`, and
-`set-research-intelligence-enabled`. The final platform-administration operation is a
-separate protected write; it is not controlled by a boolean or flag on the dry
-run.
+`set-research-intelligence-enabled`, and
+`set-research-intelligence-ai-coding-enabled`. The final
+platform-administration operation is a separate protected write; it is not
+controlled by a boolean or flag on the dry run.
 It does not accept an arbitrary shell command, Python module, CLI flags, or SQL.
 It verifies the supplied release SHA against three consecutive production
 readiness responses, the supplied immutable application digest on App Service,
@@ -57,11 +58,12 @@ non-secret release evidence.
 
 ## Fixed Research Intelligence configuration operation
 
-`set-research-intelligence-enabled` is the only App Service configuration
-operation in the protected worker. Its queue request schema is exactly:
+The worker exposes exactly two fixed Research Intelligence App Service
+configuration operations. Their queue request schemas are:
 
 ```json
 {"correlation_id":"<uuid>","operation":"set-research-intelligence-enabled","enabled":true}
+{"correlation_id":"<uuid>","operation":"set-research-intelligence-ai-coding-enabled","enabled":true}
 ```
 
 `enabled` must be a JSON boolean. The request cannot contain a setting name,
@@ -69,9 +71,13 @@ arbitrary value, resource identifier, application name, command, environment
 variable, or configuration object. The production subscription, resource
 group, and App Service name are fixed in the independently deployed worker.
 
-The worker reads the complete App Service settings collection, changes only
-`RESEARCH_INTELLIGENCE_ENABLED`, writes the preserved collection back, and
-then proves that every other setting is unchanged. It fails closed unless
+The first operation changes only `RESEARCH_INTELLIGENCE_ENABLED`; the second
+changes only `RESEARCH_INTELLIGENCE_AI_CODING_ENABLED`. Neither accepts a
+provider endpoint, deployment name, authentication mode, setting name, or any
+other configuration value. The worker reads the complete App Service settings
+collection, changes only the internally selected fixed boolean, writes the
+preserved collection back, and then proves that every other setting is
+unchanged. It fails closed unless
 migrations and all production/demo seeding remain disabled, the release SHA
 and immutable image digest remain unchanged, the Alembic revision is unchanged,
 readiness recovers, and the public, privacy, and terms routes are healthy. Its
@@ -88,6 +94,13 @@ Enabling this flag exposes Theme Explorer, the research-theme API, Evidence
 Explorer, quote-finder, and theme-scope navigation. It does not enable
 provider-backed AI generation. AI coding, semantic search, evidence confidence,
 provider configuration, and study-level AI governance remain separate controls.
+
+`set-research-intelligence-ai-coding-enabled` controls the final server-side
+provider-backed Research AI gate. It must not be used until the provider,
+private connectivity, managed identity, privacy decision, and fixed provider
+settings in `RESEARCH_AI_PRODUCTION_ACTIVATION_READINESS.md` have been
+independently approved and verified. The operation does not deploy provider
+infrastructure or configure a provider.
 
 ## Fixed failed account-deletion status lookup
 

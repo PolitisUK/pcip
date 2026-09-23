@@ -7,7 +7,10 @@ import httpx
 import pytest
 
 from scripts.set_research_intelligence_enabled import (
+    AI_CODING_SETTING_NAME,
     ResearchIntelligenceConfigurationError,
+    _set_fixed_research_intelligence_setting,
+    set_research_intelligence_ai_coding_enabled,
     set_research_intelligence_enabled,
 )
 
@@ -85,6 +88,18 @@ def execute(state: OperationState, enabled: bool):
         )
 
 
+def execute_ai_coding(state: OperationState, enabled: bool):
+    with httpx.Client(transport=httpx.MockTransport(state.handler)) as client:
+        return set_research_intelligence_ai_coding_enabled(
+            enabled,
+            environ=environment(),
+            client=client,
+            token="fixed-worker-token",
+            revision_lookup=state.revision_lookup,
+            wait=lambda _seconds: None,
+        )
+
+
 @pytest.mark.parametrize(("prior", "requested"), [("false", True), ("true", False)])
 def test_fixed_operation_changes_only_research_intelligence(prior, requested):
     state = OperationState(prior)
@@ -117,6 +132,57 @@ def test_same_value_request_is_idempotent(enabled):
     assert state.put_payloads == []
     assert result.prior_value is enabled
     assert result.effective_value is enabled
+
+
+@pytest.mark.parametrize(("prior", "requested"), [("false", True), ("true", False)])
+def test_fixed_ai_coding_operation_changes_only_ai_coding_setting(prior, requested):
+    state = OperationState("true")
+    state.settings[AI_CODING_SETTING_NAME] = prior
+    before = dict(state.settings)
+
+    result = execute_ai_coding(state, requested)
+
+    assert len(state.put_payloads) == 1
+    written = state.put_payloads[0]["properties"]
+    assert written[AI_CODING_SETTING_NAME] == str(requested).lower()
+    assert {key: value for key, value in written.items() if key != AI_CODING_SETTING_NAME} == {
+        key: value for key, value in before.items() if key != AI_CODING_SETTING_NAME
+    }
+    assert result.prior_value is (prior == "true")
+    assert result.requested_value is requested
+    assert result.effective_value is requested
+    assert result.readiness_status == "ready"
+    assert state.public_paths == ["/", "/privacy", "/terms"]
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_same_ai_coding_value_request_is_idempotent(enabled):
+    state = OperationState("true")
+    state.settings[AI_CODING_SETTING_NAME] = str(enabled).lower()
+
+    result = execute_ai_coding(state, enabled)
+
+    assert state.put_payloads == []
+    assert result.prior_value is enabled
+    assert result.effective_value is enabled
+
+
+def test_internal_unknown_setting_name_is_rejected_before_azure_access():
+    state = OperationState()
+    with (
+        httpx.Client(transport=httpx.MockTransport(state.handler)) as client,
+        pytest.raises(ResearchIntelligenceConfigurationError, match="not approved"),
+    ):
+        _set_fixed_research_intelligence_setting(
+            "CALLER_SELECTED_SETTING",
+            True,
+            environ=environment(),
+            client=client,
+            token="fixed-worker-token",
+            revision_lookup=state.revision_lookup,
+            wait=lambda _seconds: None,
+        )
+    assert state.put_payloads == []
 
 
 def test_absent_setting_is_safely_idempotent_false():
