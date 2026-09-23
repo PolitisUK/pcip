@@ -151,7 +151,9 @@ resource privateDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2
 
 resource privateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
   name: privateEndpointName
-  location: aiLocation
+  // A private endpoint is a network interface in the VNet and must share the
+  // VNet's region. The target Azure OpenAI account may be in another region.
+  location: resourceGroup().location
   properties: {
     subnet: {
       id: privateEndpointSubnet.id
