@@ -98,6 +98,23 @@ This document lists runtime environment variables used by Citizen Centric.
 
 - `APPLICATIONINSIGHTS_CONNECTION_STRING`
 
+## Research AI provider
+
+The provider remains fail-closed unless both Research Intelligence feature gates
+are enabled and every provider setting is valid.
+
+- `RESEARCH_INTELLIGENCE_ENABLED` (default: `false`)
+- `RESEARCH_INTELLIGENCE_AI_CODING_ENABLED` (default: `false`)
+- `RESEARCH_INTELLIGENCE_SEMANTIC_SEARCH_ENABLED` (default: `false`)
+- `AZURE_OPENAI_ENDPOINT` (server-controlled HTTPS resource endpoint)
+- `AZURE_OPENAI_DEPLOYMENT` (default: `qual-coder`)
+- `AZURE_OPENAI_AUTHENTICATION` (`managed_identity`, recommended; or the
+  explicit `api_key` fallback)
+- `AZURE_OPENAI_ALLOWED_HOSTS` (required comma-separated exact host allow-list;
+  every host must be an Azure OpenAI hostname)
+- `AZURE_OPENAI_API_KEY` (only for the explicit API-key fallback; never expose
+  this to a browser or client)
+
 ## Seed Data
 
 - `SEED_DEMO_DATA` (must be `false` outside development; hosted startup rejects `true`)
@@ -109,5 +126,6 @@ This document lists runtime environment variables used by Citizen Centric.
 - `KEY_VAULT_SECRET_SECRET_KEY`
 - `KEY_VAULT_SECRET_DEFENDER_WEBHOOK`
 - `KEY_VAULT_SECRET_ENTRA_CLIENT_SECRET`
+- `KEY_VAULT_SECRET_AZURE_OPENAI_API_KEY`
 
 When `KEY_VAULT_URL` is configured, runtime attempts to load secrets for any of the above secret-backed values that are not already provided through direct environment variables.

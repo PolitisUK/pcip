@@ -12,9 +12,10 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
+from azure.core.exceptions import AzureError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -41,6 +42,11 @@ MAX_CONTEXT_CHARS = 20_000
 MAX_SOURCE_CHARS = 5_000
 MAX_CANDIDATE_RECORDS = 500
 PROVIDER_API_VERSION = "2024-10-21"
+AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
+AZURE_OPENAI_HOST_SUFFIXES = (
+    ".openai.azure.com",
+    ".cognitiveservices.azure.com",
+)
 TASKS = {
     "retrieval": "Find relevant evidence",
     "negative_case_retrieval": "Look for contrasting or negative cases",
@@ -72,6 +78,10 @@ class AssistantUnavailable(RuntimeError):
 
 class UnsafeAssistantResponse(ValueError):
     """Raised when provider output is malformed or cites material outside retrieval."""
+
+
+class ProviderAuthenticationError(RuntimeError):
+    """Raised when the server-side provider identity cannot obtain a token."""
 
 
 @dataclass(frozen=True)
@@ -109,14 +119,75 @@ class ResearchAssistantProvider(Protocol):
     def answer(self, *, system_prompt: str, payload: dict) -> dict: ...
 
 
+class AzureTokenCredential(Protocol):
+    def get_token(self, *scopes: str): ...
+
+
+def _configured_allowed_hosts(value: str) -> set[str]:
+    hosts = {
+        item.strip().lower().rstrip(".") for item in value.split(",") if item.strip()
+    }
+    if not hosts:
+        raise AssistantUnavailable(
+            "The approved provider host allow-list is not configured. No research material was sent."
+        )
+    if any(
+        not any(
+            host.endswith(suffix) and host != suffix[1:]
+            for suffix in AZURE_OPENAI_HOST_SUFFIXES
+        )
+        for host in hosts
+    ):
+        raise AssistantUnavailable(
+            "The approved provider host allow-list contains an invalid Azure OpenAI host."
+        )
+    return hosts
+
+
+def validate_azure_openai_endpoint(endpoint: str, allowed_hosts: str) -> str:
+    """Return a canonical, exact-allow-listed Azure OpenAI endpoint or fail closed."""
+    try:
+        parsed = urlsplit(endpoint)
+        port = parsed.port
+    except ValueError as exc:
+        raise AssistantUnavailable(
+            "The configured AI provider endpoint is malformed."
+        ) from exc
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme.lower() != "https":
+        raise AssistantUnavailable("The configured AI provider endpoint is not secure.")
+    if (
+        not host
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise AssistantUnavailable("The configured AI provider endpoint is malformed.")
+    if host not in _configured_allowed_hosts(allowed_hosts):
+        raise AssistantUnavailable(
+            "The configured AI provider endpoint is not an approved Azure OpenAI resource."
+        )
+    return f"https://{host}"
+
+
 class AzureOpenAIResearchProvider:
     name = "azure_openai"
 
     def __init__(
-        self, *, endpoint: str, api_key: str, deployment: str, timeout: float = 30.0
+        self,
+        *,
+        endpoint: str,
+        deployment: str,
+        credential: AzureTokenCredential | None = None,
+        api_key: str | None = None,
+        timeout: float = 30.0,
     ):
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
+        self.credential = credential
         self.model = deployment
         self.timeout = timeout
 
@@ -125,9 +196,25 @@ class AzureOpenAIResearchProvider:
             f"{self.endpoint}/openai/deployments/{quote(self.model, safe='')}/chat/completions"
             f"?api-version={PROVIDER_API_VERSION}"
         )
+        headers = {"Content-Type": "application/json"}
+        if self.credential is not None:
+            try:
+                headers["Authorization"] = (
+                    f"Bearer {self.credential.get_token(AZURE_OPENAI_SCOPE).token}"
+                )
+            except AzureError as exc:
+                raise ProviderAuthenticationError(
+                    "The server identity could not authenticate to the approved AI provider."
+                ) from exc
+        elif self.api_key:
+            headers["api-key"] = self.api_key
+        else:
+            raise ProviderAuthenticationError(
+                "The approved AI provider has no server-side authentication method."
+            )
         response = httpx.post(
             url,
-            headers={"api-key": self.api_key, "Content-Type": "application/json"},
+            headers=headers,
             json={
                 "messages": [
                     {"role": "system", "content": system_prompt},
@@ -155,17 +242,45 @@ def provider_from_settings(settings) -> ResearchAssistantProvider:
             "The approved provider-backed AI capability is not enabled. No research material was sent."
         )
     endpoint = (settings.azure_openai_endpoint or "").strip()
-    api_key = (settings.azure_openai_api_key or "").strip()
-    if not endpoint or not api_key:
+    if not endpoint:
         raise AssistantUnavailable(
             "The approved provider-backed AI capability is not configured. No research material was sent."
         )
-    if not endpoint.lower().startswith("https://"):
-        raise AssistantUnavailable("The configured AI provider endpoint is not secure.")
+    endpoint = validate_azure_openai_endpoint(
+        endpoint, getattr(settings, "azure_openai_allowed_hosts", "")
+    )
+    authentication = (
+        getattr(settings, "azure_openai_authentication", "managed_identity")
+        .strip()
+        .lower()
+    )
+    if authentication == "managed_identity":
+        try:
+            from azure.identity import DefaultAzureCredential
+        except ImportError as exc:
+            raise AssistantUnavailable(
+                "Managed-identity provider authentication is unavailable."
+            ) from exc
+        return AzureOpenAIResearchProvider(
+            endpoint=endpoint,
+            deployment=settings.azure_openai_deployment,
+            credential=DefaultAzureCredential(
+                exclude_interactive_browser_credential=True
+            ),
+        )
+    if authentication != "api_key":
+        raise AssistantUnavailable(
+            "The configured AI provider authentication method is not supported."
+        )
+    api_key = (settings.azure_openai_api_key or "").strip()
+    if not api_key:
+        raise AssistantUnavailable(
+            "The approved provider-backed AI capability is not configured. No research material was sent."
+        )
     return AzureOpenAIResearchProvider(
         endpoint=endpoint,
-        api_key=api_key,
         deployment=settings.azure_openai_deployment,
+        api_key=api_key,
     )
 
 
@@ -495,7 +610,13 @@ def run_assistant(
     }
     try:
         output = provider.answer(system_prompt=SYSTEM_PROMPT, payload=payload)
-    except (httpx.HTTPError, KeyError, TypeError, json.JSONDecodeError) as exc:
+    except (
+        httpx.HTTPError,
+        KeyError,
+        TypeError,
+        json.JSONDecodeError,
+        ProviderAuthenticationError,
+    ) as exc:
         raise AssistantUnavailable(
             "The approved AI provider did not return a usable response."
         ) from exc

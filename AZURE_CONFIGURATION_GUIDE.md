@@ -101,3 +101,27 @@ Logging initializes at startup and emits timestamped structured log lines.
 - `STARTUP_VALIDATE_MIGRATIONS=true`
 
 In hosted environments, startup checks Alembic head alignment and fails fast if migration state is behind.
+
+## 8. Research AI provider
+
+Use `infra/research-ai.bicep` to create a dedicated staging or production Azure
+OpenAI resource. The template uses an EU Data Zone deployment, a pinned model
+version, a private endpoint, App Service VNet integration, disabled local/key
+authentication, and the least-privilege `Cognitive Services OpenAI User` role.
+
+After the infrastructure deployment, configure the App Service through a
+reviewed, protected configuration operation:
+
+- `AZURE_OPENAI_ENDPOINT=<template azureOpenAiEndpoint output>`
+- `AZURE_OPENAI_ALLOWED_HOSTS=<template azureOpenAiAllowedHost output>`
+- `AZURE_OPENAI_DEPLOYMENT=<template azureOpenAiDeployment output>`
+- `AZURE_OPENAI_AUTHENTICATION=managed_identity`
+
+Keep these settings false until staging acceptance and separate production
+owner approval are complete:
+
+- `RESEARCH_INTELLIGENCE_AI_CODING_ENABLED=false`
+- `RESEARCH_INTELLIGENCE_SEMANTIC_SEARCH_ENABLED=false`
+
+Do not enable Azure OpenAI `RequestResponse` diagnostic logging. The provider
+template intentionally routes only audit, usage, and metrics metadata.

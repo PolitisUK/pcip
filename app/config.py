@@ -109,6 +109,8 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str | None = None
     azure_openai_api_key: str | None = None
     azure_openai_deployment: str = "qual-coder"
+    azure_openai_authentication: str = "managed_identity"
+    azure_openai_allowed_hosts: str = ""
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
 
