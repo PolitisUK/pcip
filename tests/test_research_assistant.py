@@ -20,13 +20,16 @@ from app.models import (
     User,
 )
 from app.research_assistant import (
+    AZURE_OPENAI_SCOPE,
     AssistantSource,
     AssistantUnavailable,
+    AzureOpenAIResearchProvider,
     UnsafeAssistantResponse,
     methodology_decision,
     provider_from_settings,
     retrieve_study_sources,
     run_assistant,
+    validate_azure_openai_endpoint,
 )
 
 
@@ -247,6 +250,8 @@ def test_provider_configuration_fails_closed_without_outbound_capability():
         "azure_openai_endpoint": "https://approved.openai.azure.com",
         "azure_openai_api_key": "secret",
         "azure_openai_deployment": "deployment",
+        "azure_openai_authentication": "api_key",
+        "azure_openai_allowed_hosts": "approved.openai.azure.com",
     }
     with pytest.raises(AssistantUnavailable, match="not enabled"):
         provider_from_settings(SimpleNamespace(**baseline))
@@ -258,6 +263,92 @@ def test_provider_configuration_fails_closed_without_outbound_capability():
     baseline["azure_openai_endpoint"] = "http://insecure.test"
     with pytest.raises(AssistantUnavailable, match="not secure"):
         provider_from_settings(SimpleNamespace(**baseline))
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "message"),
+    [
+        ("http://approved.openai.azure.com", "not secure"),
+        ("https://attacker.example", "not an approved"),
+        ("https://approved.openai.azure.com.attacker.example", "not an approved"),
+        ("https://approved.openai.azure.com/path", "malformed"),
+        ("https://[not-an-ip", "malformed"),
+    ],
+)
+def test_provider_endpoint_validation_fails_closed(endpoint, message):
+    with pytest.raises(AssistantUnavailable, match=message):
+        validate_azure_openai_endpoint(endpoint, "approved.openai.azure.com")
+
+
+def test_provider_endpoint_requires_exact_approved_azure_resource_host():
+    assert (
+        validate_azure_openai_endpoint(
+            "https://approved.openai.azure.com/",
+            "staging.openai.azure.com, approved.openai.azure.com",
+        )
+        == "https://approved.openai.azure.com"
+    )
+    with pytest.raises(AssistantUnavailable, match="invalid Azure OpenAI host"):
+        validate_azure_openai_endpoint("https://attacker.example", "attacker.example")
+
+
+def test_managed_identity_provider_uses_bearer_token_without_api_key(monkeypatch):
+    captured = {}
+
+    class Credential:
+        def get_token(self, scope):
+            captured["scope"] = scope
+            return SimpleNamespace(token="managed-token")
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"ok":true}'}}]}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured.update(url=url, headers=headers, body=json, timeout=timeout)
+        return Response()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = AzureOpenAIResearchProvider(
+        endpoint="https://approved.openai.azure.com",
+        deployment="research-assistant-gpt41mini",
+        credential=Credential(),
+    )
+    assert provider.answer(
+        system_prompt="system", payload={"question": "synthetic"}
+    ) == {"ok": True}
+    assert captured["scope"] == AZURE_OPENAI_SCOPE
+    assert captured["headers"]["Authorization"] == "Bearer managed-token"
+    assert "api-key" not in captured["headers"]
+    assert captured["timeout"] == 30.0
+
+
+def test_api_key_fallback_is_explicit_and_server_side(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"ok":true}'}}]}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured["headers"] = headers
+        return Response()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = AzureOpenAIResearchProvider(
+        endpoint="https://approved.openai.azure.com",
+        deployment="deployment",
+        api_key="server-secret",
+    )
+    provider.answer(system_prompt="system", payload={"question": "synthetic"})
+    assert captured["headers"]["api-key"] == "server-secret"
+    assert "Authorization" not in captured["headers"]
 
 
 def test_grounded_answer_accepts_only_retrieved_citations_and_preserves_unicode():

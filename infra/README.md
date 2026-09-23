@@ -22,3 +22,9 @@ The canonical deployment procedure and operating controls are maintained in:
 - `../OPERATIONS.md`
 - `../AZURE_CONFIGURATION_GUIDE.md`
 - `../ENVIRONMENT_VARIABLES.md`
+
+`research-ai.bicep` is a separate, opt-in template for the Research Assistant.
+It must not be deployed as an incidental part of the general environment
+template. Deploy it to staging first and follow
+`../docs/RESEARCH_AI_PRODUCTION_HARDENING.md`; its deployment does not activate
+the application feature gate.

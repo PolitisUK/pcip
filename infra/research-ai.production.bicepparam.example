@@ -1,0 +1,8 @@
+using './research-ai.bicep'
+
+param environmentName = 'production'
+param appServiceName = '<production-app-service-name>'
+param logAnalyticsWorkspaceName = '<production-log-analytics-workspace-name>'
+param aiLocation = 'swedencentral'
+param deploymentName = 'research-assistant-gpt41mini'
+param deploymentCapacity = 10
