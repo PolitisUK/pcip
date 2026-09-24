@@ -15,6 +15,7 @@ on:
           - get-latest-failed-account-deletion-status
           - set-research-intelligence-enabled
           - set-research-intelligence-ai-coding-enabled
+          - configure-research-ai-provider
       enabled:
         description: Boolean target state used only by the two fixed Research Intelligence operations.
         required: false
@@ -125,6 +126,14 @@ jobs:
               grep -Fq '"set-research-intelligence-ai-coding-enabled"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
               grep -Fq 'set_research_intelligence_enabled.execute_set_research_intelligence_ai_coding_enabled' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
               ;;
+            configure-research-ai-provider)
+              test -z "$OPERATION_EMAIL" && test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
+              test "$OPERATION_ENABLED" = false || { echo "The approved operation input was rejected." >&2; exit 1; }
+              git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/configure_research_ai_provider.py" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              worker_source=$(git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py")
+              grep -Fq 'RESEARCH_AI_PROVIDER_CONFIGURATION_OPERATION = "configure-research-ai-provider"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              grep -Fq 'configure_research_ai_provider.execute_configure_research_ai_provider' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              ;;
             lookup-user-identity)
               test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
               ;;
@@ -225,7 +234,7 @@ jobs:
           request_file=$(mktemp)
           trap 'rm -f "$request_file"' EXIT
           case "$OPERATION" in
-            get-alembic-revision|get-latest-failed-account-deletion-status)
+            get-alembic-revision|get-latest-failed-account-deletion-status|configure-research-ai-provider)
               jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" \
                 '{correlation_id: $correlation_id, operation: $operation}' > "$request_file"
               ;;
@@ -358,6 +367,18 @@ jobs:
                       (.result.effective_value | type == "boolean") and
                       (.result.requested_value | tostring) == $enabled and
                       (.result.effective_value | tostring) == $enabled and
+                      .result.readiness_status == "ready" and
+                      (.result.release_sha | strings | (match("^[0-9a-f]{40}$").string | length == 40)) and
+                      (.result.image_digest | strings | (match("^sha256:[0-9a-f]{64}$").string | length == 71)) and
+                      (.result.alembic_revision | strings | (match("^[0-9]{4}$").string | length == 4))
+                    ) or
+                    (
+                      $operation == "configure-research-ai-provider" and
+                      (.result | (keys | sort) == ["ai_coding_enabled", "alembic_revision", "effective_configured", "image_digest", "prior_configured", "readiness_status", "release_sha", "semantic_search_enabled"]) and
+                      (.result.prior_configured | type == "boolean") and
+                      .result.effective_configured == true and
+                      .result.ai_coding_enabled == false and
+                      .result.semantic_search_enabled == false and
                       .result.readiness_status == "ready" and
                       (.result.release_sha | strings | (match("^[0-9a-f]{40}$").string | length == 40)) and
                       (.result.image_digest | strings | (match("^sha256:[0-9a-f]{64}$").string | length == 71)) and

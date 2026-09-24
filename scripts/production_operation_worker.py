@@ -20,6 +20,7 @@ from azure.identity import DefaultAzureCredential
 from azure.servicebus import ServiceBusClient
 
 from scripts import (
+    configure_research_ai_provider,
     get_alembic_revision,
     get_latest_failed_account_deletion_status,
     lookup_user_identity,
@@ -39,6 +40,7 @@ RESEARCH_INTELLIGENCE_CONFIGURATION_OPERATION = "set-research-intelligence-enabl
 RESEARCH_INTELLIGENCE_AI_CODING_CONFIGURATION_OPERATION = (
     "set-research-intelligence-ai-coding-enabled"
 )
+RESEARCH_AI_PROVIDER_CONFIGURATION_OPERATION = "configure-research-ai-provider"
 
 
 class ProductionOperationError(RuntimeError):
@@ -90,6 +92,7 @@ def parse_request(body: bytes) -> OperationRequest:
     if operation in {
         ALEMBIC_REVISION_OPERATION,
         FAILED_ACCOUNT_DELETION_STATUS_OPERATION,
+        RESEARCH_AI_PROVIDER_CONFIGURATION_OPERATION,
     }:
         if set(payload) != {"correlation_id", "operation"}:
             raise ProductionOperationError("Production operation refused.")
@@ -228,6 +231,44 @@ def _validated_result(request: OperationRequest) -> dict[str, Any]:
         except get_latest_failed_account_deletion_status.FailedAccountDeletionStatusLookupError as exc:
             raise ProductionOperationError("Production operation refused.") from exc
         if not _valid_failed_account_deletion_status(result):
+            raise ProductionOperationError("Production operation refused.")
+        return result
+    if request.operation == RESEARCH_AI_PROVIDER_CONFIGURATION_OPERATION:
+        try:
+            result = (
+                configure_research_ai_provider.execute_configure_research_ai_provider()
+                .approved_result()
+            )
+        except configure_research_ai_provider.ResearchIntelligenceConfigurationError as exc:
+            raise ProductionOperationError("Production operation refused.") from exc
+        if (
+            set(result)
+            != {
+                "prior_configured",
+                "effective_configured",
+                "ai_coding_enabled",
+                "semantic_search_enabled",
+                "readiness_status",
+                "release_sha",
+                "image_digest",
+                "alembic_revision",
+            }
+            or type(result["prior_configured"]) is not bool
+            or result["effective_configured"] is not True
+            or result["ai_coding_enabled"] is not False
+            or result["semantic_search_enabled"] is not False
+            or result["readiness_status"] != "ready"
+            or not isinstance(result["release_sha"], str)
+            or len(result["release_sha"]) != 40
+            or any(character not in "0123456789abcdef" for character in result["release_sha"])
+            or not isinstance(result["image_digest"], str)
+            or len(result["image_digest"]) != 71
+            or not result["image_digest"].startswith("sha256:")
+            or any(character not in "0123456789abcdef" for character in result["image_digest"][7:])
+            or not isinstance(result["alembic_revision"], str)
+            or len(result["alembic_revision"]) != 4
+            or not result["alembic_revision"].isdigit()
+        ):
             raise ProductionOperationError("Production operation refused.")
         return result
     if request.operation in {
