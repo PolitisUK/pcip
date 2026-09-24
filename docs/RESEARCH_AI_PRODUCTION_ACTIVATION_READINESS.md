@@ -102,11 +102,14 @@ setting.
 ## Required production settings
 
 These exact settings are required only after the provider is deployed and
-verified:
+verified. The queue-mediated `configure-research-ai-provider` operation writes
+the four fixed `AZURE_OPENAI_*` values below; it accepts no endpoint, resource,
+setting name, value, or command from its caller and preserves every unrelated
+App Service setting. It refuses to run unless both AI gates remain false:
 
 ```text
 RESEARCH_INTELLIGENCE_ENABLED=true
-RESEARCH_INTELLIGENCE_AI_CODING_ENABLED=true
+RESEARCH_INTELLIGENCE_AI_CODING_ENABLED=false
 RESEARCH_INTELLIGENCE_SEMANTIC_SEARCH_ENABLED=false
 AZURE_OPENAI_ENDPOINT=https://pcip-production-research-ai-rx6kbu.openai.azure.com/
 AZURE_OPENAI_ALLOWED_HOSTS=pcip-production-research-ai-rx6kbu.openai.azure.com
@@ -126,9 +129,10 @@ No API key is required or permitted by this production design.
    content.
 4. Verify managed-identity token acquisition and the single resource-scoped
    `Cognitive Services OpenAI User` assignment.
-5. Apply the fixed endpoint, exact-host allow-list, deployment, managed-
-   identity authentication, and disabled feature flags while preserving every
-   unrelated setting.
+5. Run the protected `configure-research-ai-provider` operation. It applies the
+   fixed endpoint, exact-host allow-list, deployment, and managed-identity
+   authentication while proving the AI-coding and semantic-search gates remain
+   disabled and preserving every unrelated setting.
 6. Verify metadata-only diagnostics and that `RequestResponse` logging is off.
 7. Deploy the Research Assistant release through the normal staging-first
    protected release if production is not already on that code.

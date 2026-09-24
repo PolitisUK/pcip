@@ -93,6 +93,7 @@ jobs:
             set -e
             test -f /app/scripts/production_operation_worker.py
             test -f /app/scripts/set_research_intelligence_enabled.py
+            test -f /app/scripts/configure_research_ai_provider.py
             test -f /app/scripts/lookup_user_identity.py
             test -f /app/scripts/get_alembic_revision.py
             test -f /app/scripts/get_latest_failed_account_deletion_status.py

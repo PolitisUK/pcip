@@ -28,4 +28,5 @@ scripts/*
 !scripts/platform_admin_enable.py
 !scripts/production_operation_worker.py
 !scripts/set_research_intelligence_enabled.py
+!scripts/configure_research_ai_provider.py
 *.md

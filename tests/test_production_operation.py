@@ -298,6 +298,33 @@ def test_worker_calls_only_fixed_research_intelligence_operation(
     }
 
 
+def test_worker_calls_only_fixed_provider_configuration(monkeypatch, capsys):
+    message, request = request_message(operation="configure-research-ai-provider")
+    request.pop("email")
+    message.body = [json.dumps(request).encode()]
+    receiver = FakeReceiver([message])
+    captured = []
+
+    def fixed_operation():
+        captured.append(True)
+        return SimpleNamespace(approved_result=lambda: {
+            "prior_configured": False,
+            "effective_configured": True,
+            "ai_coding_enabled": False,
+            "semantic_search_enabled": False,
+            "readiness_status": "ready",
+            "release_sha": "a" * 40,
+            "image_digest": "sha256:" + "b" * 64,
+            "alembic_revision": "0037",
+        })
+
+    monkeypatch.setattr(worker.configure_research_ai_provider, "execute_configure_research_ai_provider", fixed_operation)
+    assert worker.main(client_factory=lambda _namespace: FakeClient(receiver), environ=production_environment()) == 0
+    assert captured == [True]
+    assert receiver.completed == [message]
+    assert json.loads(capsys.readouterr().out)["result"]["effective_configured"] is True
+
+
 def test_worker_calls_only_fixed_failed_account_deletion_lookup_and_emits_minimal_result(monkeypatch, capsys):
     message, request = request_message(operation="get-latest-failed-account-deletion-status")
     request.pop("email")
@@ -593,6 +620,13 @@ def test_research_intelligence_request_schema_rejects_non_boolean_or_extra_field
         worker.parse_request(json.dumps(request).encode())
 
 
+@pytest.mark.parametrize("extra", [{"enabled": False}, {"setting": "AZURE_OPENAI_ENDPOINT"}, {"endpoint": "https://attacker.example"}, {"resource": "another-app"}, {"command": "az webapp config appsettings set"}])
+def test_provider_configuration_request_schema_rejects_all_caller_values(extra):
+    request = {"correlation_id": str(uuid4()), "operation": "configure-research-ai-provider", **extra}
+    with pytest.raises(worker.ProductionOperationError, match="refused"):
+        worker.parse_request(json.dumps(request).encode())
+
+
 def test_worker_suppresses_lookup_error_output_that_could_contain_the_email(monkeypatch, capsys):
     message, request = request_message()
     receiver = FakeReceiver([message])
@@ -642,6 +676,7 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "- get-latest-failed-account-deletion-status" in workflow
     assert "- set-research-intelligence-enabled" in workflow
     assert "- set-research-intelligence-ai-coding-enabled" in workflow
+    assert "- configure-research-ai-provider" in workflow
     assert 'case "$OPERATION" in' in workflow
     assert "get-alembic-revision)" in workflow
     assert "get-latest-failed-account-deletion-status)" in workflow
@@ -665,6 +700,9 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
         "set_research_intelligence_enabled.execute_set_research_intelligence_ai_coding_enabled"
         in workflow
     )
+    assert "configure-research-ai-provider)" in workflow
+    assert 'RESEARCH_AI_PROVIDER_CONFIGURATION_OPERATION = "configure-research-ai-provider"' in workflow
+    assert "configure_research_ai_provider.execute_configure_research_ai_provider" in workflow
     assert "set-platform-admin-dry-run)" in workflow
     assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/platform_admin_dry_run.py"' in workflow
     assert 'git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py"' in workflow
@@ -1200,6 +1238,42 @@ def test_operation_result_parser_accepts_only_exact_research_intelligence_schema
         ) == []
 
 
+def test_operation_result_parser_accepts_only_exact_provider_configuration_schema():
+    correlation_id = "11111111-1111-4111-8111-111111111111"
+    result = {
+        "prior_configured": False,
+        "effective_configured": True,
+        "ai_coding_enabled": False,
+        "semantic_search_enabled": False,
+        "readiness_status": "ready",
+        "release_sha": "a" * 40,
+        "image_digest": "sha256:" + "b" * 64,
+        "alembic_revision": "0037",
+    }
+    line = json.dumps(
+        {"correlation_id": correlation_id, "status": "succeeded", "result": result},
+        sort_keys=True,
+    )
+    assert _parse_approved_operation_logs(
+        [line], correlation_id, operation="configure-research-ai-provider"
+    ) == [json.loads(line)]
+
+    for invalid in (
+        {**result, "effective_configured": False},
+        {**result, "ai_coding_enabled": True},
+        {**result, "semantic_search_enabled": True},
+        {**result, "endpoint": "https://attacker.example"},
+        {key: value for key, value in result.items() if key != "prior_configured"},
+    ):
+        invalid_line = json.dumps(
+            {"correlation_id": correlation_id, "status": "succeeded", "result": invalid},
+            sort_keys=True,
+        )
+        assert _parse_approved_operation_logs(
+            [invalid_line], correlation_id, operation="configure-research-ai-provider"
+        ) == []
+
+
 def test_operation_result_parser_accepts_only_exact_failed_account_deletion_status_schema():
     correlation_id = "11111111-1111-4111-8111-111111111111"
     result = {
@@ -1332,12 +1406,14 @@ def test_fixed_operation_modules_are_packaged_but_generic_admin_command_remains_
     assert "!scripts/platform_admin_enable.py" in dockerignore
     assert "!scripts/production_operation_worker.py" in dockerignore
     assert "!scripts/set_research_intelligence_enabled.py" in dockerignore
+    assert "!scripts/configure_research_ai_provider.py" in dockerignore
     assert "!scripts/set_platform_admin.py" not in dockerignore
     assert "test -f /app/scripts/platform_admin_dry_run.py" in ci
     assert "test -f /app/scripts/get_alembic_revision.py" in ci
     assert "test -f /app/scripts/get_latest_failed_account_deletion_status.py" in ci
     assert "test -f /app/scripts/platform_admin_enable.py" in ci
     assert "test -f /app/scripts/set_research_intelligence_enabled.py" in ci
+    assert "test -f /app/scripts/configure_research_ai_provider.py" in ci
     assert "test ! -e /app/scripts/set_platform_admin.py" in ci
 
 
