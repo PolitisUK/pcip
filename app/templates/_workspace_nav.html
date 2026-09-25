@@ -1,30 +1,21 @@
 <nav class="workspace-nav" aria-label="Research workspace">
   <a href="/projects/{{ project.id }}/workspace" {% if workspace_section == 'overview' %}aria-current="page"{% endif %}>Overview</a>
-  <div class="workspace-nav__group" role="group" aria-labelledby="workspace-nav-sources">
-    <span class="workspace-nav__heading" id="workspace-nav-sources">Review sources</span>
-    <div class="workspace-nav__links">
-      <a href="/projects/{{ project.id }}/workspace/entries" {% if workspace_section == 'entries' %}aria-current="page"{% endif %}>Entries</a>
-      <a href="/projects/{{ project.id }}/workspace/participants" {% if workspace_section == 'participants' %}aria-current="page"{% endif %}>Participants</a>
-      <a href="/projects/{{ project.id }}/workspace/evidence" {% if workspace_section == 'evidence' %}aria-current="page"{% endif %}>Evidence</a>
-    </div>
+  <div class="workspace-nav__group" role="group" aria-label="Review sources">
+    <a href="/projects/{{ project.id }}/workspace/entries" {% if workspace_section == 'entries' %}aria-current="page"{% endif %}>Entries</a>
+    <a href="/projects/{{ project.id }}/workspace/participants" {% if workspace_section == 'participants' %}aria-current="page"{% endif %}>Participants</a>
+    <a href="/projects/{{ project.id }}/workspace/evidence" {% if workspace_section == 'evidence' %}aria-current="page"{% endif %}>Evidence</a>
   </div>
-  <div class="workspace-nav__group" role="group" aria-labelledby="workspace-nav-analysis">
-    <span class="workspace-nav__heading" id="workspace-nav-analysis">Develop analysis</span>
-    <div class="workspace-nav__links">
-      <a href="/projects/{{ project.id }}/workspace/coding" {% if workspace_section == 'coding' %}aria-current="page"{% endif %}>Coded passages</a>
-      <a href="/projects/{{ project.id }}/workspace/themes" {% if workspace_section == 'themes' %}aria-current="page"{% endif %}>Codes &amp; themes</a>
-      <a href="/projects/{{ project.id }}/workspace/matrices" {% if workspace_section == 'matrices' %}aria-current="page"{% endif %}>Compare cases</a>
-      <a href="/projects/{{ project.id }}/workspace/longitudinal" {% if workspace_section == 'longitudinal' %}aria-current="page"{% endif %}>Over time</a>
-      <a href="/projects/{{ project.id }}/workspace/queries" {% if workspace_section == 'queries' %}aria-current="page"{% endif %}>Combine codes</a>
-      <a href="/projects/{{ project.id }}/workspace/analysis" {% if workspace_section == 'analysis' %}aria-current="page"{% endif %}>AI suggestions</a>
-      <a href="/projects/{{ project.id }}/workspace/ask-ai" {% if workspace_section == 'ask_ai' %}aria-current="page"{% endif %}>Ask AI</a>
-    </div>
+  <div class="workspace-nav__group" role="group" aria-label="Develop analysis">
+    <a href="/projects/{{ project.id }}/workspace/coding" {% if workspace_section == 'coding' %}aria-current="page"{% endif %}>Coded passages</a>
+    <a href="/projects/{{ project.id }}/workspace/themes" {% if workspace_section == 'themes' %}aria-current="page"{% endif %}>Codes &amp; themes</a>
+    <a href="/projects/{{ project.id }}/workspace/matrices" {% if workspace_section == 'matrices' %}aria-current="page"{% endif %}>Compare cases</a>
+    <a href="/projects/{{ project.id }}/workspace/longitudinal" {% if workspace_section == 'longitudinal' %}aria-current="page"{% endif %}>Over time</a>
+    <a href="/projects/{{ project.id }}/workspace/queries" {% if workspace_section == 'queries' %}aria-current="page"{% endif %}>Combine codes</a>
+    <a href="/projects/{{ project.id }}/workspace/analysis" {% if workspace_section == 'analysis' %}aria-current="page"{% endif %}>AI suggestions</a>
+    <a href="/projects/{{ project.id }}/workspace/ask-ai" {% if workspace_section == 'ask_ai' %}aria-current="page"{% endif %}>Ask AI</a>
   </div>
-  <div class="workspace-nav__group" role="group" aria-labelledby="workspace-nav-review">
-    <span class="workspace-nav__heading" id="workspace-nav-review">Review &amp; share</span>
-    <div class="workspace-nav__links">
-      <a href="/projects/{{ project.id }}/workspace/audit" {% if workspace_section == 'audit' %}aria-current="page"{% endif %}>History</a>
-      <a href="/projects/{{ project.id }}/workspace/export" {% if workspace_section == 'export' %}aria-current="page"{% endif %}>Export</a>
-    </div>
+  <div class="workspace-nav__group" role="group" aria-label="Review and share">
+    <a href="/projects/{{ project.id }}/workspace/audit" {% if workspace_section == 'audit' %}aria-current="page"{% endif %}>History</a>
+    <a href="/projects/{{ project.id }}/workspace/export" {% if workspace_section == 'export' %}aria-current="page"{% endif %}>Export</a>
   </div>
 </nav>
