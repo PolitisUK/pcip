@@ -12268,9 +12268,9 @@ def test_project_research_workspace_shows_full_source_entries_and_scopes_access(
         assert analysis.status_code == 200
         assert "Analysis" in analysis.text
         assert unfiltered_entries.status_code == 200
-        assert "Review sources" in unfiltered_entries.text
+        assert 'role="group" aria-label="Review sources"' in unfiltered_entries.text
         assert "Coded passages" in unfiltered_entries.text
-        assert "Review &amp; share" in unfiltered_entries.text
+        assert 'role="group" aria-label="Review and share"' in unfiltered_entries.text
         assert blank_participant_entries.status_code == 200
         assert blank_prompt_entries.status_code == 200
         assert combined_blank_entries.status_code == 200

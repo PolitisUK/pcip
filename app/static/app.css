@@ -2012,51 +2012,61 @@ fieldset.field legend {
 
 .workspace-nav {
   display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: 8px;
-  padding: 8px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
 }
 
 .workspace-nav > a,
-.workspace-nav__links a {
-  padding: 8px 11px;
+.workspace-nav__group > a {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 40px;
+  padding: 6px 7px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
+  font-size: var(--type-sm);
   font-weight: 650;
+  line-height: 1.25;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .workspace-nav > a:hover,
 .workspace-nav > a[aria-current="page"],
-.workspace-nav__links a:hover,
-.workspace-nav__links a[aria-current="page"] {
+.workspace-nav__group > a:hover,
+.workspace-nav__group > a[aria-current="page"] {
   background: var(--brand-soft);
   color: var(--brand-950);
 }
 
+.workspace-nav > a[aria-current="page"],
+.workspace-nav__group > a[aria-current="page"] {
+  box-shadow: inset 0 -2px 0 var(--brand-700);
+  font-weight: 700;
+}
+
+.workspace-nav a:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
 .workspace-nav__group {
-  display: grid;
-  gap: 2px;
-  padding-inline-start: 8px;
-  border-inline-start: 1px solid var(--border);
-}
-
-.workspace-nav__heading {
-  padding-inline: 11px;
-  color: var(--text-muted);
-  font-size: .88rem;
-  font-weight: 650;
-  line-height: 1.4;
-}
-
-.workspace-nav__links {
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  align-items: center;
   gap: 2px;
+  margin-inline-start: 1px;
+  padding-inline-start: 4px;
+  border-inline-start: 1px solid var(--border);
 }
 
 .study-analysis-nav {
@@ -2898,8 +2908,7 @@ pre {
   }
 
   .workspace-nav, .study-analysis-nav { flex-wrap: nowrap; overflow-x: auto; }
-  .workspace-nav > a, .workspace-nav__group, .workspace-nav__links a, .study-analysis-nav a { flex: 0 0 auto; }
-  .workspace-nav__links { flex-wrap: nowrap; }
+  .workspace-nav > a, .workspace-nav__group, .workspace-nav__group > a, .study-analysis-nav a { flex: 0 0 auto; }
   .research-metrics, .filter-grid, .participant-grid, .evidence-gallery { grid-template-columns: 1fr; }
   .workbench-journey, .study-tool-grid { grid-template-columns: 1fr; }
   .theme-row { align-items: flex-start; flex-direction: column; }
