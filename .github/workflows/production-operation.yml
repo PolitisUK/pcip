@@ -16,6 +16,7 @@ on:
           - set-research-intelligence-enabled
           - set-research-intelligence-ai-coding-enabled
           - configure-research-ai-provider
+          - rebind-apple-reviewer-invitation
       enabled:
         description: Boolean target state used only by the two fixed Research Intelligence operations.
         required: false
@@ -95,6 +96,14 @@ jobs:
             test -n "${!value}" || { echo "$value is required." >&2; exit 1; }
           done
           case "$OPERATION" in
+            rebind-apple-reviewer-invitation)
+              test -z "$OPERATION_EMAIL" && test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
+              test "$OPERATION_ENABLED" = false || { echo "The approved operation input was rejected." >&2; exit 1; }
+              git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/store_reviewer_invitation_rebind.py" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              worker_source=$(git show "${OPERATIONS_WORKER_REVISION}:scripts/production_operation_worker.py")
+              grep -Fq 'APPLE_REVIEWER_INVITATION_REBIND_OPERATION = "rebind-apple-reviewer-invitation"' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              grep -Fq 'store_reviewer_invitation_rebind.execute_apple_reviewer_invitation_rebind' <<<"$worker_source" || { echo "The approved worker does not support this operation." >&2; exit 1; }
+              ;;
             get-alembic-revision)
               test -z "$OPERATION_EMAIL" && test -z "$OPERATION_USER_ID" || { echo "The approved operation input was rejected." >&2; exit 1; }
               git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/get_alembic_revision.py" || { echo "The approved worker does not support this operation." >&2; exit 1; }
@@ -234,7 +243,7 @@ jobs:
           request_file=$(mktemp)
           trap 'rm -f "$request_file"' EXIT
           case "$OPERATION" in
-            get-alembic-revision|get-latest-failed-account-deletion-status|configure-research-ai-provider)
+            get-alembic-revision|get-latest-failed-account-deletion-status|configure-research-ai-provider|rebind-apple-reviewer-invitation)
               jq -cn --arg correlation_id "$correlation_id" --arg operation "$OPERATION" \
                 '{correlation_id: $correlation_id, operation: $operation}' > "$request_file"
               ;;
@@ -298,6 +307,28 @@ jobs:
                   .status == "succeeded" and
                   (.result | type == "object") and
                   (
+                    (
+                      $operation == "rebind-apple-reviewer-invitation" and
+                      (.result | (keys | sort) == ["changed", "consent_status", "consent_unchanged", "credential_enabled", "credential_id", "destination_bundle_id", "destination_invitation_id", "document_version", "organisation_id", "participant_id", "participant_unchanged", "password_unchanged", "project_id", "scope_unchanged", "source_invitation_id", "store_reviewer_designation", "study_id", "username_unchanged"]) and
+                      .result.participant_id == 36 and
+                      .result.source_invitation_id == 6 and
+                      .result.destination_invitation_id == 11 and
+                      (.result.credential_id | type == "number" and . > 0 and floor == .) and
+                      (.result.organisation_id | type == "number" and . > 0 and floor == .) and
+                      (.result.project_id | type == "number" and . > 0 and floor == .) and
+                      (.result.study_id | type == "number" and . > 0 and floor == .) and
+                      (.result.destination_bundle_id | type == "number" and . > 0 and floor == .) and
+                      .result.document_version == "1.1" and
+                      .result.changed == true and
+                      .result.participant_unchanged == true and
+                      .result.username_unchanged == true and
+                      .result.password_unchanged == true and
+                      .result.scope_unchanged == true and
+                      .result.consent_unchanged == true and
+                      .result.consent_status == "pending" and
+                      .result.store_reviewer_designation == true and
+                      .result.credential_enabled == true
+                    ) or
                     (
                       $operation == "get-alembic-revision" and
                       (.result | (keys | sort) == ["alembic_revision"]) and
