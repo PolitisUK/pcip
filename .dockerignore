@@ -29,4 +29,5 @@ scripts/*
 !scripts/production_operation_worker.py
 !scripts/set_research_intelligence_enabled.py
 !scripts/configure_research_ai_provider.py
+!scripts/store_reviewer_invitation_rebind.py
 *.md

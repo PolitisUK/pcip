@@ -27,6 +27,7 @@ from scripts import (
     platform_admin_dry_run,
     platform_admin_enable,
     set_research_intelligence_enabled,
+    store_reviewer_invitation_rebind,
 )
 
 SERVICE_BUS_NAMESPACE_ENV = "PCIP_OPERATIONS_SERVICEBUS_NAMESPACE"
@@ -41,6 +42,7 @@ RESEARCH_INTELLIGENCE_AI_CODING_CONFIGURATION_OPERATION = (
     "set-research-intelligence-ai-coding-enabled"
 )
 RESEARCH_AI_PROVIDER_CONFIGURATION_OPERATION = "configure-research-ai-provider"
+APPLE_REVIEWER_INVITATION_REBIND_OPERATION = "rebind-apple-reviewer-invitation"
 
 
 class ProductionOperationError(RuntimeError):
@@ -93,6 +95,7 @@ def parse_request(body: bytes) -> OperationRequest:
         ALEMBIC_REVISION_OPERATION,
         FAILED_ACCOUNT_DELETION_STATUS_OPERATION,
         RESEARCH_AI_PROVIDER_CONFIGURATION_OPERATION,
+        APPLE_REVIEWER_INVITATION_REBIND_OPERATION,
     }:
         if set(payload) != {"correlation_id", "operation"}:
             raise ProductionOperationError("Production operation refused.")
@@ -209,6 +212,72 @@ def _valid_failed_account_deletion_status(value: Any) -> bool:
 
 
 def _validated_result(request: OperationRequest) -> dict[str, Any]:
+    if request.operation == APPLE_REVIEWER_INVITATION_REBIND_OPERATION:
+        try:
+            result = (
+                store_reviewer_invitation_rebind.execute_apple_reviewer_invitation_rebind(
+                    correlation_id=request.correlation_id
+                ).approved_result()
+            )
+        except store_reviewer_invitation_rebind.StoreReviewerInvitationRebindError as exc:
+            raise ProductionOperationError("Production operation refused.") from exc
+        expected_keys = {
+            "participant_id",
+            "credential_id",
+            "source_invitation_id",
+            "destination_invitation_id",
+            "organisation_id",
+            "project_id",
+            "study_id",
+            "destination_bundle_id",
+            "document_version",
+            "changed",
+            "participant_unchanged",
+            "username_unchanged",
+            "password_unchanged",
+            "scope_unchanged",
+            "consent_unchanged",
+            "consent_status",
+            "store_reviewer_designation",
+            "credential_enabled",
+        }
+        if (
+            set(result) != expected_keys
+            or result["participant_id"]
+            != store_reviewer_invitation_rebind.APPLE_PARTICIPANT_ID
+            or result["source_invitation_id"]
+            != store_reviewer_invitation_rebind.APPLE_SOURCE_INVITATION_ID
+            or result["destination_invitation_id"]
+            != store_reviewer_invitation_rebind.APPLE_DESTINATION_INVITATION_ID
+            or any(
+                type(result[key]) is not int or result[key] <= 0
+                for key in (
+                    "credential_id",
+                    "organisation_id",
+                    "project_id",
+                    "study_id",
+                    "destination_bundle_id",
+                )
+            )
+            or any(
+                result[key] is not True
+                for key in (
+                    "changed",
+                    "participant_unchanged",
+                    "username_unchanged",
+                    "password_unchanged",
+                    "scope_unchanged",
+                    "consent_unchanged",
+                    "store_reviewer_designation",
+                    "credential_enabled",
+                )
+            )
+            or result["consent_status"] != "pending"
+            or result["document_version"]
+            != store_reviewer_invitation_rebind.APPLE_DOCUMENT_VERSION
+        ):
+            raise ProductionOperationError("Production operation refused.")
+        return result
     if request.operation == ALEMBIC_REVISION_OPERATION:
         try:
             result = get_alembic_revision.execute_get_alembic_revision().approved_result()

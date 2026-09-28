@@ -325,6 +325,91 @@ def test_worker_calls_only_fixed_provider_configuration(monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["result"]["effective_configured"] is True
 
 
+def apple_reviewer_rebind_result(**overrides):
+    result = {
+        "participant_id": 36,
+        "credential_id": 2,
+        "source_invitation_id": 6,
+        "destination_invitation_id": 11,
+        "organisation_id": 4,
+        "project_id": 4,
+        "study_id": 4,
+        "destination_bundle_id": 9,
+        "document_version": "1.1",
+        "changed": True,
+        "participant_unchanged": True,
+        "username_unchanged": True,
+        "password_unchanged": True,
+        "scope_unchanged": True,
+        "consent_unchanged": True,
+        "consent_status": "pending",
+        "store_reviewer_designation": True,
+        "credential_enabled": True,
+    }
+    result.update(overrides)
+    return result
+
+
+def test_worker_calls_only_fixed_apple_reviewer_rebind(monkeypatch, capsys):
+    message, request = request_message(operation="rebind-apple-reviewer-invitation")
+    request.pop("email")
+    message.body = [json.dumps(request).encode()]
+    receiver = FakeReceiver([message])
+    captured = []
+
+    def fixed_operation(*, correlation_id):
+        captured.append(correlation_id)
+        return SimpleNamespace(approved_result=lambda: apple_reviewer_rebind_result())
+
+    monkeypatch.setattr(
+        worker.store_reviewer_invitation_rebind,
+        "execute_apple_reviewer_invitation_rebind",
+        fixed_operation,
+    )
+    assert worker.main(
+        client_factory=lambda _namespace: FakeClient(receiver),
+        environ=production_environment(),
+    ) == 0
+    assert captured == [request["correlation_id"]]
+    assert receiver.completed == [message]
+    rendered = capsys.readouterr().out
+    assert json.loads(rendered)["result"] == apple_reviewer_rebind_result()
+    assert APPLE_PASSWORD_SENTINEL not in rendered
+
+
+APPLE_PASSWORD_SENTINEL = "must-never-appear-as-password-or-hash"
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        apple_reviewer_rebind_result(password_hash=APPLE_PASSWORD_SENTINEL),
+        apple_reviewer_rebind_result(password_unchanged=False),
+        apple_reviewer_rebind_result(consent_status="granted"),
+        apple_reviewer_rebind_result(destination_invitation_id=12),
+        apple_reviewer_rebind_result(extra=True),
+    ],
+)
+def test_worker_rejects_unapproved_apple_reviewer_rebind_results(
+    monkeypatch, capsys, result
+):
+    message, request = request_message(operation="rebind-apple-reviewer-invitation")
+    request.pop("email")
+    message.body = [json.dumps(request).encode()]
+    receiver = FakeReceiver([message])
+    monkeypatch.setattr(
+        worker.store_reviewer_invitation_rebind,
+        "execute_apple_reviewer_invitation_rebind",
+        lambda **_kwargs: SimpleNamespace(approved_result=lambda: result),
+    )
+    assert worker.main(
+        client_factory=lambda _namespace: FakeClient(receiver),
+        environ=production_environment(),
+    ) == 2
+    captured = capsys.readouterr()
+    assert APPLE_PASSWORD_SENTINEL not in captured.out + captured.err
+
+
 def test_worker_calls_only_fixed_failed_account_deletion_lookup_and_emits_minimal_result(monkeypatch, capsys):
     message, request = request_message(operation="get-latest-failed-account-deletion-status")
     request.pop("email")
@@ -627,6 +712,39 @@ def test_provider_configuration_request_schema_rejects_all_caller_values(extra):
         worker.parse_request(json.dumps(request).encode())
 
 
+def test_apple_reviewer_rebind_request_is_parameterless_and_rejects_all_caller_targets():
+    correlation_id = str(uuid4())
+    parsed = worker.parse_request(
+        json.dumps(
+            {
+                "correlation_id": correlation_id,
+                "operation": "rebind-apple-reviewer-invitation",
+            }
+        ).encode()
+    )
+    assert parsed.correlation_id == correlation_id
+    assert parsed.email is None
+    assert parsed.user_id is None
+    for extra in (
+        {"participant_id": 36},
+        {"source_invitation_id": 6},
+        {"destination_invitation_id": 11},
+        {"username": "apple-reviewer"},
+        {"password": "must-not-be-accepted"},
+        {"email": "apple-review@example.test"},
+    ):
+        with pytest.raises(worker.ProductionOperationError, match="refused"):
+            worker.parse_request(
+                json.dumps(
+                    {
+                        "correlation_id": correlation_id,
+                        "operation": "rebind-apple-reviewer-invitation",
+                        **extra,
+                    }
+                ).encode()
+            )
+
+
 def test_worker_suppresses_lookup_error_output_that_could_contain_the_email(monkeypatch, capsys):
     message, request = request_message()
     receiver = FakeReceiver([message])
@@ -677,6 +795,11 @@ def test_workflow_is_protected_queue_mediated_and_never_starts_a_job():
     assert "- set-research-intelligence-enabled" in workflow
     assert "- set-research-intelligence-ai-coding-enabled" in workflow
     assert "- configure-research-ai-provider" in workflow
+    assert "- rebind-apple-reviewer-invitation" in workflow
+    assert "rebind-apple-reviewer-invitation)" in workflow
+    assert 'git cat-file -e "${OPERATIONS_WORKER_REVISION}:scripts/store_reviewer_invitation_rebind.py"' in workflow
+    assert 'APPLE_REVIEWER_INVITATION_REBIND_OPERATION = "rebind-apple-reviewer-invitation"' in workflow
+    assert "store_reviewer_invitation_rebind.execute_apple_reviewer_invitation_rebind" in workflow
     assert 'case "$OPERATION" in' in workflow
     assert "get-alembic-revision)" in workflow
     assert "get-latest-failed-account-deletion-status)" in workflow
@@ -1163,6 +1286,40 @@ def test_operation_result_parser_accepts_only_exact_platform_admin_dry_run_schem
         ) == []
 
 
+def test_operation_result_parser_accepts_only_exact_apple_reviewer_rebind_schema():
+    correlation_id = "11111111-1111-4111-8111-111111111111"
+    result = apple_reviewer_rebind_result()
+    line = json.dumps(
+        {"correlation_id": correlation_id, "status": "succeeded", "result": result},
+        sort_keys=True,
+    )
+    assert _parse_approved_operation_logs(
+        [line], correlation_id, operation="rebind-apple-reviewer-invitation"
+    ) == [json.loads(line)]
+
+    for invalid in (
+        {**result, "participant_id": 37},
+        {**result, "destination_invitation_id": 12},
+        {**result, "password_unchanged": False},
+        {**result, "consent_status": "granted"},
+        {**result, "unexpected": True},
+        {key: value for key, value in result.items() if key != "scope_unchanged"},
+    ):
+        invalid_line = json.dumps(
+            {
+                "correlation_id": correlation_id,
+                "status": "succeeded",
+                "result": invalid,
+            },
+            sort_keys=True,
+        )
+        assert _parse_approved_operation_logs(
+            [invalid_line],
+            correlation_id,
+            operation="rebind-apple-reviewer-invitation",
+        ) == []
+
+
 def test_operation_result_parser_accepts_only_exact_alembic_revision_schema():
     correlation_id = "11111111-1111-4111-8111-111111111111"
     result = {"alembic_revision": "0023"}
@@ -1407,6 +1564,7 @@ def test_fixed_operation_modules_are_packaged_but_generic_admin_command_remains_
     assert "!scripts/production_operation_worker.py" in dockerignore
     assert "!scripts/set_research_intelligence_enabled.py" in dockerignore
     assert "!scripts/configure_research_ai_provider.py" in dockerignore
+    assert "!scripts/store_reviewer_invitation_rebind.py" in dockerignore
     assert "!scripts/set_platform_admin.py" not in dockerignore
     assert "test -f /app/scripts/platform_admin_dry_run.py" in ci
     assert "test -f /app/scripts/get_alembic_revision.py" in ci
@@ -1414,6 +1572,7 @@ def test_fixed_operation_modules_are_packaged_but_generic_admin_command_remains_
     assert "test -f /app/scripts/platform_admin_enable.py" in ci
     assert "test -f /app/scripts/set_research_intelligence_enabled.py" in ci
     assert "test -f /app/scripts/configure_research_ai_provider.py" in ci
+    assert "test -f /app/scripts/store_reviewer_invitation_rebind.py" in ci
     assert "test ! -e /app/scripts/set_platform_admin.py" in ci
 
 
