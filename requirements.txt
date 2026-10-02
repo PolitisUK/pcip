@@ -9,6 +9,10 @@ pydantic-settings==2.7.1
 email-validator==2.2.0
 psycopg[binary]==3.2.3
 httpx==0.28.1
+# Direct security floors for transitive authentication and HTTP dependencies.
+pyjwt>=2.15.0,<3
+urllib3>=2.8.0,<3
+oauthlib>=4.0.0,<5
 
 alembic==1.14.1
 azure-identity==1.19.0
