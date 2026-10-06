@@ -4,6 +4,16 @@ on:
     branches: [main]
   pull_request:
 jobs:
+  ip-compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify committed IP compliance evidence
+        run: python scripts/ip_compliance.py --verify
+
   test:
     runs-on: ubuntu-latest
     steps:
