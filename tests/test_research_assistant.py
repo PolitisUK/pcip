@@ -641,7 +641,8 @@ def test_provider_boundary_enforces_total_selected_and_candidate_caps():
     _, provider = invoke_stub(cited_output(), sources)
     selected = provider.payload["sources"]
     assert len(selected) == 4
-    assert sum(len(item["content"]) for item in selected) == 20_000
+    assert sum(len(item["content"]) for item in selected) <= 20_000
+    assert len(json.dumps(selected, ensure_ascii=False)) <= 20_000
     assert all(len(item["content"]) <= 5_000 for item in selected)
     assert "response:501" not in {item["citation_id"] for item in selected}
     small = [

@@ -392,19 +392,37 @@ def _rank(question: str, sources: list[AssistantSource]) -> list[AssistantSource
         ),
     )
     result: list[AssistantSource] = []
-    size = 0
     for source in ranked:
         if len(result) >= MAX_SOURCES:
             break
-        remaining = MAX_CONTEXT_CHARS - size
-        if remaining <= 0:
-            break
-        excerpt = source.excerpt[: min(MAX_SOURCE_CHARS, remaining)]
-        if not excerpt:
+        maximum = min(MAX_SOURCE_CHARS, len(source.excerpt))
+        # Count the complete serialised source context, including labels,
+        # case references and JSON escaping, rather than excerpts alone.
+        low, high = 0, maximum
+        while low < high:
+            middle = (low + high + 1) // 2
+            candidate = replace(source, excerpt=source.excerpt[:middle])
+            context = [_source_payload(item) for item in result + [candidate]]
+            if len(json.dumps(context, ensure_ascii=False)) <= MAX_CONTEXT_CHARS:
+                low = middle
+            else:
+                high = middle - 1
+        if not low:
             continue
-        result.append(replace(source, excerpt=excerpt))
-        size += len(excerpt)
+        result.append(replace(source, excerpt=source.excerpt[:low]))
     return result
+
+
+def _source_payload(source: AssistantSource) -> dict:
+    """Explicit allow-list: local URLs and transient identity matches stay local."""
+    return {
+        "citation_id": source.citation_id,
+        "source_type": source.source_type,
+        "label": source.label,
+        "content": source.excerpt,
+        "occurred_at": source.occurred_at.isoformat() if source.occurred_at else None,
+        "case_reference": source.participant_reference,
+    }
 
 
 def retrieve_study_sources(
@@ -774,6 +792,8 @@ def run_assistant(
             for source in sources[:MAX_CANDIDATE_RECORDS]
         ],
     )
+    if not sources:
+        raise ValueError("No authorised source material fits the provider context limits.")
     payload = {
         "task": task,
         "question": redact_provider_text(question, identity_values),
@@ -789,19 +809,7 @@ def run_assistant(
             "decision": decision.status,
             "warning": decision.message if decision.status == "WARN" else "",
         },
-        "sources": [
-            {
-                "citation_id": source.citation_id,
-                "source_type": source.source_type,
-                "label": source.label,
-                "content": source.excerpt,
-                "occurred_at": source.occurred_at.isoformat()
-                if source.occurred_at
-                else None,
-                "case_reference": source.participant_reference,
-            }
-            for source in sources
-        ],
+        "sources": [_source_payload(source) for source in sources],
     }
     try:
         output = provider.answer(system_prompt=SYSTEM_PROMPT, payload=payload)
