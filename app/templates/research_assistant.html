@@ -43,7 +43,7 @@
 {% if answer %}
 <section class="card card--data section" aria-labelledby="assistant-answer-title">
   <div class="section-head"><div><h2 id="assistant-answer-title">Provisional AI response</h2><p class="muted">Researcher review required · {{ answer.provider }} · {{ answer.model }}</p></div><span class="badge awaiting_researcher_review">AI-generated</span></div>
-  <p>{{ answer.answer }}</p>
+  {% for text, source_ids in answer.claims %}<p>{{ text }} [{{ source_ids|join(', ') }}]</p>{% endfor %}
   <p><strong>Sources used:</strong> {{ cited_sources|length }}{% if cited_case_count %} across {{ cited_case_count }} participant/case reference{{ '' if cited_case_count == 1 else 's' }}{% endif %}.</p>
   <h3>Limitations</h3>
   <ul>{% for item in answer.limitations %}<li>{{ item }}</li>{% else %}<li>No provider limitations were returned; treat this response as provisional.</li>{% endfor %}</ul>
