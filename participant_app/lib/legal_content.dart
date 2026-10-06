@@ -68,13 +68,13 @@ const cookiesDocument = LegalDocument(
   summary: 'The technologies used to keep the service working.',
   sections: [
     LegalSection('Website cookies', [
-      'The web service uses strictly necessary session and security cookies where needed to provide authenticated access and protect requests. They are not used for advertising or cross-site behavioural tracking.',
+      'The web service uses the strictly necessary csrf_session, session and public_auth_session cookies to protect requests and provide signed-in or one-time-link access. They are not used for advertising or cross-site behavioural tracking.',
     ]),
     LegalSection('This mobile app', [
-      'Mobile drafts and secure session storage are not cookies. The app uses secure device storage for session credentials and local storage for the participant material needed to provide drafts and safe offline queueing.',
+      'Mobile drafts and secure session storage are not cookies. The app uses flutter_secure_storage for the API URL and access token, shared_preferences for drafts and offline queue information, and app support files for queued photos, documents and recordings. These are cleared when you sign out or the app ends your session; queued files are also removed after a successful upload.',
     ]),
     LegalSection('Analytics and tracking', [
-      'Citizen Centric does not include marketing or participant-profiling tracking in this app. Operational diagnostics, security logging and service-performance telemetry may be used to run and protect the service. Non-essential analytics must not be enabled without the appropriate controls.',
+      'Citizen Centric does not include marketing, participant-profiling, advertising, analytics or crash-reporting tracking in this app. The web service uses Azure Application Insights and Log Analytics for security, diagnostics and performance; they are not used for advertising or cross-site tracking.',
     ]),
   ],
 );

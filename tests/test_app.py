@@ -611,6 +611,34 @@ def test_public_legal_publication_uses_only_source_complete_policy_text():
             assert 'CLIENT INPUT REQUIRED' not in response.text
 
 
+def test_cookie_register_is_production_specific_and_placeholder_free():
+    source = Path('app/legal_sources/canonical/cookie_policy_v1.md').read_text(
+        encoding='utf-8'
+    )
+    for marker in (
+        '[confirm',
+        'confirm implementation',
+        'classify by actual purpose',
+        '[confirm diagnostics]',
+    ):
+        assert marker not in source.lower()
+
+    with client:
+        client.cookies.clear()
+        response = client.get('/cookies')
+        assert response.status_code == 200
+        for technology in (
+            'csrf_session',
+            'public_auth_session',
+            'flutter_secure_storage',
+            'shared_preferences',
+            'Azure Application Insights and Log Analytics',
+        ):
+            assert technology in response.text
+        assert 'Google Analytics' in response.text
+        assert 'Meta/Facebook Pixel' in response.text
+
+
 def test_customer_agreements_are_owner_admin_only_and_source_backed():
     with client:
         client.cookies.clear()
